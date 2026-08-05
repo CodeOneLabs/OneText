@@ -1,0 +1,16 @@
+.DS_Store
+*.csproj
+*.sln
+obj/
+bin/
+Library/
+Temp/
+Logs/
+UserSettings/
+.idea/
+.vscode/
+
+# The every-codepoint coverage fonts: ~140 MB fetched by
+# Tools/fetch_coverage_fonts.py, never committed. The trailing tilde also
+# keeps Unity from importing them as assets.
+Tests/CoverageFonts~/

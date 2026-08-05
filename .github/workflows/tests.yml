@@ -1,0 +1,93 @@
+name: Tests
+
+# Runs the EditMode suite — the Unicode conformance files (UAX #9/#14/#29),
+# shaping, layout, interaction, and the performance budgets in
+# Tests/Editor/PerformanceTests.cs. Those budgets are what catches a
+# throughput regression before it ships.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  editmode:
+    name: EditMode tests (${{ matrix.unityVersion }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two editor versions on Linux for the version-churn axis, and one
+        # Windows editor because the natives are per-platform: a Linux runner
+        # exercises libHarfBuzzSharp.so and would never notice if the Windows
+        # DLL were missing, mis-tagged, or named something the Windows loader
+        # will not look for — which is a mistake this package has already made
+        # once. The host's own binary is the only one any run actually loads,
+        # which is why NativesTests checks the rest of the matrix statically.
+        #
+        # The Windows job is allowed to fail for now: game-ci's test runner
+        # documents package testing as Linux-only, so this may simply not work
+        # yet, and a job nobody has ever seen go green must not be the thing
+        # that blocks a pull request. It is here to be made to work, not to be
+        # trusted — see Docs/NATIVES.md.
+        include:
+          - unityVersion: 2021.3.45f1
+            os: ubuntu-latest
+            required: true
+          - unityVersion: 6000.0.77f1
+            os: ubuntu-latest
+            required: true
+          - unityVersion: 6000.0.77f1
+            os: windows-2022
+            required: false
+    continue-on-error: ${{ !matrix.required }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # The package is tested from a throwaway project that references it,
+      # exactly the way a consumer would.
+      - name: Create host project
+        shell: bash # the Windows runner defaults to PowerShell, which has no heredoc
+        run: |
+          mkdir -p CI/Assets CI/Packages CI/ProjectSettings
+          cat > CI/Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.unity.burst": "1.8.4",
+              "com.unity.collections": "1.4.0",
+              "com.unity.mathematics": "1.2.6",
+              "com.unity.ugui": "1.0.0",
+              "com.onetext.core": "file:../.."
+            },
+            "testables": ["com.onetext.core"]
+          }
+          JSON
+
+      - uses: actions/cache@v4
+        with:
+          path: CI/Library
+          key: Library-${{ matrix.os }}-${{ matrix.unityVersion }}-${{ hashFiles('**/*.cs') }}
+          restore-keys: Library-${{ matrix.os }}-${{ matrix.unityVersion }}-
+
+      - uses: game-ci/unity-test-runner@v4
+        id: tests
+        env:
+          # A personal (free) Unity license works; see CONTRIBUTING.md.
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: CI
+          unityVersion: ${{ matrix.unityVersion }}
+          testMode: editmode
+          artifactsPath: test-results
+          checkName: EditMode results (${{ matrix.unityVersion }}, ${{ matrix.os }})
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.unityVersion }}-${{ matrix.os }}
+          path: test-results

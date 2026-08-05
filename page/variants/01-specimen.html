@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Specimen</title>
+<style>
+  :root {
+    --paper: #f4f1ea;
+    --paper-2: #ebe6db;
+    --ink: #17150f;
+    --ink-dim: rgba(23,21,15,0.62);
+    --ink-faint: rgba(23,21,15,0.36);
+    --rule: rgba(23,21,15,0.14);
+    --red: #c8342b;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --sans: "Pretendard", "Helvetica Neue", Helvetica, Arial, "Apple SD Gothic Neo", sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    line-height: 1.65; overflow-x: hidden;
+    background-image:
+      linear-gradient(var(--paper-2) 1px, transparent 1px),
+      linear-gradient(90deg, var(--paper-2) 1px, transparent 1px);
+    background-size: 100% 42px, 42px 100%;
+    background-position: -1px -1px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+
+  /* ==== rules: the specimen-book frame ==== */
+  .rule { border-top: 1px solid var(--ink); }
+  .hair { border-top: 1px solid var(--rule); }
+
+  nav {
+    display: flex; align-items: baseline; gap: 26px; padding: 22px 0;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  }
+  nav b { font-size: 13px; letter-spacing: 0.06em; text-transform: none; font-family: var(--sans); }
+  nav a { color: var(--ink-dim); text-decoration: none; }
+  nav a:hover { color: var(--red); }
+  nav .spacer { flex: 1; }
+
+  /* ==== hero ==== */
+  .hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; padding: 64px 0 40px; align-items: center; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+
+  .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--red);
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 400; font-size: clamp(40px, 6.2vw, 78px);
+    line-height: 1.04; letter-spacing: -0.025em; margin: 18px 0 0;
+  }
+  h1 em { font-style: italic; color: var(--red); }
+  .lede { font-size: 17px; color: var(--ink-dim); max-width: 460px; margin-top: 20px; }
+
+  .meta { display: flex; gap: 30px; margin-top: 34px; font-family: var(--mono); font-size: 11px;
+          letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint); flex-wrap: wrap; }
+  .meta b { display: block; font-family: var(--sans); font-size: 25px; letter-spacing: -0.02em;
+            color: var(--ink); text-transform: none; font-variant-numeric: tabular-nums; }
+
+  /* ==== the glass specimen block ==== */
+  .stage { perspective: 1200px; display: flex; justify-content: center; }
+  .slab {
+    position: relative; width: min(400px, 78vw); aspect-ratio: 1; cursor: grab;
+    transform-style: preserve-3d; transition: transform 0.25s ease-out;
+  }
+  .slab:active { cursor: grabbing; }
+  .face {
+    position: absolute; inset: 0; border-radius: 26px; overflow: hidden;
+    background: linear-gradient(150deg, rgba(255,255,255,0.85), rgba(255,255,255,0.30));
+    border: 1px solid rgba(255,255,255,0.9);
+    box-shadow:
+      0 30px 70px -20px rgba(23,21,15,0.35),
+      0 2px 0 rgba(255,255,255,0.9) inset,
+      0 -30px 60px -40px rgba(200,52,43,0.5) inset;
+    -webkit-backdrop-filter: blur(3px) saturate(120%);
+    backdrop-filter: blur(3px) saturate(120%);
+  }
+  .face canvas { width: 100%; height: 100%; display: block; }
+  .sheen {
+    position: absolute; inset: 0; border-radius: 26px; pointer-events: none;
+    background: linear-gradient(115deg, transparent 34%, rgba(255,255,255,0.72) 46%, transparent 58%);
+    mix-blend-mode: screen;
+  }
+  .caption {
+    text-align: center; margin-top: 18px; font-family: var(--mono);
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .caption b { color: var(--red); }
+
+  /* ==== specimen row ==== */
+  .row { display: flex; flex-wrap: wrap; gap: 0; margin-top: 8px; }
+  .cell { flex: 1 1 180px; padding: 26px 22px 22px; border-right: 1px solid var(--rule); }
+  .cell:last-child { border-right: none; }
+  .cell .big { font-size: 40px; line-height: 1.25; }
+  .cell .lab { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em;
+               text-transform: uppercase; color: var(--ink-faint); margin-top: 10px; }
+
+  section { padding: 56px 0; }
+  h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(26px, 3.6vw, 40px);
+       letter-spacing: -0.02em; margin-bottom: 10px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 26px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em;
+       text-transform: uppercase; color: var(--ink-faint); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td b { font-variant-numeric: tabular-nums; }
+  .pass { color: var(--red); font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <b>OneText</b>
+    <span class="spacer"></span>
+    <a href="#">Conformance</a><a href="#">Coverage</a><a href="#">Performance</a><a href="#">GitHub</a>
+  </nav>
+  <div class="rule"></div>
+
+  <div class="hero">
+    <div>
+      <div class="kicker">A text engine for Unity · MIT</div>
+      <h1>Every writing<br>system, set <em>right</em>.</h1>
+      <p class="lede">
+        HarfBuzz shaping and the full bidirectional algorithm, in plain uGUI.
+        Arabic joins. Thai stacks. Devanagari reorders. Families stay one emoji.
+      </p>
+      <div class="meta">
+        <div><b>888,289</b>conformance cases</div>
+        <div><b>159,631</b>codepoints</div>
+        <div><b>1</b>draw call</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="slab" id="slab">
+          <div class="face"><canvas id="glyph" width="800" height="800"></canvas></div>
+          <div class="sheen"></div>
+        </div>
+      </div>
+      <div class="caption">Specimen №<b id="idx">01</b> · <span id="scriptname">Arabic</span></div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+  <div class="row">
+    <div class="cell"><div class="big">العربية</div><div class="lab">Arabic · joining</div></div>
+    <div class="cell"><div class="big">ภาษาไทย</div><div class="lab">Thai · marks</div></div>
+    <div class="cell"><div class="big">हिन्दी</div><div class="lab">Devanagari · reorder</div></div>
+    <div class="cell"><div class="big">한국어</div><div class="lab">Korean</div></div>
+    <div class="cell"><div class="big">👨‍👩‍👧‍👦</div><div class="lab">ZWJ · one glyph</div></div>
+  </div>
+  <div class="rule"></div>
+
+  <section>
+    <div class="kicker">Conformance</div>
+    <h2>Unicode's own tests, all of them</h2>
+    <table>
+      <tr><th>Suite</th><th>Standard</th><th class="num">Cases</th><th>Result</th></tr>
+      <tr><td>BidiTest</td><td>UAX #9</td><td class="num"><b>770,241</b></td><td class="pass">PASS</td></tr>
+      <tr><td>BidiCharacterTest</td><td>UAX #9</td><td class="num"><b>91,707</b></td><td class="pass">PASS</td></tr>
+      <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num"><b>19,338</b></td><td class="pass">PASS</td></tr>
+      <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num"><b>1,944</b></td><td class="pass">PASS</td></tr>
+      <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num"><b>766</b></td><td class="pass">PASS</td></tr>
+      <tr><td>emoji-test</td><td>UTS #51</td><td class="num"><b>3,781</b></td><td class="pass">PASS</td></tr>
+      <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num"><b>512</b></td><td class="pass">PASS</td></tr>
+    </table>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  var specimens = [
+    { text: "ع",              name: "Arabic",      note: "ع AIN" },
+    { text: "ก",              name: "Thai",        note: "ก KO KAI" },
+    { text: "क",              name: "Devanagari",  note: "क KA" },
+    { text: "한",              name: "Korean",      note: "한 HAN" },
+    { text: "永",              name: "Han",         note: "永 EI" },
+    { text: "R",                   name: "Latin",       note: "R" },
+    { text: "😀",        name: "Emoji",       note: "GRINNING" }
+  ];
+
+  var canvas = document.getElementById("glyph");
+  var ctx = canvas.getContext("2d");
+  var slab = document.getElementById("slab");
+  var idxEl = document.getElementById("idx");
+  var nameEl = document.getElementById("scriptname");
+  var i = 0, fade = 1, dir = -1;
+
+  function draw(alpha) {
+    var s = specimens[i];
+    ctx.clearRect(0, 0, 800, 800);
+
+    // A wash so the glass reads as a solid object rather than a hole.
+    var wash = ctx.createLinearGradient(0, 0, 800, 800);
+    wash.addColorStop(0, "rgba(255,255,255,0.55)");
+    wash.addColorStop(1, "rgba(235,230,219,0.35)");
+    ctx.fillStyle = wash;
+    ctx.fillRect(0, 0, 800, 800);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = '440px "Iowan Old Style", Palatino, Georgia, serif';
+
+    // Two offset copies in ink and red: the refraction a thick lens gives,
+    // and a nod to what the engine does — one glyph, two channels.
+    ctx.globalAlpha = alpha * 0.30;
+    ctx.fillStyle = "#c8342b";
+    ctx.fillText(s.text, 400 - 7, 415 + 4);
+    ctx.globalAlpha = alpha * 0.92;
+    ctx.fillStyle = "#17150f";
+    ctx.fillText(s.text, 400, 410);
+    ctx.globalAlpha = 1;
+  }
+
+  function tick() {
+    fade += dir * 0.045;
+    if (fade <= 0) {
+      fade = 0; dir = 1;
+      i = (i + 1) % specimens.length;
+      idxEl.textContent = String(i + 1).padStart(2, "0");
+      nameEl.textContent = specimens[i].name;
+    } else if (fade >= 1) {
+      fade = 1; dir = 0;
+      setTimeout(function () { dir = -1; }, 1500);
+    }
+    draw(fade);
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  // Tilt toward the pointer: a flat pane does not read as glass.
+  var rx = 0, ry = 0;
+  document.addEventListener("pointermove", function (e) {
+    var r = slab.getBoundingClientRect();
+    ry = ((e.clientX - (r.left + r.width / 2)) / r.width) * 22;
+    rx = -((e.clientY - (r.top + r.height / 2)) / r.height) * 22;
+    slab.style.transform = "rotateX(" + rx + "deg) rotateY(" + ry + "deg)";
+  });
+})();
+</script>
+</body>
+</html>

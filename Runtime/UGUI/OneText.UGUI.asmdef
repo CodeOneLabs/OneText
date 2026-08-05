@@ -1,0 +1,23 @@
+{
+    "name": "OneText.UGUI",
+    "rootNamespace": "OneText.UGUI",
+    "references": [
+        "OneText",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.6.0",
+            "define": "ONETEXT_UGUI_HAS_MAX_SIZE"
+        }
+    ],
+    "noEngineReferences": false
+}

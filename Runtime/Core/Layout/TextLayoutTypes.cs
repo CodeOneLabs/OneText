@@ -1,0 +1,294 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace OneText
+{
+    /// <summary>Horizontal placement of each line inside the layout box.</summary>
+    public enum TextAlignment
+    {
+        /// <summary>Aligned to the paragraph's own start edge (left for LTR, right for RTL).</summary>
+        Start,
+        Left,
+        Center,
+        Right,
+        /// <summary>Aligned to the paragraph's own end edge.</summary>
+        End,
+        /// <summary>Stretched to the full width, except on a paragraph's last line.</summary>
+        Justified,
+    }
+
+    /// <summary>Vertical placement of the text block inside its box.</summary>
+    public enum VerticalAlignment
+    {
+        Top,
+        Middle,
+        Bottom,
+    }
+
+    /// <summary>Whether lines wrap at the layout width.</summary>
+    public enum TextWrap
+    {
+        /// <summary>Only mandatory breaks (newlines) start a new line.</summary>
+        NoWrap,
+        Wrap,
+    }
+
+    /// <summary>What happens to lines that do not fit the layout height.</summary>
+    public enum TextOverflow
+    {
+        /// <summary>Keep every line; the block may exceed the box.</summary>
+        Overflow,
+        /// <summary>Drop lines past the bottom of the box.</summary>
+        Truncate,
+        /// <summary>Drop them, and mark the last visible line with an ellipsis.</summary>
+        Ellipsis,
+    }
+
+    /// <summary>Everything the layout engine needs besides the text itself.</summary>
+    public struct TextLayoutSettings
+    {
+        /// <summary>Fonts to use, in fallback order.</summary>
+        public FontStack Fonts;
+
+        /// <summary>Em size in render units.</summary>
+        public float FontSize;
+
+        /// <summary>Layout width; 0 or less means unbounded (no wrapping).</summary>
+        public float MaxWidth;
+
+        /// <summary>Layout height; 0 or less means unbounded.</summary>
+        public float MaxHeight;
+
+        public TextAlignment Alignment;
+        public TextWrap Wrap;
+        public TextOverflow Overflow;
+
+        /// <summary>Multiplier on the font's natural line height; 0 means 1.</summary>
+        public float LineSpacing;
+
+        /// <summary>
+        /// Paragraph direction: 0 = LTR, 1 = RTL,
+        /// <see cref="Unicode.BidiAlgorithm.AutoDirection"/> = from content (default).
+        /// </summary>
+        public byte BaseDirection;
+
+        /// <summary>
+        /// Style spans over the text, from <see cref="RichTextParser"/>. Null
+        /// means one default style throughout, which is the plain-text path and
+        /// costs nothing extra.
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<TextStyleSpan> Spans;
+
+        /// <summary>
+        /// Per-paragraph alignment overrides from <c>&lt;align&gt;</c>, or null.
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<(int Start, TextAlignment Alignment)> Alignments;
+
+        /// <summary>
+        /// Resolves a <c>&lt;font=…&gt;</c> index to a font, or null. Markup
+        /// names a font; only the frontend knows what that name means.
+        /// </summary>
+        public System.Func<int, FontData> ResolveFontOverride;
+
+        /// <summary>
+        /// Applies a named style (<c>&lt;style=…&gt;</c>) on top of the style
+        /// markup built, before the run is measured. Null leaves them inert.
+        /// </summary>
+        public System.Func<int, TextStyle, TextStyle> ResolveNamedStyle;
+
+        /// <summary>
+        /// Width over height of an inline sprite, by index. A sprite occupies a
+        /// character's worth of line and how wide that is depends on its shape,
+        /// so layout has to ask before anything is drawn. Null means sprites
+        /// take a square em.
+        /// </summary>
+        public System.Func<int, float> ResolveSpriteAspect;
+
+        /// <summary>
+        /// BCP 47 language tag for this text — "ja", "ko", "zh-Hans".
+        ///
+        /// It does three things, and each of them is a complaint from a
+        /// community that has been asking. It reaches HarfBuzz so `locl`
+        /// selects regional forms; it keys the fallback stack, so Han
+        /// unification stops being a lottery and a Japanese label resolves 直
+        /// from the Japanese font even when a Chinese font sits higher in the
+        /// chain; and it picks the line-breaking tailorings below, because
+        /// Korean word wrap is a per-locale rule and not a global toggle.
+        /// </summary>
+        public string Language;
+
+        /// <summary>Kinsoku severity for this text. Off by default.</summary>
+        public Unicode.AsianTypography.Kinsoku Kinsoku;
+
+        /// <summary>
+        /// Apply the UAX #14 Korean tailoring: break at spaces, not between
+        /// syllables. Set from the locale rather than globally — a Korean line
+        /// in a Japanese UI still wants Korean wrapping.
+        /// </summary>
+        public bool KoreanWordWrap;
+
+        /// <summary>
+        /// Insert the quarter-em gap East Asian specs call for between Han/Kana
+        /// and Latin runs.
+        /// </summary>
+        public bool CjkLatinSpacing;
+
+        /// <summary>Compress full-width punctuation (約物詰め).</summary>
+        public bool PunctuationCompression;
+
+        public static TextLayoutSettings Default(FontStack fonts, float fontSize) =>
+            new TextLayoutSettings
+            {
+                Fonts = fonts,
+                FontSize = fontSize,
+                LineSpacing = 1f,
+                Wrap = TextWrap.Wrap,
+                BaseDirection = Unicode.BidiAlgorithm.AutoDirection,
+            };
+    }
+
+    /// <summary>
+    /// A maximal stretch of glyphs sharing one font, one bidi level and one
+    /// style, already placed on its line.
+    ///
+    /// Style joined font and level as a reason to end a run when markup
+    /// arrived: a run is the unit that shapes together, measures together and
+    /// draws with one colour, and none of those survive a size change halfway
+    /// through.
+    /// </summary>
+    public struct TextRun
+    {
+        public FontData Font;
+
+        /// <summary>Range into <see cref="TextLayoutResult.Glyphs"/>.</summary>
+        public int GlyphStart, GlyphCount;
+
+        /// <summary>Source text range, in UTF-16 code units.</summary>
+        public int TextStart, TextLength;
+
+        /// <summary>Left edge of the run, in render units from the block's left edge.</summary>
+        public float X;
+
+        /// <summary>Baseline, in render units downward from the block's top edge.</summary>
+        public float Baseline;
+
+        /// <summary>Advance width in render units.</summary>
+        public float Width;
+
+        /// <summary>Resolved bidi embedding level; odd means right-to-left.</summary>
+        public byte Level;
+
+        /// <summary>
+        /// Em size this run was shaped and measured at — the label's size with
+        /// the run's style applied, not the label's size. Everything that
+        /// converts font units to render units for this run uses it.
+        /// </summary>
+        public float FontSize;
+
+        /// <summary>The style in force over the run, as markup left it.</summary>
+        public TextStyle Style;
+
+        /// <summary>Baseline offset in render units, positive up.</summary>
+        public float BaselineShift;
+
+        public bool IsRightToLeft => (Level & 1) != 0;
+    }
+
+    /// <summary>One laid-out line: a range of runs in visual (left-to-right) order.</summary>
+    public struct TextLine
+    {
+        /// <summary>Range into <see cref="TextLayoutResult.Runs"/>, visually ordered.</summary>
+        public int RunStart, RunCount;
+
+        /// <summary>Source text range, in UTF-16 code units.</summary>
+        public int TextStart, TextLength;
+
+        /// <summary>Width excluding trailing whitespace, in render units.</summary>
+        public float Width;
+
+        /// <summary>Baseline, in render units downward from the block's top edge.</summary>
+        public float Baseline;
+
+        /// <summary>Line box metrics in render units (ascent above the baseline).</summary>
+        public float Ascent, Descent, Height;
+
+        /// <summary>Embedding level of the paragraph this line belongs to.</summary>
+        public byte ParagraphLevel;
+
+        /// <summary>True if this is the last line of its paragraph (justification skips it).</summary>
+        public bool IsParagraphEnd;
+
+        public bool IsRightToLeft => (ParagraphLevel & 1) != 0;
+    }
+
+    /// <summary>
+    /// The output of <see cref="TextLayoutEngine"/>: positioned glyphs grouped
+    /// into runs and lines. Frontends turn this into meshes; the core never
+    /// touches a UI framework.
+    /// </summary>
+    public sealed class TextLayoutResult
+    {
+        /// <summary>Shaped glyphs, in run order. Metrics are in font design units.</summary>
+        public readonly List<ShapedGlyph> Glyphs = new List<ShapedGlyph>();
+
+        public readonly List<TextRun> Runs = new List<TextRun>();
+
+        public readonly List<TextLine> Lines = new List<TextLine>();
+
+        /// <summary>Width of the widest line, in render units.</summary>
+        public float Width;
+
+        /// <summary>Total height of all laid-out lines, in render units.</summary>
+        public float Height;
+
+        /// <summary>Em size this result was laid out at, in render units.</summary>
+        public float FontSize;
+
+        /// <summary>True if <see cref="TextOverflow"/> dropped any line.</summary>
+        public bool Truncated;
+
+        /// <summary>
+        /// Start index of every grapheme cluster in the laid-out text, in
+        /// logical order, plus a terminator at the text's length.
+        ///
+        /// The engine publishes this because only the engine knows it, and
+        /// everything above needs it: "one character at a time" is not a thing
+        /// in shaped text. An Arabic ligature is two characters in one glyph, a
+        /// Hangul syllable is three, and a flag emoji is four — revealing half
+        /// of any of them is nonsense. A typewriter counts these, not chars.
+        /// </summary>
+        public readonly List<int> GraphemeStarts = new List<int>();
+
+        /// <summary>Number of grapheme clusters in the laid-out text.</summary>
+        public int GraphemeCount => Mathf.Max(0, GraphemeStarts.Count - 1);
+
+        /// <summary>
+        /// The grapheme cluster a text index falls in, clamped into range.
+        /// Binary search: the table is sorted by construction.
+        /// </summary>
+        public int GraphemeAt(int textIndex)
+        {
+            if (GraphemeStarts.Count == 0) return 0;
+            int lo = 0, hi = GraphemeStarts.Count - 1;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (GraphemeStarts[mid] <= textIndex) lo = mid;
+                else hi = mid - 1;
+            }
+            return Mathf.Clamp(lo, 0, Mathf.Max(0, GraphemeStarts.Count - 2));
+        }
+
+        public void Clear()
+        {
+            Glyphs.Clear();
+            Runs.Clear();
+            Lines.Clear();
+            GraphemeStarts.Clear();
+            Width = 0f;
+            Height = 0f;
+            FontSize = 0f;
+            Truncated = false;
+        }
+    }
+}

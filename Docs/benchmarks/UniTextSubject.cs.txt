@@ -1,0 +1,243 @@
+using System.Collections.Generic;
+using System.IO;
+using OneText.Benchmarks;
+using LightSide;
+using UnityEngine;
+using UnityEditor;
+using UnityEngine.Experimental.Rendering;
+
+/// <summary>
+/// UniText under the same benchmark scenarios as OneText and TextMeshPro.
+///
+/// Written against the package's public signatures and its Getting Started
+/// guide — its implementation is deliberately not read. What it does is what
+/// the measurement is for.
+///
+/// Font assets are created at the same sampling size and spread OneText
+/// rasterizes at, so the comparison is of the machinery rather than of how
+/// much each system chose to render.
+/// </summary>
+public sealed class UniTextSubject : ITextSubject, IPrewarmable
+{
+    private const int SamplingPointSize = 32;
+    private const float SpreadStrength = 4f / SamplingPointSize; // 4 px, as OneText uses
+
+    private readonly int _atlasSize;
+    private readonly bool _prewarm;
+    private readonly bool _parallel;
+    private readonly List<UniTextFont> _fonts = new List<UniTextFont>();
+    private readonly List<UniTextFontStack> _stacks = new List<UniTextFontStack>();
+    private readonly List<UniText> _labels = new List<UniText>();
+    private UniTextAppearance _appearance;
+
+    public UniTextSubject(int atlasSize = 1024, bool prewarm = false, bool parallel = true)
+    {
+        _atlasSize = atlasSize;
+        _prewarm = prewarm;
+        _parallel = parallel;
+    }
+
+    public string Name => $"UniText {_atlasSize}²" +
+        (_prewarm ? " +prewarm" : "") + (_parallel ? "" : " (serial)");
+
+    private const string DefaultsPath = "Packages/media.lightside.unitext/Defaults/";
+
+    public void Setup()
+    {
+        // Parallel meshing is a global switch, not a per-label one.
+        UniText.UseParallel = _parallel;
+
+        // In a normal project the settings asset is wired up through Project
+        // Settings; a batch-mode run has to point the package at it, or its
+        // Unicode tables never load and nothing shapes.
+        var settings = AssetDatabase.LoadAssetAtPath<UniTextSettings>(
+            DefaultsPath + "UniTextSettings.asset");
+        if (settings != null) UniTextSettings.SetInstance(settings);
+        _appearance = UniTextSettings.DefaultAppearance ??
+            AssetDatabase.LoadAssetAtPath<UniTextAppearance>(
+                DefaultsPath + "UniTextAppearance_Default.asset");
+        if (_appearance == null) Debug.LogError("[unitext] no appearance asset");
+
+        var latin = CreateFont(Path.GetFullPath(BenchFonts.Latin), "NotoSans");
+        var arabic = CreateFont(Path.GetFullPath(BenchFonts.Arabic), "NotoSansArabic");
+        var cjk = BenchFonts.CjkPath != null
+            ? CreateFont(BenchFonts.CjkPath, "SystemCJK") : null;
+
+        // The same fallback arrangement the other subjects get: each label's
+        // main face first, then everything else behind it.
+        foreach (var main in _fonts)
+        {
+            var stack = ScriptableObject.CreateInstance<UniTextFontStack>();
+            stack.fonts.Add(main);
+            foreach (var other in _fonts)
+                if (other != main) stack.fonts.Add(other);
+            _stacks.Add(stack);
+        }
+
+        if (latin == null || arabic == null || cjk == null)
+            Debug.Log("[unitext] not every face loaded");
+    }
+
+    private UniTextFont CreateFont(string path, string name)
+    {
+        var bytes = File.ReadAllBytes(path);
+        var font = UniTextFont.CreateFontAsset(bytes, SamplingPointSize, SpreadStrength,
+            UniTextRenderMode.SDF, _atlasSize);
+        if (font == null) return null;
+        font.name = name;
+        // A runtime-created asset has no face loaded and no atlas until asked.
+        var error = font.LoadFontFace();
+        if (error != UniTextFontError.Success)
+            Debug.LogError($"[unitext] {name}: {error}");
+        font.ReadFontAssetDefinition();
+        // A freshly created asset has no atlas texture until something is
+        // packed into it.
+        uint seed = font.GetGlyphIndexForUnicode(' ');
+        if (seed == 0) seed = font.GetGlyphIndexForUnicode('A');
+        if (seed != 0) font.TryAddGlyphsBatch(new List<uint> { seed });
+        _fonts.Add(font);
+        return font;
+    }
+
+    public void Prewarm(IEnumerable<int> codepoints, IReadOnlyList<float> sizes)
+    {
+        if (!_prewarm) return;
+        foreach (var font in _fonts)
+        {
+            var glyphs = new List<uint>();
+            foreach (int cp in codepoints)
+            {
+                uint index = font.GetGlyphIndexForUnicode((uint)cp);
+                if (index != 0) glyphs.Add(index);
+            }
+            if (glyphs.Count > 0) font.TryAddGlyphsBatch(glyphs);
+        }
+    }
+
+    public object CreateLabel(Transform parent, Rect rect, float fontSize, int fontIndex)
+    {
+        var go = new GameObject("UniTextLabel", typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+        // Configured before the component wakes: assigning a font stack to a
+        // live UniText throws inside the package.
+        go.SetActive(false);
+        var label = go.AddComponent<UniText>();
+        var rectTransform = label.rectTransform;
+        rectTransform.anchorMin = rectTransform.anchorMax = new Vector2(0f, 1f);
+        rectTransform.pivot = new Vector2(0f, 1f);
+        rectTransform.anchoredPosition = new Vector2(rect.x, -rect.y);
+        rectTransform.sizeDelta = new Vector2(rect.width, rect.height);
+
+        label.FontStack = _stacks[Mathf.Min(fontIndex, _stacks.Count - 1)];
+        // The first assignment throws on a component built entirely from
+        // script — the package's own guide notes that Project Settings
+        // defaults are applied only when the component is added through the
+        // Inspector. The second assignment takes, and everything downstream
+        // behaves normally.
+        try { label.Appearance = _appearance; }
+        catch (System.NullReferenceException) { }
+        label.Appearance = _appearance;
+        label.FontSize = fontSize;
+        label.WordWrap = false;
+        label.color = Color.white;
+        go.SetActive(true);
+        _labels.Add(label);
+        return label;
+    }
+
+    public void SetText(object label, string text) => ((UniText)label).Text = text;
+
+    public void EndFrame() { }
+
+    public long TextureMemoryBytes
+    {
+        get
+        {
+            long total = 0;
+            foreach (var font in _fonts)
+            {
+                if (font == null || font.AtlasTextures == null) continue;
+                foreach (var texture in font.AtlasTextures)
+                {
+                    if (texture == null) continue;
+                    total += (long)(texture.width * texture.height *
+                        GraphicsFormatUtility.GetBlockSize(texture.graphicsFormat));
+                }
+            }
+            return total;
+        }
+    }
+
+    public string Describe()
+    {
+        var parts = new List<string>();
+        foreach (var font in _fonts)
+        {
+            if (font == null) continue;
+            int textures = font.AtlasTextures?.Count ?? 0;
+            parts.Add($"{font.name}: {textures} atlas texture(s) {font.AtlasSize}x{font.AtlasSize}, " +
+                $"{font.GlyphLookupTable?.Count ?? 0} glyphs, {font.AtlasRenderMode}");
+        }
+
+        int renderers = 0;
+        foreach (var label in _labels)
+        {
+            if (label == null) continue;
+            foreach (var renderer in label.CanvasRenderers)
+                if (renderer != null) renderers++;
+        }
+        int glyphs = 0;
+        foreach (var label in _labels)
+            if (label != null) glyphs += label.GlyphCount;
+        parts.Add($"{renderers} canvas renderers and {glyphs} laid-out glyphs " +
+            $"across {_labels.Count} labels");
+        parts.Add(CoverageOfLastFrame());
+        return string.Join("; ", parts);
+    }
+
+    /// <summary>
+    /// How much of the last frame's text the fonts can actually draw, asked of
+    /// the font stack rather than read off the mesh — a system that silently
+    /// drops a glyph it does not have would otherwise look both fast and
+    /// complete.
+    /// </summary>
+    private string CoverageOfLastFrame()
+    {
+        int drawn = 0, wanted = 0;
+        foreach (var label in _labels)
+        {
+            if (label == null || label.FontStack == null) continue;
+            string text = label.Text;
+            if (string.IsNullOrEmpty(text)) continue;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (char.IsWhiteSpace(c) || char.IsControl(c)) continue;
+                wanted++;
+                foreach (var font in label.FontStack.fonts)
+                {
+                    if (font == null || font.GetGlyphIndexForUnicode(c) == 0) continue;
+                    drawn++;
+                    break;
+                }
+            }
+        }
+        return wanted == 0
+            ? "no text to check"
+            : $"drew {drawn} of {wanted} characters on the last frame ({drawn / (double)wanted:P0})";
+    }
+
+    public void Teardown()
+    {
+        _labels.Clear();
+        foreach (var stack in _stacks) Object.DestroyImmediate(stack);
+        _stacks.Clear();
+        UniTextFont.ClearRuntimeData();
+        foreach (var font in _fonts)
+        {
+            if (font == null) continue;
+            Object.DestroyImmediate(font);
+        }
+        _fonts.Clear();
+    }
+}

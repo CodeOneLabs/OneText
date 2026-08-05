@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Every language. One draw call.</title>
+<meta name="description" content="Thai stacks. Arabic joins. Emoji stay whole. OneText is the free, MIT-licensed text engine for Unity uGUI — shaping, bidi, SDF rendering, rich text, colour emoji, animation and IME input. All in the box.">
+<style>
+  :root {
+    --bg: #07090b;
+    --panel: #0c1013;
+    --panel-2: #10161a;
+    --line: rgba(126,231,180,0.15);
+    --line-hi: rgba(126,231,180,0.32);
+    --ink: #d6e5dd;
+    --ink-dim: rgba(214,229,221,0.58);
+    --ink-faint: rgba(214,229,221,0.32);
+    --green: #7ee7b4;
+    --amber: #ffcc66;
+    --violet: #b39dff;
+    --red: #ff7b72;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+            Inter, system-ui, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  /* Display and body type are the sans; the mono is demoted to what it is
+     actually for — code, data, labels. A whole page of 13.5 px monospace
+     reads as a README, and this page stopped being one. */
+  /* clip, not hidden: overflow-x hidden quietly turns the body into a
+     scroll container, and on iOS that is the ancestor position:sticky
+     attaches to — the body does not scroll, so nothing ever stuck and the
+     interlude sentences rode past their corridors. clip clips without
+     creating a scroller. The hidden line stays as the old-browser fallback. */
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans);
+         font-size: 15px; line-height: 1.65;
+         overflow-x: hidden; overflow-x: clip;
+         -webkit-font-smoothing: antialiased; }
+  pre, code, table, .tabs button { font-family: var(--mono); }
+  img { max-width: 100%; display: block; }
+  a { color: var(--green); }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+
+  nav { display: flex; align-items: center; gap: 20px; padding: 14px 0;
+        border-bottom: 1px solid var(--line); font-size: 12px; letter-spacing: 0.09em;
+        flex-wrap: wrap; font-family: var(--mono); }
+  nav b { color: var(--green); }
+  nav a { color: var(--ink-dim); text-decoration: none; }
+  nav a:hover { color: var(--green); }
+  nav .spacer { flex: 1; }
+  nav .badge { color: var(--ink-faint); }
+
+  /* ==== hero: the sentence, then the proof ==== */
+  header { padding: 96px 0 20px; }
+  /* Sized so "Every language," holds one line in its grid column — the <br>
+     is the only break this headline is allowed. */
+  h1 { font-size: clamp(40px, 4.8vw, 66px); line-height: 1.05; letter-spacing: -0.02em;
+       font-weight: 700; white-space: nowrap; }
+  h1 span { color: var(--green); }
+  .sub { color: var(--ink-dim); margin-top: 26px; max-width: 560px; font-size: 17px;
+         line-height: 1.6; }
+  /* Its own block, half a line clear of the spec sentences above it. */
+  .sub b { color: var(--ink); font-weight: 400; display: block; margin-top: 0.55em; }
+
+  .cta { display: flex; gap: 10px; margin-top: 26px; flex-wrap: wrap; align-items: center; }
+  .btn { display: inline-block; border: 1px solid transparent; background: var(--green);
+         color: #062018; text-decoration: none; padding: 10px 22px; font-size: 14px;
+         font-weight: 600; border-radius: 980px; }
+  .btn:hover { background: #97f1c6; }
+  .btn.ghost { background: transparent; border-color: var(--line-hi); color: var(--green); }
+  .btn.ghost:hover { background: rgba(126,231,180,0.1); }
+  .cta .meta { color: var(--ink-faint); font-size: 11.5px; letter-spacing: 0.08em;
+               font-family: var(--mono); }
+
+  figure { margin-top: 56px; border: 1px solid var(--line); background: var(--panel); }
+  figcaption { padding: 11px 16px; border-top: 1px solid var(--line); font-size: 11.5px;
+               color: var(--ink-faint); letter-spacing: 0.05em; }
+  figcaption b { color: var(--ink-dim); font-weight: 400; }
+
+  /* ==== sections ==== */
+  section { padding: 120px 0; border-top: 1px solid var(--line); margin-top: 0; }
+  /* The "## " prefixes are gone: the anchor name lives in a small mono
+     eyebrow, and the heading underneath gets to be a headline. */
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em;
+             text-transform: uppercase; color: var(--green); margin-bottom: 16px; }
+  h2 { font-size: clamp(28px, 3.4vw, 44px); margin-bottom: 18px;
+       letter-spacing: -0.02em; font-weight: 700; line-height: 1.15; }
+  /* Once the wordmark has been cast in glass the text itself steps aside —
+     kept in the DOM for readers and search, out of the picture. Until then,
+     and forever without WebGL, it is simply the word. */
+  .lede { color: var(--ink-dim); font-size: clamp(16px, 1.5vw, 19px); line-height: 1.6;
+          max-width: 700px; margin-bottom: 40px; }
+
+  pre { background: var(--panel); border: 1px solid var(--line); padding: 16px 18px;
+        overflow-x: auto; font-size: 12.5px; line-height: 1.8; }
+  pre .c { color: var(--ink-faint); }
+  pre .g { color: var(--green); }
+  pre .v { color: var(--violet); }
+  pre .s { color: var(--amber); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  /* min-width: 0, or the install snippets set the page's width: a grid
+     item's automatic minimum is its content's min-content, a <pre> keeps
+     its min-content even when it scrolls, and the GitHub URL in the first
+     snippet is one unbreakable 548px token. On a phone that inflated the
+     layout viewport to 572px — the whole page rendered zoomed out, and
+     every vh-based alignment split from innerHeight. */
+  .two > div { min-width: 0; }
+  @media (max-width: 820px) { .two { grid-template-columns: 1fr; } }
+  .step { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+          color: var(--ink-faint); margin-bottom: 8px; font-family: var(--mono); }
+
+  /* ==== box list ==== */
+  .box { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+         gap: 1px; background: var(--line); border: 1px solid var(--line); }
+  .box > div { background: var(--panel); padding: 16px 18px; }
+  .box h3 { font-size: 13.5px; font-weight: 700; margin-bottom: 5px; }
+  .box h3 em { font-style: normal; color: var(--green); }
+  .box p { font-size: 12.5px; color: var(--ink-dim); line-height: 1.65; }
+  .box .free { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+               color: var(--violet); display: block; margin-top: 7px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  th { color: var(--green); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+  td { color: var(--ink-dim); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .pass { color: var(--green); }
+  .wip { color: var(--amber); }
+  tr:hover td { background: rgba(126,231,180,0.035); }
+
+  /* ==== hero: copy on the left, a turning specimen on the right ==== */
+  .hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; align-items: center; }
+  @media (max-width: 860px) { .hero { grid-template-columns: 1fr; } .specimen { order: -1; } }
+  .kicker { color: var(--green); font-size: clamp(26px, 3.4vw, 40px);
+            letter-spacing: -0.02em; font-weight: 700; margin-bottom: 14px; }
+
+  /* A specular sweep across the wordmark. The gradient is mostly the green the
+     word already is, so the type never changes value — only a band of it
+     brightens as the highlight crosses, which is a light moving over a surface
+     rather than the whole word blinking. It rests for half the cycle, because
+     a highlight that never stops reads as a loading state.
+
+     This replaces a version that rendered the wordmark as extruded glass. That
+     worked — refracting a streaked lightbox and masking to the letterforms —
+     and it was rejected on looks, which is the right reason. If it comes back,
+     the technique is in the history, not in dead code here. */
+  .kicker i { font-style: normal; display: inline-block;
+      background-image: linear-gradient(100deg,
+      var(--green) 0%, var(--green) 40%, #eafff4 47%, #ffffff 51%,
+      var(--green) 58%, var(--green) 100%);
+      background-size: 280% 100%;
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: sweep 4s cubic-bezier(0.35, 0, 0.2, 1) infinite; }
+  @keyframes sweep { 0% { background-position: 140% 0; }
+                     50%, 100% { background-position: -40% 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .kicker i { animation: none; background-image: none; color: var(--green); }
+  }
+
+  .specimen { position: relative; min-height: 340px; }
+  /* Bigger than its cell and allowed to sit over the edges of it. The hero is
+     a two-column grid on paper; on screen the ball should feel dropped onto
+     the page rather than parked in a box. */
+  #globe { position: absolute; top: 50%; left: 50%;
+           width: min(560px, 46vw); aspect-ratio: 1;
+           transform: translate(-42%, calc(-50% - 20px));
+           cursor: grab; touch-action: pan-y; z-index: 0; }
+  #globe:active { cursor: grabbing; }
+  #globe canvas { width: 100% !important; height: 100% !important; display: block; }
+  @media (max-width: 860px) {
+    .specimen { min-height: 300px; }
+    #globe { width: min(420px, 82vw); transform: translate(-50%, calc(-50% - 20px)); }
+  }
+  /* Held upright, the ball takes the whole first screen before a word of
+     copy appears — portrait phones and tablets skip it and lead with the
+     sentence. Turn the device and it comes back. */
+  @media (max-width: 860px) and (orientation: portrait) {
+    .specimen { display: none; }
+  }
+  .spec-label { position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+                white-space: nowrap; font-size: 11px; letter-spacing: 0.16em;
+                text-transform: uppercase; color: var(--ink-faint);
+                font-family: var(--mono); }
+
+  /* ==== the in-the-box checklist ==== */
+  .checks { list-style: none; display: grid; gap: 1px; background: var(--line);
+            border: 1px solid var(--line); }
+  .checks li { background: var(--panel); padding: 13px 18px 13px 44px; position: relative;
+               font-size: 12.5px; color: var(--ink-dim); line-height: 1.65; }
+  .checks li::before { content: "\2713"; position: absolute; left: 17px; top: 12px;
+                       color: var(--green); font-size: 14px; }
+  .checks b { color: var(--ink); font-weight: 700; display: block; }
+
+  /* The multiplier, said the way Apple says a number: enormous, centred,
+     gradient ink, no box around it — the border was the README talking. */
+  .ratio { text-align: center; margin: 90px 0 100px; }
+  /* The number never breaks: nowrap, and a floor low enough that "11–51×"
+     still holds one line on a phone. */
+  .ratio b { display: block; font-size: clamp(56px, 17vw, 210px); line-height: 0.95;
+             white-space: nowrap;
+             letter-spacing: -0.04em; font-variant-numeric: tabular-nums;
+             background: linear-gradient(115deg, var(--green) 35%, var(--violet));
+             -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ratio div { font-size: 15px; color: var(--ink-dim); line-height: 1.65;
+               max-width: 640px; margin: 14px auto 0; }
+  /* Sized so the caption's title holds one line — a headline that wraps two
+     words onto a second line looks cut, not composed. */
+  .ratio div em { font-style: normal; color: var(--ink); display: block;
+                  font-size: clamp(17px, 1.7vw, 21px); font-weight: 600;
+                  letter-spacing: -0.01em; margin-bottom: 10px; }
+  .ratio .vs { font-variant-numeric: tabular-nums; }
+
+  /* The performance chapter flips the room. While the number is on stage the
+     page trades its green-black for a violet-black and holds it, the way an
+     Apple page changes key for one section — then gives it back. Only the
+     background eases; the lines and panels are allowed to just switch. */
+  body { transition: background-color 0.9s ease; }
+  body.flip { --bg: #110a1f; --panel: #19102e; --panel-2: #20153a;
+              --line: rgba(179,157,255,0.19); --line-hi: rgba(179,157,255,0.40);
+              --ink: #e4def4; --ink-dim: rgba(228,222,244,0.62);
+              --ink-faint: rgba(228,222,244,0.35); }
+
+  /* Apple's fine print: the caveats live at the bottom in small grey type,
+     and the claims above carry only a number. The argument stays honest —
+     it just stops standing in front of the tables. */
+  sup { font-size: 0.6em; color: var(--ink-faint); }
+  /* Full width, like the tables above it — a rule that stops mid-page reads
+     as a layout accident, not a footer. */
+  .footnotes { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
+               font-size: 11.5px; line-height: 1.65; color: var(--ink-faint); }
+  .footnotes p { max-width: 860px; }
+  .footnotes p { margin-bottom: 9px; }
+  .footnotes b { color: var(--ink-dim); font-weight: 600; }
+
+  .tabs { display: flex; gap: 2px; margin: 0; flex-wrap: wrap; }
+  .tabs button { font: inherit; font-size: 11.5px; letter-spacing: 0.06em;
+                 background: transparent; color: var(--ink-faint); cursor: pointer;
+                 border: 1px solid var(--line); border-bottom: none;
+                 padding: 8px 14px; }
+  .tabs button[aria-selected="true"] { color: var(--green); background: var(--panel); }
+  .tabs button:hover { color: var(--ink); }
+  .panel[hidden] { display: none; }
+  td.win { color: var(--green); font-variant-numeric: tabular-nums; text-align: right; }
+  td.tie { color: var(--ink-faint); font-variant-numeric: tabular-nums; text-align: right; }
+  td.lose { color: var(--amber); font-variant-numeric: tabular-nums; text-align: right; }
+
+  .note { border-left: 2px solid var(--amber); padding: 12px 16px; margin-top: 20px;
+          font-size: 12.5px; color: var(--ink-dim); background: var(--panel); }
+  .note b { color: var(--ink); }
+
+  /* ==== the scroll interludes: a sentence that inks in as it passes ==== */
+  /* Each statement is a tall corridor with a sticky, viewport-high room in
+     it; the scroll position through the corridor decides how many words are
+     lit. Without JavaScript the words are never wrapped and the sentence is
+     simply there, at full ink — the honest fallback again. */
+  .statement { padding: 0; border-top: none; height: 220vh; }
+  /* svh, not vh: under a phone's URL bar 100vh is taller than the screen,
+     which parked the sentence above centre while the glyph canvas — fixed
+     to the *visible* viewport — stayed put. Same box for both, or they
+     drift apart. The vh line is the fallback for browsers without svh. */
+  .statement .pin { position: sticky; top: 0; height: 100vh; height: 100svh;
+                    display: flex; align-items: center; justify-content: center; }
+  /* Two short lines, broken by hand with a <br> — never by the layout. The
+     copy is written to fit; the nowrap is there to make a regression visible
+     (an overflowing line) rather than silent (an ugly third line). */
+  .statement p { font-size: clamp(22px, 4.2vw, 54px); line-height: 1.35;
+                 letter-spacing: -0.03em; font-weight: 700;
+                 text-align: center; white-space: nowrap; }
+  .statement .w { color: rgba(214,229,221,0.14); transition: color 0.3s ease; }
+  .statement .w.lit { color: var(--ink); }
+  .statement .w.g.lit { color: var(--green); }
+
+  /* The drift: one fixed canvas of glass glyphs behind the statements. It
+     sits under .wrap (z-index 1), so the sentence reads over it and the
+     neighbouring sections scroll across it while it fades. Opacity is set
+     per frame by the script — no transition to fight with. */
+  canvas.drift { position: fixed; inset: 0; width: 100%; height: 100%;
+                 z-index: 0; pointer-events: none; opacity: 0; }
+
+  /* ==== content rises a few pixels as it arrives ==== */
+  .reveal { opacity: 0; transform: translateY(18px);
+            transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  /* the hero says its lines in order */
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
+  .hero .kicker, .hero h1, .hero .sub, .hero .cta {
+    animation: rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .hero h1 { animation-delay: 0.08s; }
+  .hero .sub { animation-delay: 0.18s; }
+  .hero .cta { animation-delay: 0.28s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .statement { height: auto; }
+    .statement .pin { position: static; height: auto; padding: 140px 0; }
+    .statement .w { color: var(--ink); }
+    .statement .w.g { color: var(--green); }
+    canvas.drift { display: none; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .hero .kicker, .hero h1, .hero .sub, .hero .cta { animation: none; }
+  }
+
+  footer { padding: 34px 0 64px; color: var(--ink-faint); font-size: 11.5px;
+           letter-spacing: 0.06em; font-family: var(--mono); }
+
+  /* ==== phones ==== */
+  @media (max-width: 700px) {
+    /* A table that folds "0.446 ms" onto two lines looks broken; one that
+       scrolls sideways looks like a table. */
+    table { display: block; overflow-x: auto; white-space: nowrap;
+            -webkit-overflow-scrolling: touch; }
+    h1 { font-size: clamp(30px, 10.4vw, 40px); }
+    .statement p { font-size: clamp(18px, 5.8vw, 24px); }
+    .ratio div em { font-size: 17px; }
+    section { padding: 90px 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <b>onetext</b>
+    <a href="#install">install</a><a href="#box">in the box</a><a href="#migrate">migrate</a>
+    <a href="#correct">correctness</a><a href="#perf">performance</a><a href="#status">status</a>
+    <span class="spacer"></span>
+    <span class="badge">MIT · Unity 2021.3+</span>
+  </nav>
+
+  <header>
+    <div class="hero">
+      <div>
+        <div class="kicker"><i>OneText</i></div>
+        <h1>Every language,<br><span>one draw call</span>.</h1>
+        <p class="sub">
+          Thai stacks. Arabic joins. Emoji stay whole.<br>
+          A text engine for Unity uGUI that gets every script right, in a
+          single draw call.
+          <b>Free and open source.<br>Because correct text shouldn't cost extra.</b>
+        </p>
+        <div class="cta">
+          <a class="btn" href="#install">Install</a>
+          <a class="btn ghost" href="https://github.com/CodeOneLabs/OneText">GitHub</a>
+          <span class="meta">free means free &middot; no pro tier &middot; no paid modules</span>
+        </div>
+      </div>
+
+      <div class="specimen" aria-hidden="true">
+        <div class="stage" id="globe"></div>
+        <div class="spec-label">every script, one atlas, one draw call</div>
+      </div>
+    </div>
+
+  </header>
+
+  <section class="statement">
+    <div class="pin"><p>Your engine speaks English.<br>
+    <span class="g">Your players don't.</span></p></div>
+  </section>
+
+  <!-- The receipts for the sentence above: the same strings through both
+       engines, straight out of the corridor. -->
+  <figure>
+    <img src="assets/vs-tmp.png" alt="Arabic, Hindi, Thai, Korean and an emoji ZWJ sequence rendered by TextMeshPro and by OneText, side by side">
+    <figcaption>
+      Same string. Same font. Same box. Only the engine differs &mdash; rendered in
+      Unity, headless, from this repository, each column clipped to the box it was
+      given. <b>Korean needs no rescue, and the table says so. Neither does Arabic.
+      The difference is everything in between.</b>
+    </figcaption>
+  </figure>
+
+  <!-- ================= PERFORMANCE ================= -->
+  <section id="perf">
+    <p class="eyebrow">performance</p>
+    <h2>Fast where it hurts.</h2>
+    <p class="lede">
+      Anyone can win the benchmark they chose. So here are all of them &mdash; medians,
+      tails, draw calls, and the runs we lose.<sup>5</sup> The medians are mostly a
+      tie. But a player never feels the median. A player feels the frame that
+      arrives late.
+    </p>
+
+    <div class="ratio">
+      <b>11&ndash;51&times;</b>
+      <div>
+        <em>the worst frame, when the atlas has work to do<sup>1</sup></em>
+        A language pack lands mid-session. TextMeshPro stops for
+        <span class="vs">351.8 ms</span>. OneText takes
+        <span class="vs">6.9 ms</span>.
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" aria-controls="p-ui">global ui</button>
+      <button role="tab" aria-selected="false" aria-controls="p-chat">chat stream</button>
+      <button role="tab" aria-selected="false" aria-controls="p-world">world-space</button>
+      <button role="tab" aria-selected="false" aria-controls="p-novel">unseen glyphs</button>
+    </div>
+
+    <div class="panel" id="p-ui" role="tabpanel">
+      <table>
+        <tr><th>global ui &mdash; 60 labels, language switch</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td>median</td><td class="num">0.446 ms</td><td class="num">0.454 ms</td><td class="tie">tie</td></tr>
+        <tr><td>p99</td><td class="num">1.385 ms</td><td class="num">14.438 ms</td><td class="win">10&times;</td></tr>
+        <tr><td>worst frame</td><td class="num">6.875 ms</td><td class="num">351.800 ms</td><td class="win">51&times;</td></tr>
+        <tr><td>draw calls</td><td class="num">1</td><td class="num">5</td><td class="win">5&times;</td></tr>
+      </table>
+    </div>
+
+    <div class="panel" id="p-chat" role="tabpanel" hidden>
+      <table>
+        <tr><th>chat stream &mdash; 30 lines, CJK churn</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">TMP static<sup>2</sup></th></tr>
+        <tr><td>median</td><td class="num">0.216 ms</td><td class="num">0.658 ms</td><td class="num">0.091 ms</td></tr>
+        <tr><td>p99</td><td class="num">0.480 ms</td><td class="num">10.003 ms</td><td class="num">0.126 ms</td></tr>
+        <tr><td>worst frame</td><td class="num">0.599 ms</td><td class="num">12.325 ms</td><td class="num">0.182 ms</td></tr>
+        <tr><td>draw calls</td><td class="num">1</td><td class="num">6</td><td class="num">2</td></tr>
+        <tr><td>characters it can draw</td><td class="num">100 %</td><td class="num">100 %</td><td class="lose">60 %</td></tr>
+      </table>
+    </div>
+
+    <div class="panel" id="p-world" role="tabpanel" hidden>
+      <table>
+        <tr><th>world-space &mdash; 200 labels, 50 retexted per frame<sup>3</sup></th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td>median</td><td class="num">0.630 ms</td><td class="num">0.632 ms</td><td class="tie">tie</td></tr>
+        <tr><td>p99</td><td class="num">0.814 ms</td><td class="num">0.759 ms</td><td class="lose">−7 %</td></tr>
+        <tr><td>worst frame</td><td class="num">0.933 ms</td><td class="num">0.850 ms</td><td class="lose">−10 %</td></tr>
+        <tr><td>draw calls</td><td class="num">1</td><td class="num">3</td><td class="win">3&times;</td></tr>
+      </table>
+    </div>
+
+    <div class="panel" id="p-novel" role="tabpanel" hidden>
+      <table>
+        <tr><th>unseen glyphs &mdash; 5 labels/frame, none prebakeable</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td>median</td><td class="num">1.032 ms</td><td class="num">12.380 ms</td><td class="win">12&times;</td></tr>
+        <tr><td>p99</td><td class="num">1.598 ms</td><td class="num">36.146 ms</td><td class="win">23&times;</td></tr>
+        <tr><td>worst frame</td><td class="num">4.036 ms</td><td class="num">43.836 ms</td><td class="win">11&times;</td></tr>
+        <tr><td>draw calls</td><td class="num">1</td><td class="num">8</td><td class="win">8&times;</td></tr>
+      </table>
+      <table style="margin-top:26px">
+        <tr><th>&hellip; and at 50 labels/frame<sup>4</sup></th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td>median</td><td class="num">11.419 ms</td><td class="num">4.384 ms</td><td class="lose">−62 %</td></tr>
+        <tr><td>p99</td><td class="num">15.142 ms</td><td class="num">191.701 ms</td><td class="win">13&times;</td></tr>
+        <tr><td>worst frame</td><td class="num">16.736 ms</td><td class="num">254.569 ms</td><td class="win">15&times;</td></tr>
+        <tr><td>draw calls</td><td class="num">1</td><td class="num">18</td><td class="win">18&times;</td></tr>
+        <tr><td>texture memory</td><td class="num">4 MB fixed</td><td class="num">20 MB growing</td><td class="win">5&times;</td></tr>
+        <tr><td>characters it drew</td><td class="num">100 %</td><td class="lose">79 %</td><td>&nbsp;</td></tr>
+      </table>
+    </div>
+
+    <div class="footnotes">
+      <p><b>1</b> The range across the four scenarios: 11&times; (unseen glyphs) to
+        51&times; (a global UI switching language). The scenario with no atlas work
+        &mdash; short ASCII labels over a warm atlas &mdash; has nothing to win and
+        is a tie on the median, a few per cent behind at the tail. It is published
+        here with the rest.</p>
+      <p><b>2</b> A static atlas, frozen at build time, does no atlas work at all
+        &mdash; and cannot draw two characters in five of this corpus. A smaller
+        job, not a faster engine.</p>
+      <p><b>3</b> The scenario built to suit the other engine: nothing to shape,
+        nothing to bake, nothing a correct engine can be correct at. It used to
+        lose by 16&nbsp;%; it is now a tie on the median.</p>
+      <p><b>4</b> TMP's 62&nbsp;% median win is bought with thirty-two atlas pages,
+        20&nbsp;MB of texture, one character in five undrawn, and 191&nbsp;ms frames
+        while the atlas grows. OneText holds 4&nbsp;MB and one draw call; its worst
+        frame is 16.7&nbsp;ms.</p>
+      <p><b>5</b> Apple M4 Pro, Unity 6000.0.77, Burst compiled ahead of the run,
+        null graphics device, identical scenes and frame loops; median of 3
+        repetitions per cell, chosen by p99. Harness, scenarios and raw per-frame
+        CSVs in <code>Docs/BENCHMARKS.md</code>, losses included &mdash; a
+        comparison that lists only its wins is an advertisement.</p>
+    </div>
+  </section>
+
+  <!-- ================= INSTALL ================= -->
+  <section id="install">
+    <p class="eyebrow">install</p>
+    <h2>Two steps. No baking.</h2>
+    <p class="lede">
+      Add the package. Put a label on a canvas. Type in any language on Earth &mdash;
+      no atlas to bake, no charset to declare, nothing to configure first.
+    </p>
+
+    <div class="two">
+      <div>
+        <div class="step">1 · add the package</div>
+<pre><span class="c">// Packages/manifest.json</span>
+{
+  "dependencies": {
+    <span class="g">"com.onetext.core"</span>: <span class="s">"https://github.com/CodeOneLabs/OneText.git"</span>
+  }
+}</pre>
+      </div>
+      <div>
+        <div class="step">2 · put a label on a canvas</div>
+<pre><span class="c">// or: Add Component &gt; OneText &gt; Label</span>
+var label = go.AddComponent&lt;<span class="v">OneTextLabel</span>&gt;();
+label.SetFont(File.ReadAllBytes(path));
+label.FontSize = <span class="s">38</span>;
+label.Text = <span class="s">"สวัสดีชาวโลก"</span>;</pre>
+      </div>
+    </div>
+
+    <div class="two" style="margin-top:16px">
+      <div>
+        <div class="step">fallback fonts, in one call</div>
+<pre>label.SetFont(latin, arabic, thai, emoji);
+label.Language = <span class="s">"ja"</span>;   <span class="c">// locl: Han unification</span>
+label.CjkLatinSpacing = <span class="v">true</span>;
+label.PunctuationCompression = <span class="v">true</span>;</pre>
+      </div>
+      <div>
+        <div class="step">typewriter, without a coroutine</div>
+<pre>label.CharactersPerSecond = <span class="s">28</span>;
+label.RevealGranularity = <span class="v">Syllable</span>;
+label.SkipToEnd();      <span class="c">// the mash-to-skip button</span>
+label.RestartReveal();</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="statement">
+    <div class="pin"><p>Everything in the box.<br>
+    <span class="g">Nothing behind a paywall.</span></p></div>
+  </section>
+
+  <!-- ================= IN THE BOX ================= -->
+  <section id="box">
+    <p class="eyebrow">in the box</p>
+    <h2>Everything in the box.</h2>
+    <p class="lede">
+      One package. Every feature. Nothing sold separately.
+      Somewhere else, this list is a price sheet.
+    </p>
+    <ul class="checks">
+      <li><b>Shaping &amp; bidi</b> HarfBuzz GSUB/GPOS and the full UAX&nbsp;#9 algorithm — Arabic, Devanagari, Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking</li>
+      <li><b>Rich text &amp; emoji</b> Named styles you edit once and every label follows, inline sprites, colour emoji including ZWJ sequences, flags and skin tones</li>
+      <li><b>Text animation</b> Typewriter by grapheme, orthographic cluster or syllable, per-punctuation pauses for CJK and Thai, <code>&lt;wait=&gt;</code>, skip, per-unit callback, per-cluster effects and a custom-effect API</li>
+      <li><b>Asian typography</b> Kinsoku, punctuation compression, CJK–Latin spacing, Korean word wrap, dictionary line breaking for Thai, Lao, Khmer and Burmese, and a josa tag</li>
+      <li><b>Outline, shadow, glow</b> Packed into vertex channels already paid for, so a decorated label and a plain one still share one material and one draw call</li>
+      <li><b>An input field that survives an IME</b> Inline composition drawn at the caret with a Japanese clause highlight, no syllable lost or doubled on focus change — Input Manager, Input System and the mobile soft keyboard</li>
+      <li><b>The Hub</b> Fonts, charsets, dictionary import with before/after coverage, atlas occupancy and budget advice, a string gallery that flags overflow per locale, and Doctor — a renderability lint that exits 1 so CI can fail a merge</li>
+    </ul>
+
+    <figure>
+      <img src="assets/decorations.png" alt="The same string drawn plain, outlined, shadowed, glowing and both at once, plus an outlined Arabic line">
+      <figcaption>
+        Every row above is one material, one canvas, one draw call. <b>The Arabic line is
+        the one that matters: the outline follows the joined contour because the cluster
+        was rasterized as a single merged field — a per-glyph outline shows a seam at
+        every join.</b>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="assets/gallery.png" alt="The Hub's string gallery: every localised string in its box, overflow framed in red">
+      <figcaption>
+        The string gallery, rendered headlessly by the package itself: every localised
+        string in the box it has to live in, overflow framed in red with the width it
+        actually needs. <b>The pass this replaces is opening every screen in every
+        language, by hand.</b>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ================= MIGRATE ================= -->
+  <section id="migrate">
+    <p class="eyebrow">migrate</p>
+    <h2>Switching is the boring part.</h2>
+    <p class="lede">
+      It is a <code>MaskableGraphic</code>, so everything you already know just works
+      &mdash; <code>RectTransform</code>, layout groups, <code>ContentSizeFitter</code>,
+      masks, raycasting. Rename the component, keep your habits.
+      Boring, on purpose.
+    </p>
+    <table>
+      <tr><th>TextMeshPro</th><th>OneText</th><th>note</th></tr>
+      <tr><td><code>TextMeshProUGUI</code></td><td><code>OneTextLabel</code></td><td>same component slot</td></tr>
+      <tr><td><code>.text</code></td><td><code>.Text</code></td><td>—</td></tr>
+      <tr><td><code>.fontSize</code></td><td><code>.FontSize</code></td><td>—</td></tr>
+      <tr><td><code>.font</code> (baked asset)</td><td><code>.SetFont(bytes, …fallbacks)</code></td><td>no atlas to bake first</td></tr>
+      <tr><td><code>.enableWordWrapping</code></td><td><code>.Wrap</code></td><td><code>NoWrap</code> / <code>Wrap</code></td></tr>
+      <tr><td><code>TMP_InputField</code></td><td><code>OneTextInputField</code></td><td>composition is handled, not worked around</td></tr>
+      <tr><td>fallback font list per asset</td><td>one call, one shared atlas</td><td>fallbacks do not split the draw</td></tr>
+    </table>
+  </section>
+
+  <section class="statement">
+    <div class="pin"><p>888,289 tests.<br>
+    <span class="g">Zero failures.</span></p></div>
+  </section>
+
+  <!-- ================= CORRECTNESS ================= -->
+  <section id="correct">
+    <p class="eyebrow">correctness</p>
+    <h2>Correctness, as a number.</h2>
+    <p class="lede">
+      Unicode publishes a test for every algorithm it defines. OneText runs all of
+      them, on every commit &mdash; 888,289 cases, zero failures. Correct isn't a
+      claim here. It's a build step.
+    </p>
+    <table>
+      <tr><th>suite</th><th>standard</th><th class="num">cases</th><th>result</th></tr>
+      <tr><td>BidiTest</td><td>UAX #9 · by class</td><td class="num">770,241</td><td class="pass">PASS</td></tr>
+      <tr><td>BidiCharacterTest</td><td>UAX #9 · by character</td><td class="num">91,707</td><td class="pass">PASS</td></tr>
+      <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num">19,338</td><td class="pass">PASS</td></tr>
+      <tr><td>emoji-test</td><td>UTS #51</td><td class="num">3,781</td><td class="pass">PASS</td></tr>
+      <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num">1,944</td><td class="pass">PASS</td></tr>
+      <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num">766</td><td class="pass">PASS</td></tr>
+      <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num">512</td><td class="pass">PASS</td></tr>
+      <tr><td><b>every official suite</b></td><td>no exceptions</td><td class="num"><b>888,289</b></td><td class="pass">PASS</td></tr>
+    </table>
+    <p class="lede" style="margin-top:22px">
+      Then once more, against real fonts: every assigned codepoint in Unicode 17.0.0,
+      shaped, outlined, rasterized and placed. All 159,631 of them.
+    </p>
+<pre><span class="g">[coverage]</span> shaped 159,631/159,631 codepoints, 177,400 glyphs, 0 threw; 53 s
+<span class="g">[coverage]</span> 155,496 of 159,631 have a glyph in 213 fonts (97.41 %)
+<span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed
+<span class="s">[coverage]</span> 4,135 uncovered (2.59 %) — three blocks added in Unicode 16–17,
+            for which no free font exists yet</pre>
+  </section>
+
+  <!-- ================= STATUS ================= -->
+  <section id="status">
+    <p class="eyebrow">status</p>
+    <h2>Built in the open.</h2>
+    <p class="lede">
+      Early, and built in the open. What isn't done is listed, not implied.
+    </p>
+    <table>
+      <tr><th>area</th><th>state</th></tr>
+      <tr><td>Shaping, bidi, segmentation, layout, SDF atlas, uGUI components</td><td class="pass">done</td></tr>
+      <tr><td>Rich text, colour emoji, animation, Asian typography, decorations, Hub, IME input</td><td class="pass">done</td></tr>
+      <tr><td>Windows · macOS · Linux · Android · iOS natives</td><td class="pass">shipped</td></tr>
+      <tr><td>Verified end to end on a real device</td><td class="wip">macOS only so far</td></tr>
+      <tr><td>WebGL + browser demo</td><td class="wip">coming up</td></tr>
+      <tr><td>Outline, shadow, glow</td><td class="pass">done</td></tr>
+      <tr><td>MSDF — sharp corners at large sizes</td><td class="wip">coming up</td></tr>
+      <tr><td>Ruby (furigana), vertical writing</td><td class="wip">coming up</td></tr>
+      <tr><td>UI Toolkit frontend, ECS, screen readers</td><td class="wip">unbuilt</td></tr>
+    </table>
+    <div class="note">
+      <b>Requirements.</b> Unity 2021.3 LTS or newer. HarfBuzz and FreeType binaries ship
+      with the package. MIT licensed; the native dependencies are permissively licensed
+      too. Full ICU word-break dictionaries for Thai, Lao, Khmer and Burmese import as a
+      package sample, so a project that ships none of those languages does not carry the
+      4.2 MB.
+    </div>
+  </section>
+
+  <footer>
+    OneText — free, open source, MIT · Unicode 17.0.0 · Unity 2021.3+<br>
+    Every number on this page is produced by a script in the repository and can be re-run.
+  </footer>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+// Three pieces of glass on this page: a ball of extruded glyphs in the hero
+// that you can turn with a pointer, the wordmark above the headline, cast
+// once and blitted, and a loose shoal of glyphs that drifts behind the
+// scroll interludes.
+//
+// There was briefly a third — one enormous glyph per section, fixed behind
+// the page, crossing as you scrolled. It could never have worked. A
+// transmissive material refracts what is in the WebGL scene behind it, and the
+// scene behind a transparent full-page canvas is empty, so the glass had
+// nothing to transmit but black and rendered as fog over the body text. DOM
+// content cannot be refracted by a canvas drawn on top of it. The way around
+// it is an in-scene lightbox that never reaches the page: render the glass
+// over a streaked backdrop, render a white silhouette without it, and keep
+// only the pixels the silhouette says are letter. That was built for the
+// wordmark and then dropped for looking wrong — the note survives so the next
+// attempt starts from the technique rather than from the wall.
+//
+// Outlines are baked by Tools/extract_glyph_paths.py, so a visitor with no
+// Devanagari font still sees Devanagari: by the time it reaches the page it is
+// a shape, not text. Decorative — aria-hidden, behind a try/catch, and a
+// browser without WebGL simply gets a page without it.
+import * as THREE from "three";
+import { SVGLoader } from "three/addons/loaders/SVGLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { GLYPHS } from "./glyphs.js";
+import { GREETINGS } from "./greetings.js";
+
+const GREEN = new THREE.Color(0x7ee7b4);
+const VIOLET = new THREE.Color(0xb39dff);
+const CLEAR = new THREE.Color(0xffffff);
+const loader = new SVGLoader();
+
+// Each piece sits somewhere on the green-to-violet line and is pulled a random
+// way toward clear. Transmissive glass renders any mix at full strength, so
+// varying only the hue came out as three vivid colours rather than a family;
+// varying how far it is from clear as well is what makes it a gradient.
+function tint(mix, wash) {
+  return GREEN.clone().lerp(VIOLET, mix).lerp(CLEAR, wash);
+}
+
+function glass(hue, opts) {
+  const settings = Object.assign({
+    thickness: 2.4, attenuationDistance: 2.2, env: 0.8, rim: 1.1, roughness: 0.06
+  }, opts);
+  const material = new THREE.MeshPhysicalMaterial({
+    color: hue, metalness: 0, roughness: settings.roughness,
+    transmission: 1, thickness: settings.thickness, ior: 1.46,
+    // The tint has to go on `color`: attenuation alone only bites over a long
+    // optical path, and a glyph two units thick is not one.
+    attenuationColor: hue, attenuationDistance: settings.attenuationDistance,
+    clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: settings.env,
+    transparent: true, side: THREE.DoubleSide
+  });
+  // A Fresnel rim so an edge-on glyph still has an outline against the page.
+  material.onBeforeCompile = shader => {
+    shader.uniforms.uRim = { value: hue };
+    shader.uniforms.uRimStrength = { value: settings.rim };
+    shader.fragmentShader = shader.fragmentShader
+      .replace("uniform vec3 emissive;",
+        "uniform vec3 emissive;\nuniform vec3 uRim;\nuniform float uRimStrength;")
+      .replace("#include <emissivemap_fragment>",
+        "#include <emissivemap_fragment>\n" +
+        "float uFres = pow(1.0 - saturate(dot(normalize(vViewPosition), normal)), 2.6);\n" +
+        "totalEmissiveRadiance += uRim * uFres * uRimStrength;");
+  };
+  return material;
+}
+
+// A point earns its place if it moves the outline. Everything else is a
+// point the flattener left behind, and those are not free: earcut hands a
+// run of collinear points back as needles — triangles whose three corners
+// sit on one line — and a needle's face normal is the cross product of two
+// parallel edges, which is zero or noise. Under a transmissive material a
+// noisy normal is a black speck, and katakana ユ, whose every stroke is a
+// long straight bar, wore a row of them along both edges of its crossbar at
+// any angle but head-on. The tolerance is a ten-thousandth of the em —
+// below a tenth of a pixel at the size these are drawn, and far under the
+// sag of a real curve's chord, so bowls keep every point they need.
+function simplify(ring, epsilon) {
+  const pts = ring.slice();
+  // A closed path comes back with its first point repeated at the end.
+  if (pts.length > 2 && pts[pts.length - 1].distanceTo(pts[0]) < 1e-9) pts.pop();
+  const kept = [];
+  for (let i = 0; i < pts.length; i++) {
+    const point = pts[i];
+    const prev = kept.length ? kept[kept.length - 1] : pts[pts.length - 1];
+    if (point.distanceTo(prev) < epsilon) continue;
+    // Against the next point that is actually somewhere else, so a cluster
+    // of near-duplicates cannot make a real corner look collinear.
+    let next = null;
+    for (let step = 1; step < pts.length; step++) {
+      const candidate = pts[(i + step) % pts.length];
+      if (candidate.distanceTo(point) >= epsilon) { next = candidate; break; }
+    }
+    if (!next) continue;
+    const spanX = next.x - prev.x, spanY = next.y - prev.y;
+    const span = Math.hypot(spanX, spanY);
+    if (span > epsilon &&
+        Math.abs(spanX * (prev.y - point.y) - spanY * (prev.x - point.x)) / span < epsilon)
+      continue;
+    kept.push(point);
+  }
+  // Never hand back something that is no longer a polygon.
+  return kept.length >= 3 ? kept : pts;
+}
+
+// Extruding is the expensive part, so each glyph is built once and the two
+// scenes share the geometry between them.
+const geometries = new Map();
+function geometryFor(entry, opts) {
+  if (geometries.has(entry)) return geometries.get(entry);
+  const parsed = loader.parse(
+    '<svg xmlns="http://www.w3.org/2000/svg"><path d="' + entry.d + '"/></svg>');
+  const shapes = parsed.paths.flatMap(path => SVGLoader.createShapes(path));
+  if (!shapes.length) { geometries.set(entry, null); return null; }
+  const set = Object.assign({
+    // Thin enough to stay a letter. At 14 % of the em plus a heavy bevel every
+    // glyph became a brick, and twelve curve segments matter on a page whose
+    // product is glyph fidelity — six left visible polygons on the bowls.
+    // (The wordmark overrides: seen head-on, glass needs a deeper slab for
+    // the refraction to happen in, and a wider bevel to catch a highlight.)
+    depth: 0.06, bevelThickness: 0.009, bevelSize: 0.007, curveSegments: 12
+  }, opts);
+  // Flatten here rather than leave it to the extruder, so the redundant
+  // points can be dropped before anything is triangulated. The extractor
+  // draws a dead-straight stroke edge as a cubic like any other, and twelve
+  // segments of a straight cubic are twelve points on one line.
+  const epsilon = entry.upem * 0.0001;
+  const polygons = shapes.map(shape => {
+    const flat = shape.extractPoints(set.curveSegments);
+    const polygon = new THREE.Shape(simplify(flat.shape, epsilon));
+    polygon.holes = flat.holes.map(hole => new THREE.Path(simplify(hole, epsilon)));
+    return polygon;
+  });
+  const geo = new THREE.ExtrudeGeometry(polygons, {
+    depth: entry.upem * set.depth, bevelEnabled: true,
+    bevelThickness: entry.upem * set.bevelThickness,
+    bevelSize: entry.upem * set.bevelSize,
+    bevelSegments: 2, curveSegments: set.curveSegments
+  });
+  geo.center();
+  geometries.set(entry, geo);
+  return geo;
+}
+
+// Which scripts the ball shows. A random slice of fifty could hand back six
+// near-identical CJK blocks, and a ball of squares is the one thing this
+// object must never look like — so the draw is one glyph per silhouette
+// family, shuffled within each.
+const FAMILIES = [
+  ["Arabic", "Syriac", "Thaana", "N'Ko"],
+  ["Devanagari", "Bengali", "Gurmukhi", "Gujarati"],
+  ["Tamil", "Telugu", "Kannada", "Malayalam", "Oriya", "Sinhala"],
+  ["Thai", "Lao", "Khmer", "Myanmar"],
+  ["Hangul"], ["Han"], ["Kana"],
+  ["Greek"], ["Latin"], ["Cyrillic"],
+  ["Hebrew"], ["Georgian"], ["Armenian"], ["Ethiopic"],
+  ["Runic", "Coptic", "Glagolitic", "Cherokee", "Osage", "Vai", "Adlam", "Mongolian"]
+];
+
+function cast() {
+  const picked = [];
+  for (const family of FAMILIES) {
+    const members = shuffled(GLYPHS.filter(g => family.includes(g.script)));
+    if (members.length) picked.push(members[0]);
+  }
+  return shuffled(picked).slice(0, 15);
+}
+
+function shuffled(list) {
+  const copy = list.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function environmentFor(renderer) {
+  // Transmissive glass needs something to refract; without an environment
+  // there is nothing for the material to bend and it renders as fog.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  return pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+}
+
+function wordEnvironment(renderer) {
+  // The globe borrows a white room and gets away with it — its glyphs are
+  // small and tinted. At wordmark size a white environment is what every
+  // face reflects, and white sheen over every face reads as brushed metal:
+  // it desaturates the very hue the glass transmits. So the wordmark
+  // reflects the page instead: a green wall on one side, a violet wall on
+  // the other, one hot white strip overhead for the glints.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = new THREE.Scene();
+  env.background = new THREE.Color(0x030405);
+  const centre = new THREE.Vector3(0, 0, 0);
+  const panel = (hex, watts, width, height, x, y, z) => {
+    const material = new THREE.MeshBasicMaterial();
+    material.color.set(hex).multiplyScalar(watts);
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+    plate.position.set(x, y, z);
+    plate.lookAt(centre);
+    env.add(plate);
+  };
+  panel(GREEN.getHex(), 2.6, 10, 10, -7, 1, 4);
+  panel(VIOLET.getHex(), 2.6, 10, 10, 7, -1, 4);
+  panel(0xffffff, 9, 14, 1.2, 0, 8, 2);
+  const texture = pmrem.fromScene(env, 0.04).texture;
+  env.traverse(node => { if (node.geometry) node.geometry.dispose(); });
+  return texture;
+}
+
+// ---------------------------------------------------------------- the globe
+function buildGlobe(host) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.9;
+  host.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.environment = environmentFor(renderer);
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 200);
+
+  const group = new THREE.Group();
+  const RADIUS = 15;
+  const floaters = [];
+
+  cast().forEach(entry => {
+    const geo = geometryFor(entry);
+    if (!geo) return;
+
+    const mesh = new THREE.Mesh(geo, glass(tint(Math.random(), Math.random() * 0.25)));
+    // Font units are large but already y-up — the extractor dumps the pen's
+    // coordinates raw, it only borrows SVG's path *syntax*. Scale, don't
+    // flip: a negative y put every glyph on the ball upside down and turned
+    // the extrusion's normals inside out, which glass shading then paid for.
+    const scale = 7.2 / entry.upem;
+    mesh.scale.set(scale, scale, scale);
+
+    // Inside the sphere, not on it. A direction picked uniformly and a radius
+    // taken as the cube root of a uniform draw fills the volume evenly —
+    // scaling the radius linearly would crowd everything against the shell.
+    const dir = new THREE.Vector3().randomDirection();
+    const holder = new THREE.Group();
+    holder.position.copy(dir).multiplyScalar(RADIUS * Math.cbrt(Math.random()));
+    // A small tilt, not a random orientation. Tumbling each glyph through a
+    // full sphere showed most of them edge-on or from behind, and a ball of
+    // unreadable slabs argues against the headline instead of for it — the
+    // group's own turn supplies all the parallax this needs.
+    holder.rotation.set((Math.random() - 0.5) * 0.5,
+                        (Math.random() - 0.5) * 0.5,
+                        (Math.random() - 0.5) * 0.3);
+    holder.add(mesh);
+    group.add(holder);
+
+    floaters.push({
+      holder, home: holder.position.clone(),
+      // Each drifts on its own period and axis, so nothing beats in time with
+      // anything else and the ball never looks like one rigid object.
+      phase: Math.random() * 6.28, speed: 0.18 + Math.random() * 0.30,
+      swing: 0.4 + Math.random() * 0.7,
+      axis: new THREE.Vector3().randomDirection(),
+      spin: (Math.random() - 0.5) * 0.16
+    });
+  });
+  scene.add(group);
+
+  // Frame the whole thing rather than guessing a distance: the group is
+  // centred, so its bounding sphere is what the camera has to clear at every
+  // angle it can be dragged to. Nothing gets cut off at the corners.
+  const bounds = new THREE.Box3().setFromObject(group).getBoundingSphere(new THREE.Sphere());
+  const fit = (bounds.radius + 1.2) / Math.sin((camera.fov * Math.PI) / 360);
+
+  function size() {
+    const rect = host.getBoundingClientRect();
+    const side = Math.max(1, Math.min(rect.width, rect.height));
+    renderer.setSize(side, side, false);
+    camera.aspect = 1;
+    camera.position.set(0, 0, fit * 0.92);
+    camera.updateProjectionMatrix();
+  }
+  size();
+  new ResizeObserver(size).observe(host);
+
+  let dragging = false, lastX = 0, lastY = 0, spinX = 0, spinY = 0, idle = 0;
+  host.addEventListener("pointerdown", event => {
+    dragging = true; idle = 0;
+    lastX = event.clientX; lastY = event.clientY;
+    host.setPointerCapture(event.pointerId);
+  });
+  host.addEventListener("pointermove", event => {
+    if (!dragging) return;
+    spinY = (event.clientX - lastX) * 0.006;
+    spinX = (event.clientY - lastY) * 0.006;
+    group.rotation.y += spinY;
+    group.rotation.x += spinX;
+    lastX = event.clientX; lastY = event.clientY;
+  });
+  function release(event) {
+    if (!dragging) return;
+    dragging = false;
+    if (event.pointerId !== undefined && host.hasPointerCapture(event.pointerId))
+      host.releasePointerCapture(event.pointerId);
+  }
+  host.addEventListener("pointerup", release);
+  host.addEventListener("pointercancel", release);
+
+  let clock = 0;
+  return function frame(dt, still) {
+    if (!still) {
+      clock += dt;
+      for (const f of floaters) {
+        // Bob along the glyph's own axis, around where it was placed.
+        f.holder.position.copy(f.home)
+          .addScaledVector(f.axis, Math.sin(clock * f.speed + f.phase) * f.swing);
+        f.holder.rotateOnAxis(f.axis, f.spin * dt);
+      }
+      if (dragging) {
+        idle = 0;
+      } else {
+        // Carry the throw, then hand back to the idle turn — a hard stop on
+        // release feels like the ball hit something.
+        spinX *= 0.94; spinY *= 0.94;
+        group.rotation.x += spinX;
+        group.rotation.y += spinY;
+        idle = Math.min(1, idle + dt * 0.5);
+        group.rotation.y += dt * 0.22 * idle;
+      }
+    }
+    renderer.render(scene, camera);
+  };
+}
+
+// ------------------------------------------------- the drift, behind statements
+// The interlude sentences hang in corridors of empty page, and empty is the
+// one thing this page should never say about text. A single fixed canvas —
+// one more WebGL context in total, not one per statement — fades in while a
+// corridor is on screen. The first corridor says hello: Hello!, 안녕,
+// नमस्ते, مرحبا — whole words, shaped by HarfBuzz at bake time
+// (Tools/extract_greeting_paths.py), so the conjuncts and joins are real;
+// skipping the shaper for its own decorations is the one hypocrisy this
+// page cannot afford. The later corridors go back to single specimen
+// glyphs — the greeting is an opener, not a wallpaper. Either shoal rings
+// the middle of the viewport where the sentence sits: in its orbit, never
+// on its words. Time does the bobbing; the scroll owns the parallax, and
+// each corridor gets its own turn of the ring so they do not repeat.
+function buildDrift() {
+  const corridors = Array.from(document.querySelectorAll(".statement"));
+  if (!corridors.length) return null;
+  const pins = corridors.map(c => c.querySelector(".pin"));
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.9;
+  const el = renderer.domElement;
+  el.className = "drift";
+  el.setAttribute("aria-hidden", "true");
+  document.body.appendChild(el);
+
+  const scene = new THREE.Scene();
+  scene.environment = environmentFor(renderer);
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 200);
+  camera.position.z = 26;
+
+  // One shoal per look, both built once, toggled by corridor. The ring
+  // lives in the screen plane and each corridor advances everything along
+  // it — new arrangement, same facing. Rotating a group in y instead sent
+  // half the greetings edge-on or backwards.
+  function shoal(entries, opts) {
+    const group = new THREE.Group();
+    const floaters = [];
+    entries.forEach((entry, i) => {
+      const geo = geometryFor(entry);
+      if (!geo) return;
+      const mesh = new THREE.Mesh(geo, glass(tint(Math.random(), Math.random() * 0.25)));
+      const scale = opts.scale(entry);
+      mesh.scale.set(scale, scale, scale);
+
+      const holder = new THREE.Group();
+      holder.rotation.set((Math.random() - 0.5) * opts.tilt,
+                          (Math.random() - 0.5) * opts.tilt,
+                          (Math.random() - 0.5) * opts.tilt * 0.6);
+      holder.add(mesh);
+      group.add(holder);
+
+      floaters.push({
+        holder,
+        angle: (i / entries.length) * Math.PI * 2 + Math.random() * 0.6,
+        // Fractions of the visible half-extents, not scene units: the ring
+        // was laid out for a desktop frame, and on a phone that put every
+        // word past the left and right edges of the canvas.
+        rx: 0.62 + Math.random() * 0.31, ry: 0.57 + Math.random() * 0.31,
+        z: -4 + Math.random() * 5,
+        phase: Math.random() * 6.28, speed: 0.18 + Math.random() * 0.30,
+        swing: 0.5 + Math.random() * 0.8,
+        axis: new THREE.Vector3().randomDirection(),
+        spin: (Math.random() - 0.5) * opts.spin
+      });
+    });
+    group.visible = false;
+    scene.add(group);
+    return { group, floaters };
+  }
+
+  const greetings = shoal(shuffled(GREETINGS).slice(0, 10), {
+    // An em height of 2.4, unless the word is long — こんにちは at that size
+    // is wider than the ring, so width caps the scale instead. Gentler tilts
+    // and spins than the glyphs get: a glyph reads at any angle, a word
+    // stops being a greeting the moment it goes edge-on.
+    scale: entry => Math.min(2.4, 8.5 / (entry.width / entry.upem)) / entry.upem,
+    tilt: 0.3, spin: 0.1
+  });
+  const specimens = shoal(cast().slice(0, 12), {
+    scale: entry => 4.6 / entry.upem,
+    tilt: 0.5, spin: 0.2
+  });
+
+  function size() {
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    // Words sized for a desktop frame crowd a phone's. Shrink the pieces,
+    // not the groups — a scaled group would shrink the ring's radius too,
+    // and the ring is already measured from the viewport every frame.
+    const shrink = Math.max(0.55, Math.min(1, camera.aspect / 1.6));
+    [greetings, specimens].forEach(s =>
+      s.floaters.forEach(f => f.holder.scale.setScalar(shrink)));
+  }
+  size();
+  window.addEventListener("resize", size);
+
+  let clock = 0, shown = false;
+  return function drift(dt) {
+    // Which corridor, and how far through it — the same measure the word
+    // scrub takes, taken again so the two scripts stay strangers.
+    let active = -1, progress = 0;
+    for (let i = 0; i < corridors.length; i++) {
+      const rect = corridors[i].getBoundingClientRect();
+      if (rect.top < window.innerHeight && rect.bottom > 0) {
+        active = i;
+        // The pin's height, for the same reason as the word scrub: 100vh
+        // and innerHeight part ways under a phone's URL bar.
+        const travel = rect.height - (pins[i] ? pins[i].offsetHeight : window.innerHeight);
+        progress = travel > 0 ? -rect.top / travel : 0.5;
+        break;
+      }
+    }
+    const opacity = active < 0 ? 0 :
+      Math.max(0, Math.min(1, Math.min(progress + 0.05, 1.05 - progress) / 0.2));
+    if (!opacity) {
+      // Nothing to show, nothing to spend: no render, no style churn.
+      if (shown) { el.style.opacity = "0"; shown = false; }
+      return;
+    }
+    el.style.opacity = String(opacity);
+    shown = true;
+
+    clock += dt;
+    // The first corridor greets; the rest show the specimens.
+    const set = active === 0 ? greetings : specimens;
+    const other = active === 0 ? specimens : greetings;
+    other.group.visible = false;
+    set.group.visible = true;
+
+    const halfH = Math.tan(camera.fov * Math.PI / 360) * camera.position.z;
+    const halfW = halfH * camera.aspect;
+    const turn = active * 2.1;
+    for (const f of set.floaters) {
+      f.holder.position.set(Math.cos(f.angle + turn) * f.rx * halfW,
+                            Math.sin(f.angle + turn) * f.ry * halfH, f.z)
+        .addScaledVector(f.axis, Math.sin(clock * f.speed + f.phase) * f.swing);
+      f.holder.rotateOnAxis(f.axis, f.spin * dt);
+    }
+    // The ring follows the sentence, not the viewport. The pin's centre is
+    // where the words actually are — under a retracting URL bar, or while
+    // the corridor is still entering, that is not the middle of the screen.
+    const pinRect = pins[active] ? pins[active].getBoundingClientRect() : null;
+    const follow = pinRect
+      ? ((window.innerHeight / 2 - (pinRect.top + pinRect.height / 2))
+         / window.innerHeight) * 2 * halfH
+      : 0;
+    set.group.position.y = follow + (progress - 0.5) * 3;
+    set.group.rotation.y = (progress - 0.5) * 0.22;
+    renderer.render(scene, camera);
+  };
+}
+
+
+(function () {
+  const globeHost = document.getElementById("globe");
+  if (!globeHost || !GLYPHS.length) return;
+
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let frame, drift;
+  try {
+    frame = buildGlobe(globeHost);
+    // The drift only exists to move; under reduced motion the statements are
+    // static text and the extra context is never created.
+    drift = still ? null : buildDrift();
+  } catch (e) {
+    // No WebGL, or a blocked CDN. The page is complete without it.
+    return;
+  }
+
+  // With motion off the scene never changes, so drawing it sixty times a
+  // second is a fan running for nothing. Draw it once and let the pointer
+  // handlers ask for more.
+  if (still) { frame(0, true); return; }
+
+  let last = 0;
+  requestAnimationFrame(function loop(now) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    frame(dt, false);
+    if (drift) drift(dt);
+    requestAnimationFrame(loop);
+  });
+})();
+</script>
+
+<script>
+// Progressive enhancement: with JavaScript off every panel is simply visible,
+// which is the honest failure mode for a table of results.
+(function () {
+  var tabs = document.querySelectorAll('.tabs [role="tab"]');
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      tabs.forEach(function (other) {
+        var panel = document.getElementById(other.getAttribute('aria-controls'));
+        var on = other === tab;
+        other.setAttribute('aria-selected', on ? 'true' : 'false');
+        if (panel) panel.hidden = !on;
+      });
+    });
+  });
+})();
+</script>
+
+<script>
+// The scroll does the talking: a full-height sentence between chapters, inked
+// in one word at a time by how far the reader has carried it, and content
+// that rises a few pixels as it enters. Reduced motion, or no JavaScript,
+// gets the same words — simply already there.
+(function () {
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var statements = [];
+  document.querySelectorAll('.statement').forEach(function (sec) {
+    var p = sec.querySelector('p');
+    var pin = sec.querySelector('.pin');
+    if (!p || !pin) return;
+    var words = [];
+    (function wrap(node, green) {
+      Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+        if (child.nodeType === 3) {
+          var frag = document.createDocumentFragment();
+          child.textContent.split(/(\s+)/).forEach(function (part) {
+            if (!part) return;
+            if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(' ')); return; }
+            var w = document.createElement('span');
+            w.className = green ? 'w g' : 'w';
+            w.textContent = part;
+            frag.appendChild(w);
+            words.push(w);
+          });
+          node.replaceChild(frag, child);
+        } else if (child.nodeType === 1) {
+          wrap(child, green || child.classList.contains('g'));
+        }
+      });
+    })(p, false);
+    statements.push({ sec: sec, pin: pin, words: words });
+  });
+
+  if (reduce) {
+    statements.forEach(function (s) {
+      s.words.forEach(function (w) { w.classList.add('lit'); });
+    });
+  } else if (statements.length) {
+    var perf = document.getElementById('perf');
+    var ticking = false;
+    function paint() {
+      ticking = false;
+      var vh = window.innerHeight;
+      // The theme flip rides the same scroll: violet while the performance
+      // chapter is the thing on screen, green-black again once it is not.
+      if (perf) {
+        var pr = perf.getBoundingClientRect();
+        document.body.classList.toggle('flip', pr.top < vh * 0.6 && pr.bottom > vh * 0.4);
+      }
+      statements.forEach(function (s) {
+        var rect = s.sec.getBoundingClientRect();
+        // Against the pin's own height, not the window's: on a phone the
+        // URL bar makes innerHeight and 100vh disagree, and the mismatch
+        // shifts when every word has finished lighting.
+        var travel = rect.height - s.pin.offsetHeight;
+        var progress = travel > 0 ? -rect.top / travel : 1;
+        // The first stretch of the corridor is entrance and the last is exit;
+        // the words spend the middle three-fifths arriving one at a time.
+        var t = Math.min(1, Math.max(0, (progress - 0.15) / 0.6));
+        var lit = Math.round(t * s.words.length);
+        s.words.forEach(function (w, i) { w.classList.toggle('lit', i < lit); });
+      });
+    }
+    function ask() { if (!ticking) { ticking = true; requestAnimationFrame(paint); } }
+    addEventListener('scroll', ask, { passive: true });
+    addEventListener('resize', ask);
+    paint();
+  }
+
+  if (reduce || !('IntersectionObserver' in window)) return;
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('in');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { rootMargin: '0px 0px -12% 0px' });
+  document.querySelectorAll('section:not(.statement) > *, .wrap > figure')
+    .forEach(function (el) { el.classList.add('reveal'); io.observe(el); });
+})();
+</script>
+
+</body>
+</html>

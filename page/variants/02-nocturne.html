@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Nocturne</title>
+<style>
+  :root {
+    --bg: #12100e;
+    --bg-2: #1b1815;
+    --cream: #f3ead9;
+    --cream-dim: rgba(243,234,217,0.60);
+    --cream-faint: rgba(243,234,217,0.32);
+    --edge: rgba(243,234,217,0.14);
+    --vermillion: #e8552f;
+    --gold: #e0b25c;
+    --jade: #74b89a;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --sans: "Pretendard", "Helvetica Neue", Helvetica, Arial, "Apple SD Gothic Neo", sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--cream); font-family: var(--sans);
+    line-height: 1.7; overflow-x: hidden;
+  }
+  /* warm lamplight, not aurora */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(60vw 50vw at 78% 8%, rgba(232,85,47,0.16), transparent 62%),
+      radial-gradient(50vw 44vw at 8% 62%, rgba(224,178,92,0.10), transparent 62%);
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+
+  nav {
+    display: flex; align-items: baseline; gap: 24px; padding: 26px 0;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase;
+    border-bottom: 1px solid var(--edge);
+  }
+  nav b {
+    font-family: var(--serif); font-size: 19px; letter-spacing: 0; text-transform: none;
+    font-weight: 400;
+  }
+  nav b i { font-style: italic; color: var(--vermillion); }
+  nav a { color: var(--cream-dim); text-decoration: none; }
+  nav a:hover { color: var(--gold); }
+  nav .spacer { flex: 1; }
+
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; padding: 78px 0 56px; align-items: center; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+
+  .kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+            text-transform: uppercase; color: var(--gold); }
+  h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(40px, 6.4vw, 80px);
+       line-height: 1.02; letter-spacing: -0.025em; margin: 20px 0 0; }
+  h1 em { font-style: italic; color: var(--vermillion); }
+  .lede { font-size: 17.5px; color: var(--cream-dim); max-width: 480px; margin-top: 22px; }
+
+  .meta { display: flex; gap: 34px; margin-top: 40px; flex-wrap: wrap; }
+  .meta div { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.15em;
+              text-transform: uppercase; color: var(--cream-faint); }
+  .meta b { display: block; font-family: var(--serif); font-size: 34px; letter-spacing: -0.02em;
+            color: var(--cream); text-transform: none; font-variant-numeric: tabular-nums;
+            line-height: 1.1; margin-bottom: 2px; }
+
+  /* ==== the lantern: warm glass, glyph inside ==== */
+  .stage { perspective: 1100px; display: flex; justify-content: center; }
+  .slab { position: relative; width: min(400px, 78vw); aspect-ratio: 1;
+          transform-style: preserve-3d; transition: transform 0.3s ease-out; cursor: grab; }
+  .slab:active { cursor: grabbing; }
+  .face {
+    position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+    background:
+      radial-gradient(circle at 32% 26%, rgba(243,234,217,0.20), transparent 55%),
+      linear-gradient(160deg, rgba(232,85,47,0.16), rgba(27,24,21,0.85));
+    border: 1px solid rgba(243,234,217,0.20);
+    box-shadow:
+      0 40px 90px -30px rgba(232,85,47,0.45),
+      0 1px 0 rgba(243,234,217,0.22) inset,
+      0 -40px 80px -50px rgba(224,178,92,0.55) inset;
+  }
+  .face canvas { width: 100%; height: 100%; display: block; }
+  .halo {
+    position: absolute; inset: -14%; border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, rgba(232,85,47,0.22), transparent 62%);
+    filter: blur(24px);
+  }
+  .caption { text-align: center; margin-top: 22px; font-family: var(--mono); font-size: 11px;
+             letter-spacing: 0.18em; text-transform: uppercase; color: var(--cream-faint); }
+  .caption b { color: var(--gold); }
+
+  .strip { display: flex; flex-wrap: wrap; border-top: 1px solid var(--edge);
+           border-bottom: 1px solid var(--edge); }
+  .strip div { flex: 1 1 170px; padding: 28px 22px; border-right: 1px solid var(--edge); }
+  .strip div:last-child { border-right: none; }
+  .strip .big { font-size: 38px; line-height: 1.3; }
+  .strip .lab { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+                text-transform: uppercase; color: var(--cream-faint); margin-top: 8px; }
+
+  section { padding: 68px 0; }
+  h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(27px, 3.8vw, 42px);
+       letter-spacing: -0.02em; margin-bottom: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 30px; }
+  th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--edge); }
+  th { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em;
+       text-transform: uppercase; color: var(--gold); }
+  td { color: var(--cream-dim); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td b { color: var(--cream); font-variant-numeric: tabular-nums; }
+  .pass { color: var(--jade); font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <b>One<i>Text</i></b>
+    <span class="spacer"></span>
+    <a href="#">Conformance</a><a href="#">Coverage</a><a href="#">Performance</a><a href="#">GitHub</a>
+  </nav>
+
+  <div class="hero">
+    <div>
+      <div class="kicker">A text engine for Unity · MIT · no paid tier</div>
+      <h1>Ship the languages<br>you've been <em>putting off</em>.</h1>
+      <p class="lede">
+        HarfBuzz shaping and the full bidirectional algorithm, in plain uGUI.
+        Every writing system, with the conformance runs to prove it.
+      </p>
+      <div class="meta">
+        <div><b>888,289</b>conformance cases</div>
+        <div><b>159,631</b>codepoints, 0 threw</div>
+        <div><b>1</b>draw call</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="slab" id="slab">
+          <div class="halo"></div>
+          <div class="face"><canvas id="glyph" width="800" height="800"></canvas></div>
+        </div>
+      </div>
+      <div class="caption"><b id="scriptname">Arabic</b> · <span id="note">ع AIN</span></div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div><div class="big">العربية</div><div class="lab">Arabic · joining</div></div>
+    <div><div class="big">ภาษาไทย</div><div class="lab">Thai · marks</div></div>
+    <div><div class="big">हिन्दी</div><div class="lab">Devanagari · reorder</div></div>
+    <div><div class="big">한국어</div><div class="lab">Korean</div></div>
+    <div><div class="big">👨‍👩‍👧‍👦</div><div class="lab">ZWJ · one glyph</div></div>
+  </div>
+
+  <section>
+    <div class="kicker">Conformance</div>
+    <h2>Unicode's own tests, all of them</h2>
+    <table>
+      <tr><th>Suite</th><th>Standard</th><th class="num">Cases</th><th>Result</th></tr>
+      <tr><td>BidiTest</td><td>UAX #9 · by class</td><td class="num"><b>770,241</b></td><td class="pass">PASS</td></tr>
+      <tr><td>BidiCharacterTest</td><td>UAX #9 · by character</td><td class="num"><b>91,707</b></td><td class="pass">PASS</td></tr>
+      <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num"><b>19,338</b></td><td class="pass">PASS</td></tr>
+      <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num"><b>1,944</b></td><td class="pass">PASS</td></tr>
+      <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num"><b>766</b></td><td class="pass">PASS</td></tr>
+      <tr><td>emoji-test</td><td>UTS #51</td><td class="num"><b>3,781</b></td><td class="pass">PASS</td></tr>
+      <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num"><b>512</b></td><td class="pass">PASS</td></tr>
+    </table>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  var specimens = [
+    { text: "ع",  name: "Arabic",     note: "ع AIN" },
+    { text: "ก",  name: "Thai",       note: "ก KO KAI" },
+    { text: "क",  name: "Devanagari", note: "क KA" },
+    { text: "한",  name: "Korean",     note: "한 HAN" },
+    { text: "永",  name: "Han",        note: "永 EI" },
+    { text: "R",       name: "Latin",      note: "R" },
+    { text: "😀", name: "Emoji",      note: "GRINNING FACE" }
+  ];
+
+  var ctx = document.getElementById("glyph").getContext("2d");
+  var slab = document.getElementById("slab");
+  var nameEl = document.getElementById("scriptname");
+  var noteEl = document.getElementById("note");
+  var i = 0, fade = 1, dir = 0, hold = 0;
+
+  function draw(alpha) {
+    ctx.clearRect(0, 0, 800, 800);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = '400px "Iowan Old Style", Palatino, Georgia, serif';
+
+    // Warm rim behind the letter: the glyph looks lit from inside the lantern
+    // rather than printed on its surface.
+    ctx.globalAlpha = alpha * 0.45;
+    ctx.shadowColor = "#e8552f";
+    ctx.shadowBlur = 60;
+    ctx.fillStyle = "#e8552f";
+    ctx.fillText(specimens[i].text, 400, 410);
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = alpha * 0.22;
+    ctx.fillStyle = "#e0b25c";
+    ctx.fillText(specimens[i].text, 400 + 5, 410 - 4);
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#f3ead9";
+    ctx.fillText(specimens[i].text, 400, 410);
+    ctx.globalAlpha = 1;
+  }
+
+  function tick() {
+    if (dir === 0) {
+      if (++hold > 95) { hold = 0; dir = -1; }
+    } else {
+      fade += dir * 0.05;
+      if (fade <= 0) {
+        fade = 0; dir = 1;
+        i = (i + 1) % specimens.length;
+        nameEl.textContent = specimens[i].name;
+        noteEl.textContent = specimens[i].note;
+      } else if (fade >= 1) { fade = 1; dir = 0; }
+    }
+    draw(fade);
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  var t = 0;
+  document.addEventListener("pointermove", function (e) {
+    var r = slab.getBoundingClientRect();
+    var ry = ((e.clientX - (r.left + r.width / 2)) / r.width) * 20;
+    var rx = -((e.clientY - (r.top + r.height / 2)) / r.height) * 20;
+    slab.style.transform = "rotateX(" + rx + "deg) rotateY(" + ry + "deg)";
+  });
+})();
+</script>
+</body>
+</html>

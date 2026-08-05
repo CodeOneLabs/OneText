@@ -1,0 +1,26 @@
+{
+    "name": "OneText.UGUI.InputSystem",
+    "rootNamespace": "OneText.UGUI",
+    "references": [
+        "OneText",
+        "OneText.UGUI",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "ONETEXT_INPUT_SYSTEM"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "1.0.0",
+            "define": "ONETEXT_INPUT_SYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}

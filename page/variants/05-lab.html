@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Lab</title>
+<style>
+  :root {
+    --bg: #07090b;
+    --panel: #0c1013;
+    --panel-2: #0f1418;
+    --line: rgba(126,231,180,0.15);
+    --line-hi: rgba(126,231,180,0.34);
+    --ink: #d6e5dd;
+    --ink-dim: rgba(214,229,221,0.56);
+    --ink-faint: rgba(214,229,221,0.30);
+    --green: #7ee7b4;
+    --amber: #ffcc66;
+    --violet: #b39dff;
+    --red: #ff7b72;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--mono);
+    font-size: 13.5px; line-height: 1.65; overflow-x: hidden;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.45;
+    background-image: repeating-linear-gradient(0deg, rgba(126,231,180,0.032) 0 1px, transparent 1px 3px);
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 22px; }
+
+  /* ==== nav ==== */
+  nav { display: flex; align-items: center; gap: 20px; padding: 14px 0;
+        border-bottom: 1px solid var(--line); font-size: 12px; letter-spacing: 0.09em; }
+  nav b { color: var(--green); }
+  nav a { color: var(--ink-dim); text-decoration: none; }
+  nav a:hover { color: var(--green); }
+  nav .spacer { flex: 1; }
+  nav .live { color: var(--green); }
+  nav .live i { font-style: normal; animation: blink 1.8s infinite; }
+  @keyframes blink { 0%,60%{opacity:1} 80%{opacity:0.25} 100%{opacity:1} }
+
+  /* ==== hero ==== */
+  .hero { padding: 40px 0 22px; display: grid; grid-template-columns: 1.25fr 1fr; gap: 40px; align-items: end; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; gap: 22px; } }
+  h1 { font-size: clamp(26px, 3.9vw, 44px); line-height: 1.1; letter-spacing: -0.025em; font-weight: 700; }
+  h1 span { color: var(--green); }
+  .lede { color: var(--ink-dim); margin-top: 14px; max-width: 560px; font-size: 13.5px; }
+  .assert { display: grid; gap: 3px; }
+  .assert div { font-size: 12.5px; color: var(--ink-dim); display: flex; gap: 10px; }
+  .assert div b { color: var(--ink-faint); font-weight: 400; }
+  .assert .v { color: var(--green); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  /* ==== control rack ==== */
+  /* The rack is the manual override, not the default view: it appears when a
+     pointer arrives and the reel stops, so the page demonstrates itself to
+     someone who never touches it. */
+  .lab { position: relative; }
+  .rack {
+    position: sticky; top: 0; z-index: 20; margin-top: 0;
+    background: rgba(7,9,11,0.94); border: 1px solid var(--line);
+    border-left: none; border-right: none;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    /* Collapsed, not merely transparent: an invisible rack that still holds its
+       height leaves a hole above the specimens, which is the thing the reel is
+       supposed to be filling. */
+    opacity: 0; pointer-events: none; max-height: 0; overflow: hidden; border-width: 0;
+    transition: opacity 0.24s ease, max-height 0.32s cubic-bezier(.4,0,.2,1);
+  }
+  .lab:hover .rack, .lab:focus-within .rack {
+    opacity: 1; pointer-events: auto; max-height: 220px; border-top-width: 1px; border-bottom-width: 1px;
+  }
+
+  .reel {
+    display: flex; align-items: center; gap: 12px; margin-top: 26px;
+    padding: 9px 2px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .reel .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+               animation: blink 2.4s infinite; }
+  .reel.manual .dot { background: var(--amber); animation: none; }
+  .reel b { color: var(--green); font-weight: 400; letter-spacing: 0.1em; }
+  .reel.manual b { color: var(--amber); }
+  .reel .hint { margin-left: auto; text-transform: none; letter-spacing: 0.04em; font-size: 10.5px; }
+  .reel .ticks { display: flex; gap: 4px; }
+  .reel .ticks i { width: 14px; height: 2px; background: var(--line-hi); display: block; }
+  .reel .ticks i.on { background: var(--green); }
+  .rack .inner { max-width: 1280px; margin: 0 auto; padding: 12px 22px;
+                 display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+  .knob { display: flex; align-items: center; gap: 9px; }
+  .knob label { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+  .knob output { color: var(--green); font-size: 11.5px; min-width: 52px; font-variant-numeric: tabular-nums; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 96px; height: 3px;
+                      background: var(--line-hi); border-radius: 2px; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px;
+    border-radius: 50%; background: var(--green); cursor: ew-resize;
+    box-shadow: 0 0 0 3px rgba(126,231,180,0.18); }
+  input[type=range]::-moz-range-thumb { width: 11px; height: 11px; border: none; border-radius: 50%;
+    background: var(--green); cursor: ew-resize; }
+
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+  .seg button { background: none; border: none; color: var(--ink-dim); font-family: var(--mono);
+                font-size: 11px; padding: 4px 9px; cursor: pointer; letter-spacing: 0.06em; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: rgba(126,231,180,0.15); color: var(--green); }
+  .seg button:hover { color: var(--ink); }
+
+  .toggle { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 11px;
+            color: var(--ink-dim); letter-spacing: 0.06em; }
+  .toggle input { accent-color: var(--green); }
+  .rack .spacer { flex: 1; }
+  .rack .count { font-size: 11px; color: var(--ink-faint); letter-spacing: 0.1em; }
+  .rack .count b { color: var(--green); font-variant-numeric: tabular-nums; }
+
+  /* ==== the wall ==== */
+  #wall { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line);
+          margin: 14px 0 0; transition: grid-template-columns 0.6s ease; }
+  .cell { background: var(--panel); padding: 18px 20px 15px; position: relative; overflow: hidden;
+          transition: background 0.12s; }
+  .cell:hover { background: var(--panel-2); }
+  .cell .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+  .cell .lang { font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint); }
+  .cell .feat { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+                color: var(--violet); margin-left: auto; white-space: nowrap; }
+  /* Every knob the reel turns is a transition, so a change reads as motion
+     rather than as a new page. */
+  .cell .sample { color: var(--ink); word-wrap: break-word;
+    transition: font-size 0.75s cubic-bezier(.4,0,.2,1), letter-spacing 0.75s cubic-bezier(.4,0,.2,1),
+                line-height 0.75s cubic-bezier(.4,0,.2,1); }
+  .cell .sample.grid-on { background-image: repeating-linear-gradient(
+      to bottom, transparent 0, transparent calc(var(--lh) - 1px), rgba(126,231,180,0.16) calc(var(--lh) - 1px), rgba(126,231,180,0.16) var(--lh)); }
+  .cell .sample u { text-decoration: none; box-shadow: inset -1px 0 0 rgba(179,157,255,0.55); }
+  .cell .metrics { margin-top: 9px; font-size: 9.5px; letter-spacing: 0.1em; color: var(--ink-faint);
+                   display: flex; gap: 10px; }
+  .cell .metrics b { color: var(--green); font-weight: 400; font-variant-numeric: tabular-nums; }
+
+  /* ==== sections ==== */
+  section { padding: 44px 0; border-top: 1px solid var(--line); margin-top: 40px; }
+  h2 { font-size: 18px; margin-bottom: 5px; }
+  h2::before { content: "## "; color: var(--green); }
+  .sub { color: var(--ink-faint); font-size: 12.5px; margin-bottom: 20px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  th { color: var(--green); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+  td { color: var(--ink-dim); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .pass { color: var(--green); }
+  tr:hover td { background: rgba(126,231,180,0.04); }
+  pre { background: var(--panel); border: 1px solid var(--line); padding: 16px 18px;
+        overflow-x: auto; font-size: 12px; line-height: 1.75; }
+  pre .c { color: var(--ink-faint); } pre .g { color: var(--green); } pre .a { color: var(--amber); }
+  footer { padding: 30px 0 60px; color: var(--ink-faint); font-size: 11.5px; letter-spacing: 0.08em; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <b>onetext</b>
+    <a href="#wall-sec">lab</a><a href="#conf">conformance</a><a href="#cov">coverage</a><a href="#">github</a>
+    <span class="spacer"></span>
+    <span class="live"><i>●</i> 888,289 cases passing</span>
+  </nav>
+
+  <div class="hero">
+    <div>
+      <h1>Turn the knobs.<br><span>Watch every script answer.</span></h1>
+      <p class="lede">
+        A free text engine for Unity uGUI — HarfBuzz shaping, the full bidirectional
+        algorithm, UAX #29 segmentation, SDF rendering. Below is the parameter space it
+        exposes, applied to every writing system at once.
+      </p>
+    </div>
+    <div class="assert">
+      <div><b>unicode suites</b><span class="v">888,289 / 888,289</span></div>
+      <div><b>codepoints survived</b><span class="v">159,631 / 159,631</span></div>
+      <div><b>emoji sequences merged</b><span class="v">3,781 / 3,781</span></div>
+      <div><b>draw groups per screen</b><span class="v">1</span></div>
+      <div><b>steady-state allocation</b><span class="v">0 B</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= LAB ================= -->
+<div class="lab">
+
+<div class="wrap">
+  <div class="reel" id="reel">
+    <span class="dot"></span>
+    <span>reel</span>
+    <b id="reelLabel">arabic · joining</b>
+    <span class="ticks" id="ticks"></span>
+    <span class="hint" id="reelHint">hover to take the controls</span>
+  </div>
+</div>
+
+<div class="rack">
+  <div class="inner">
+    <div class="knob"><label>size</label><input type="range" id="size" min="14" max="56" value="30"><output id="sizeV">30px</output></div>
+    <div class="knob"><label>tracking</label><input type="range" id="track" min="-60" max="160" value="0"><output id="trackV">0.000em</output></div>
+    <div class="knob"><label>leading</label><input type="range" id="lead" min="90" max="240" value="145"><output id="leadV">1.45</output></div>
+    <div class="knob"><label>column</label><input type="range" id="col" min="220" max="620" value="340"><output id="colV">340px</output></div>
+    <div class="knob"><label>cells</label><input type="range" id="cells" min="2" max="24" value="6"><output id="cellsV">6</output></div>
+
+    <div class="knob"><label>align</label>
+      <div class="seg" id="align">
+        <button data-v="start" class="on">start</button><button data-v="center">center</button>
+        <button data-v="end">end</button><button data-v="justify">justify</button>
+      </div>
+    </div>
+    <div class="knob"><label>dir</label>
+      <div class="seg" id="dir">
+        <button data-v="auto" class="on">auto</button><button data-v="ltr">ltr</button><button data-v="rtl">rtl</button>
+      </div>
+    </div>
+    <div class="knob"><label>filter</label>
+      <div class="seg" id="filter">
+        <button data-v="all" class="on">all</button><button data-v="rtl">rtl</button>
+        <button data-v="brahmic">brahmic</button><button data-v="sea">sea</button>
+        <button data-v="cjk">cjk</button><button data-v="other">other</button>
+      </div>
+    </div>
+
+    <label class="toggle"><input type="checkbox" id="clusters"> cluster bounds</label>
+    <label class="toggle"><input type="checkbox" id="baseline"> baseline grid</label>
+    <label class="toggle"><input type="checkbox" id="metrics" checked> metrics</label>
+
+    <div class="knob"><label>reveal</label>
+      <div class="seg" id="gran">
+        <button data-v="grapheme" class="on">grapheme</button><button data-v="word">word</button>
+      </div>
+      <div class="seg"><button id="play">▶ type</button></div>
+    </div>
+
+    <span class="spacer"></span>
+    <span class="count"><b id="shown">6</b> specimens · <b id="scripts">0</b> scripts</span>
+  </div>
+</div>
+
+<div class="wrap">
+  <div id="wall"></div>
+</div>
+</div>
+
+<div class="wrap">
+
+  <section id="conf">
+    <h2>conformance</h2>
+    <div class="sub">Unicode 17.0.0 · the standard's own data files, in CI on every commit</div>
+    <table>
+      <tr><th>suite</th><th>standard</th><th class="num">cases</th><th>result</th></tr>
+      <tr><td>BidiTest</td><td>UAX #9 · by class</td><td class="num">770,241</td><td class="pass">PASS</td></tr>
+      <tr><td>BidiCharacterTest</td><td>UAX #9 · by character</td><td class="num">91,707</td><td class="pass">PASS</td></tr>
+      <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num">19,338</td><td class="pass">PASS</td></tr>
+      <tr><td>emoji-test</td><td>UTS #51</td><td class="num">3,781</td><td class="pass">PASS</td></tr>
+      <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num">1,944</td><td class="pass">PASS</td></tr>
+      <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num">766</td><td class="pass">PASS</td></tr>
+      <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num">512</td><td class="pass">PASS</td></tr>
+      <tr><td><b>every official suite</b></td><td>no exceptions</td><td class="num">888,289</td><td class="pass">PASS</td></tr>
+    </table>
+  </section>
+
+  <section id="cov">
+    <h2>coverage</h2>
+    <div class="sub">every assigned codepoint, through shaping → outline → SDF → atlas</div>
+    <pre><span class="c">$ unity -batchmode -runTests -testFilter CodepointCoverageTests</span>
+
+<span class="g">[coverage]</span> shaped 159,631/159,631 codepoints, 177,400 glyphs, 0 threw; 53 s
+<span class="g">[coverage]</span> 155,496 of 159,631 have a glyph in 213 fonts (97.41 %)
+<span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed
+<span class="a">[coverage]</span> 4,135 uncovered (2.59 %) — no free font exists for these blocks yet</pre>
+  </section>
+
+  <footer>
+    OneText — free, open source, MIT · Unicode 17.0.0 · Unity 2021.3+<br>
+    The wall above is typeset by your browser to show the parameter space; the numbers come from the
+    engine's own test suite, and every one of them is reproducible from the repository.
+  </footer>
+</div>
+
+<script>
+(function () {
+  // group: rtl | brahmic | sea | cjk | other — the axis the filter cuts on.
+  // feat: what the engine has to do that a character-to-glyph map cannot.
+  var CORPUS = [
+    ["ar","Arabic","rtl","joining","العربية لغة جميلة ومعقدة في آن واحد"],
+    ["fa","Persian","rtl","joining","زبان فارسی زیبا و کهن است"],
+    ["ur","Urdu","rtl","nastaliq","اردو ایک خوبصورت زبان ہے"],
+    ["ms-arab","Jawi (Malay)","rtl","joining","بهاس ملايو دتوليس دڠن جاوي"],
+    ["ps","Pashto","rtl","joining","پښتو ژبه ډېره زړه پورې ده"],
+    ["he","Hebrew","rtl","bidi","עברית היא שפה עתיקה ויפה"],
+    ["yi","Yiddish","rtl","bidi","ייִדיש איז אַ שיינע שפּראַך"],
+    ["syr","Syriac","rtl","joining","ܠܫܢܐ ܣܘܪܝܝܐ ܥܬܝܩܐ ܗܘ"],
+    ["dv","Dhivehi","rtl","marks","ދިވެހި ބަހަކީ ރީތި ބަހެއް"],
+    ["nqo","N'Ko","rtl","joining","ߒߞߏ ߦߋ߫ ߞߊ߲ ߘߌ߫ ߡߍ߲ ߞߊ߯ߙߌߣߍ߲"],
+    ["ff-adlm","Adlam","rtl","joining","𞤀𞤣𞤤𞤢𞤥 𞤴𞤢𞤲𞤳𞤢 𞤩𞤫𞤴𞤣𞤭"],
+
+    ["hi","Hindi","brahmic","reordering","हिन्दी भाषा बहुत सुन्दर और समृद्ध है"],
+    ["mr","Marathi","brahmic","conjuncts","मराठी ही एक सुंदर भाषा आहे"],
+    ["ne","Nepali","brahmic","conjuncts","नेपाली भाषा धेरै मीठो छ"],
+    ["bn","Bengali","brahmic","reordering","বাংলা ভাষা অত্যন্ত মধুর ও সমৃদ্ধ"],
+    ["as","Assamese","brahmic","conjuncts","অসমীয়া ভাষা অতি সুন্দৰ"],
+    ["pa","Punjabi","brahmic","matras","ਪੰਜਾਬੀ ਬੋਲੀ ਬਹੁਤ ਪਿਆਰੀ ਹੈ"],
+    ["gu","Gujarati","brahmic","matras","ગુજરાતી ભાષા ખૂબ સુંદર છે"],
+    ["or","Odia","brahmic","conjuncts","ଓଡ଼ିଆ ଭାଷା ବହୁତ ସୁନ୍ଦର"],
+    ["ta","Tamil","brahmic","reordering","தமிழ் மொழி மிகவும் அழகானது"],
+    ["te","Telugu","brahmic","conjuncts","తెలుగు భాష చాలా అందమైనది"],
+    ["kn","Kannada","brahmic","conjuncts","ಕನ್ನಡ ಭಾಷೆ ತುಂಬಾ ಸುಂದರವಾಗಿದೆ"],
+    ["ml","Malayalam","brahmic","chillu","മലയാളം ഭാഷ വളരെ മനോഹരമാണ്"],
+    ["si","Sinhala","brahmic","reordering","සිංහල භාෂාව ඉතා ලස්සනයි"],
+    ["bo","Tibetan","brahmic","stacking","བོད་ཀྱི་སྐད་ཡིག་ནི་ཧ་ཅང་མཛེས་པོ་རེད།"],
+    ["dz","Dzongkha","brahmic","stacking","རྫོང་ཁ་ནི་འབྲུག་གི་རྒྱལ་ཡོངས་སྐད་ཡིག"],
+
+    ["th","Thai","sea","dictionary breaks","ภาษาไทยเป็นภาษาที่สวยงามและซับซ้อน"],
+    ["lo","Lao","sea","dictionary breaks","ພາສາລາວເປັນພາສາທີ່ສວຍງາມ"],
+    ["km","Khmer","sea","stacking","ភាសាខ្មែរគឺជាភាសាដ៏ស្រស់ស្អាត"],
+    ["my","Burmese","sea","stacking","မြန်မာဘာသာစကားသည် လှပသောဘာသာဖြစ်သည်"],
+    ["shn","Shan","sea","stacking","ၽႃႇသႃႇတႆး ပဵၼ်ၽႃႇသႃႇငၢမ်း"],
+    ["jv","Javanese","sea","stacking","ꦧꦱꦗꦮꦲꦶꦏꦸꦧꦱꦲꦶꦁꦏꦁꦲꦌꦁ"],
+    ["ban","Balinese","sea","stacking","ᬩᬲᬩᬮᬶᬧᬸᬦᬶᬓᬩᬲᬲᬦᬾᬮᬸᬯᬶᬄ"],
+    ["vi","Vietnamese","sea","stacked marks","Tiếng Việt rất đẹp và giàu thanh điệu"],
+
+    ["zh-Hans","Chinese (Simplified)","cjk","kinsoku","中文是一门古老而优美的语言"],
+    ["zh-Hant","Chinese (Traditional)","cjk","kinsoku","中文是一門古老而優美的語言"],
+    ["ja","Japanese","cjk","kinsoku","日本語は美しく複雑な言語です。"],
+    ["ja-kana","Japanese (kana)","cjk","kinsoku","にほんごはうつくしいことばです。"],
+    ["ko","Korean","cjk","syllables","한국어는 아름답고 과학적인 문자입니다"],
+    ["ko-jamo","Korean (jamo)","cjk","composition","한글 조합"],
+    ["yue","Cantonese","cjk","kinsoku","廣東話係一種好有趣嘅語言"],
+
+    ["en","English","other","kerning","Typography is the craft of arranging type"],
+    ["de","German","other","umlauts","Typografie ist die Kunst der Schriftgestaltung"],
+    ["fr","French","other","accents","La typographie est l'art d'assembler les caractères"],
+    ["es","Spanish","other","accents","La tipografía es el arte de componer textos"],
+    ["pl","Polish","other","diacritics","Typografia jest sztuką składania tekstu"],
+    ["cs","Czech","other","carons","Typografie je umění sazby písma"],
+    ["tr","Turkish","other","dotted i","Tipografi bir yazı düzenleme sanatıdır"],
+    ["ru","Russian","other","cyrillic","Типографика — искусство оформления текста"],
+    ["uk","Ukrainian","other","cyrillic","Типографіка — мистецтво оформлення тексту"],
+    ["sr","Serbian","other","cyrillic","Типографија је уметност слагања текста"],
+    ["el","Greek","other","polytonic","Η τυπογραφία είναι τέχνη της στοιχειοθεσίας"],
+    ["hy","Armenian","other","ligatures","Տպագրությունը գեղեցիկ արվեստ է"],
+    ["ka","Georgian","other","mkhedruli","ტიპოგრაფია ტექსტის განლაგების ხელოვნებაა"],
+    ["am","Amharic","other","syllabary","የአማርኛ ቋንቋ በጣም ውብ ነው"],
+    ["ti","Tigrinya","other","syllabary","ቋንቋ ትግርኛ ኣዝዩ ጽቡቕ እዩ"],
+    ["chr","Cherokee","other","syllabary","ᏣᎳᎩ ᎧᏬᏂᎯᏍᏗ ᎤᏬᏚᎯ"],
+    ["iu","Inuktitut","other","syllabics","ᐃᓄᒃᑎᑐᑦ ᐅᖃᐅᓯᖅ ᐱᐅᔪᖅ"],
+    ["tzm","Tamazight","other","tifinagh","ⵜⵓⵜⵍⴰⵢⵜ ⵜⴰⵎⴰⵣⵉⵖⵜ ⵜⵛⴱⴰⵃ"],
+    ["mn","Mongolian (Cyrillic)","other","cyrillic","Монгол хэл бол сайхан хэл юм"],
+    ["emoji","Emoji","other","ZWJ sequences","👨‍👩‍👧‍👦 🇰🇷 👍🏿 1️⃣ 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ❤️ 😀"]
+  ];
+
+  var wall = document.getElementById("wall");
+  var state = { offset: 0, size: 30, track: 0, lead: 1.45, col: 340, cells: 6,
+                align: "start", dir: "auto", filter: "all",
+                clusters: false, baseline: false, metrics: true,
+                gran: "grapheme" };
+
+  var segmenters = {};
+  function segmenter(locale, granularity) {
+    var key = locale + "|" + granularity;
+    if (!(key in segmenters)) {
+      try { segmenters[key] = new Intl.Segmenter(locale, { granularity: granularity }); }
+      catch (e) { segmenters[key] = null; }
+    }
+    return segmenters[key];
+  }
+
+  // Real UAX #29 segmentation, from the browser's own ICU. The engine runs the
+  // same algorithm against the same conformance data — this is the boundary set,
+  // not a stand-in for it.
+  function units(text, locale, granularity) {
+    var seg = segmenter(locale, granularity);
+    if (!seg) return Array.from(text);
+    var out = [];
+    var it = seg.segment(text)[Symbol.iterator]();
+    for (var s = it.next(); !s.done; s = it.next()) out.push(s.value.segment);
+    return out;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  var pool = [];
+  function rebuild() {
+    pool = CORPUS.filter(function (r) { return state.filter === "all" || r[2] === state.filter; });
+
+    var frag = document.createDocumentFragment();
+    var scripts = {};
+    var n = Math.min(state.cells, 24);
+
+    for (var i = 0; i < n; i++) {
+      var row = pool[(i + (state.offset || 0)) % pool.length];
+      if (!row) break;
+      scripts[row[1]] = 1;
+
+      var cell = document.createElement("div");
+      cell.className = "cell";
+      cell.dataset.locale = row[0];
+      cell.dataset.text = row[4];
+
+      var head = document.createElement("div");
+      head.className = "head";
+      head.innerHTML = '<span class="lang">' + escapeHtml(row[1]) + '</span>' +
+                       '<span class="feat">' + escapeHtml(row[3]) + '</span>';
+
+      var sample = document.createElement("div");
+      sample.className = "sample";
+      sample.lang = row[0];
+
+      var metrics = document.createElement("div");
+      metrics.className = "metrics";
+
+      cell.appendChild(head);
+      cell.appendChild(sample);
+      cell.appendChild(metrics);
+      frag.appendChild(cell);
+    }
+
+    wall.innerHTML = "";
+    wall.appendChild(frag);
+    document.getElementById("shown").textContent = Math.min(n, pool.length ? n : 0);
+    document.getElementById("scripts").textContent = Object.keys(scripts).length;
+    apply();
+  }
+
+  var typing = null;
+  function apply() {
+    wall.style.gridTemplateColumns = "repeat(auto-fill, minmax(" + state.col + "px, 1fr))";
+
+    var cells = wall.children;
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+      var sample = cell.querySelector(".sample");
+      var metrics = cell.querySelector(".metrics");
+      var text = cell.dataset.text;
+      var locale = cell.dataset.locale;
+
+      sample.style.fontSize = state.size + "px";
+      sample.style.letterSpacing = state.track / 1000 + "em";
+      sample.style.lineHeight = state.lead;
+      sample.style.textAlign = state.align;
+      sample.style.setProperty("--lh", (state.size * state.lead) + "px");
+      sample.dir = state.dir === "auto" ? "auto" : state.dir;
+      sample.classList.toggle("grid-on", state.baseline);
+
+      if (state.clusters) {
+        // A boundary marker after every unit: what the reveal steps by, and
+        // what a caret can land on.
+        var parts = units(text, locale, state.gran);
+        sample.innerHTML = parts.map(function (p) {
+          return "<u>" + escapeHtml(p) + "</u>";
+        }).join("");
+      } else {
+        sample.textContent = text;
+      }
+
+      if (state.metrics) {
+        var g = units(text, locale, "grapheme").length;
+        var w = units(text, locale, "word").filter(function (s) { return /\S/.test(s); }).length;
+        metrics.style.display = "";
+        metrics.innerHTML = "cp <b>" + Array.from(text).length + "</b>" +
+                            "gr <b>" + g + "</b>" +
+                            "wd <b>" + w + "</b>";
+      } else {
+        metrics.style.display = "none";
+      }
+    }
+  }
+
+  function play() {
+    if (typing) { clearInterval(typing); typing = null; }
+    var cells = Array.prototype.slice.call(wall.children);
+    var parts = cells.map(function (c) { return units(c.dataset.text, c.dataset.locale, state.gran); });
+    var step = 0;
+    var max = parts.reduce(function (m, p) { return Math.max(m, p.length); }, 0);
+
+    typing = setInterval(function () {
+      step++;
+      for (var i = 0; i < cells.length; i++) {
+        var sample = cells[i].querySelector(".sample");
+        sample.textContent = parts[i].slice(0, step).join("");
+      }
+      if (step >= max) { clearInterval(typing); typing = null; setTimeout(apply, 700); }
+    }, 55);
+  }
+
+  // ---- wiring
+  function slider(id, key, fmt, transform) {
+    var el = document.getElementById(id), out = document.getElementById(id + "V");
+    el.addEventListener("input", function () {
+      state[key] = transform ? transform(+el.value) : +el.value;
+      out.textContent = fmt(state[key]);
+      if (key === "cells" || key === "filter") rebuild(); else apply();
+    });
+  }
+  slider("size", "size", function (v) { return v + "px"; });
+  slider("track", "track", function (v) { return (v / 1000).toFixed(3) + "em"; });
+  slider("lead", "lead", function (v) { return v.toFixed(2); }, function (v) { return v / 100; });
+  slider("col", "col", function (v) { return v + "px"; });
+  slider("cells", "cells", function (v) { return String(v); });
+
+  ["align", "dir", "filter", "gran"].forEach(function (id) {
+    document.getElementById(id).addEventListener("click", function (e) {
+      var b = e.target.closest("button"); if (!b) return;
+      this.querySelectorAll("button").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      state[id] = b.dataset.v;
+      if (id === "filter") rebuild(); else apply();
+    });
+  });
+
+  ["clusters", "baseline", "metrics"].forEach(function (id) {
+    document.getElementById(id).addEventListener("change", function () {
+      state[id] = this.checked; apply();
+    });
+  });
+
+  document.getElementById("play").addEventListener("click", play);
+
+  // ---- the reel: the page demonstrating itself
+  // Each stop is one thing worth seeing, not a random parameter dump: a script
+  // family, and the one setting that shows what the engine does for it.
+  var REEL = [
+    { label: "arabic · joining",        filter: "rtl",     size: 32, track: 0,   lead: 1.55, align: "start",  dir: "auto", clusters: false, offset: 0 },
+    { label: "devanagari · reordering", filter: "brahmic", size: 30, track: 0,   lead: 1.6,  align: "start",  dir: "auto", clusters: true,  offset: 0 },
+    { label: "thai · dictionary breaks",filter: "sea",     size: 28, track: 0,   lead: 1.7,  align: "start",  dir: "auto", clusters: true,  offset: 0 },
+    { label: "cjk · one atlas",         filter: "cjk",     size: 30, track: 0,   lead: 1.8,  align: "start",  dir: "auto", clusters: false, offset: 0 },
+    { label: "tracking · -0.03 → 0.10em", filter: "other", size: 30, track: 90,  lead: 1.5,  align: "start",  dir: "auto", clusters: false, offset: 0 },
+    { label: "justified · every script",filter: "all",     size: 24, track: 0,   lead: 1.75, align: "justify",dir: "auto", clusters: false, offset: 6 },
+    { label: "rtl forced · bidi",       filter: "rtl",     size: 30, track: 0,   lead: 1.55, align: "end",    dir: "rtl",  clusters: false, offset: 4 },
+    { label: "grapheme bounds",         filter: "all",     size: 30, track: 0,   lead: 1.6,  align: "start",  dir: "auto", clusters: true,  offset: 12 },
+    { label: "emoji · zwj sequences",   filter: "other",   size: 40, track: 0,   lead: 1.5,  align: "center", dir: "auto", clusters: true,  offset: 19 }
+  ];
+
+  var reelAt = 0, reelTimer = null, manual = false;
+  var reelBar = document.getElementById("reel");
+  var reelLabel = document.getElementById("reelLabel");
+  var reelHint = document.getElementById("reelHint");
+  var ticks = document.getElementById("ticks");
+
+  for (var t = 0; t < REEL.length; t++) ticks.appendChild(document.createElement("i"));
+
+  function paintTicks() {
+    for (var k = 0; k < ticks.children.length; k++)
+      ticks.children[k].classList.toggle("on", k === reelAt && !manual);
+  }
+
+  function syncRack() {
+    document.getElementById("size").value = state.size;
+    document.getElementById("sizeV").textContent = state.size + "px";
+    document.getElementById("track").value = state.track;
+    document.getElementById("trackV").textContent = (state.track / 1000).toFixed(3) + "em";
+    document.getElementById("lead").value = Math.round(state.lead * 100);
+    document.getElementById("leadV").textContent = state.lead.toFixed(2);
+    document.getElementById("clusters").checked = state.clusters;
+    ["align", "dir", "filter"].forEach(function (id) {
+      document.getElementById(id).querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("on", b.dataset.v === state[id]);
+      });
+    });
+  }
+
+  function showStop(stop, rebuildNeeded) {
+    state.size = stop.size; state.track = stop.track; state.lead = stop.lead;
+    state.align = stop.align; state.dir = stop.dir; state.clusters = stop.clusters;
+    var changedFilter = state.filter !== stop.filter || state.offset !== stop.offset;
+    state.filter = stop.filter; state.offset = stop.offset || 0;
+    reelLabel.textContent = stop.label;
+    syncRack();
+    if (changedFilter || rebuildNeeded) rebuild(); else apply();
+    paintTicks();
+  }
+
+  function advance() {
+    if (manual) return;
+    reelAt = (reelAt + 1) % REEL.length;
+    showStop(REEL[reelAt], false);
+  }
+
+  function startReel() {
+    if (reelTimer) clearInterval(reelTimer);
+    reelTimer = setInterval(advance, 4200);
+  }
+
+  var lab = document.querySelector(".lab");
+  lab.addEventListener("pointerenter", function () {
+    manual = true;
+    reelBar.classList.add("manual");
+    reelLabel.textContent = "manual";
+    reelHint.textContent = "move away to resume";
+    paintTicks();
+  });
+  lab.addEventListener("pointerleave", function () {
+    manual = false;
+    reelBar.classList.remove("manual");
+    reelHint.textContent = "hover to take the controls";
+    showStop(REEL[reelAt], false);
+    startReel();
+  });
+
+  showStop(REEL[0], true);
+  startReel();
+
+})();
+</script>
+</body>
+</html>

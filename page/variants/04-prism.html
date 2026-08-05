@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Prism</title>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --card: #ffffff;
+    --ink: #1a1a24;
+    --ink-dim: rgba(26,26,36,0.58);
+    --ink-faint: rgba(26,26,36,0.34);
+    --edge: rgba(26,26,36,0.09);
+    --arabic: #6c5ce7;
+    --thai: #00b894;
+    --deva: #e17055;
+    --korean: #0984e3;
+    --emoji: #fdcb6e;
+    --han: #d63384;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --sans: "Pretendard", "Helvetica Neue", Helvetica, Arial, "Apple SD Gothic Neo", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans);
+         line-height: 1.68; overflow-x: hidden; }
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.55;
+    background:
+      radial-gradient(46vw 40vw at 82% 2%, rgba(108,92,231,0.16), transparent 62%),
+      radial-gradient(40vw 36vw at 6% 40%, rgba(0,184,148,0.13), transparent 62%),
+      radial-gradient(38vw 34vw at 60% 88%, rgba(253,203,110,0.16), transparent 62%);
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 30px; }
+
+  nav { display: flex; align-items: center; gap: 8px; padding: 20px 0; }
+  nav .logo { font-weight: 800; font-size: 19px; letter-spacing: -0.02em; margin-right: 18px; }
+  nav .logo i { font-style: normal;
+    background: linear-gradient(92deg, var(--arabic), var(--thai) 40%, var(--deva) 70%, var(--emoji));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  nav a { color: var(--ink-dim); text-decoration: none; font-size: 14px; padding: 7px 13px;
+          border-radius: 999px; }
+  nav a:hover { background: #fff; color: var(--ink); box-shadow: 0 2px 10px rgba(26,26,36,0.07); }
+  nav .spacer { flex: 1; }
+  nav .cta { background: var(--ink); color: #fff; font-weight: 600; padding: 9px 18px; }
+  nav .cta:hover { background: var(--ink); color: #fff; }
+
+  .hero { display: grid; grid-template-columns: 1.08fr 0.92fr; gap: 44px; padding: 58px 0 44px;
+          align-items: center; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+
+  .pill { display: inline-flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--edge);
+          border-radius: 999px; padding: 6px 15px; font-size: 12.5px; color: var(--ink-dim);
+          box-shadow: 0 2px 10px rgba(26,26,36,0.05); }
+  .pill b { color: var(--thai); font-family: var(--mono); font-size: 11.5px; }
+
+  h1 { font-size: clamp(38px, 5.6vw, 68px); font-weight: 800; letter-spacing: -0.035em;
+       line-height: 1.06; margin: 20px 0 0; }
+  h1 i { font-style: normal;
+    background: linear-gradient(92deg, var(--arabic), var(--thai) 45%, var(--deva));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { font-size: 17.5px; color: var(--ink-dim); max-width: 470px; margin-top: 18px; }
+
+  .stats { display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+  .stat { background: var(--card); border: 1px solid var(--edge); border-radius: 16px;
+          padding: 16px 20px; box-shadow: 0 4px 16px rgba(26,26,36,0.05); flex: 1 1 140px; }
+  .stat b { display: block; font-size: 25px; font-weight: 800; letter-spacing: -0.03em;
+            font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12.5px; color: var(--ink-dim); }
+
+  /* ==== prism: the glyph tints the glass it sits in ==== */
+  .stage { perspective: 1000px; display: flex; justify-content: center; }
+  .slab { position: relative; width: min(370px, 76vw); aspect-ratio: 1;
+          transform-style: preserve-3d; transition: transform 0.28s cubic-bezier(.2,.8,.2,1); cursor: grab; }
+  .slab:active { cursor: grabbing; }
+  .face { position: absolute; inset: 0; border-radius: 34px; overflow: hidden; background: var(--card);
+          border: 1px solid var(--edge);
+          box-shadow: 0 26px 60px -22px var(--tint, rgba(108,92,231,0.55)),
+                      0 2px 0 #fff inset;
+          transition: box-shadow 0.7s ease; }
+  .face canvas { width: 100%; height: 100%; display: block; }
+  .gloss { position: absolute; inset: 0; border-radius: 34px; pointer-events: none;
+           background: linear-gradient(148deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 42%); }
+  .chip { position: absolute; left: 50%; bottom: -14px; transform: translateX(-50%);
+          background: var(--card); border: 1px solid var(--edge); border-radius: 999px;
+          padding: 7px 18px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.13em;
+          text-transform: uppercase; color: var(--ink-dim);
+          box-shadow: 0 6px 18px rgba(26,26,36,0.10); white-space: nowrap; }
+  .chip b { color: var(--tintText, var(--arabic)); transition: color 0.6s ease; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 54px; }
+  .chips div { background: var(--card); border: 1px solid var(--edge); border-radius: 18px;
+               padding: 14px 18px; box-shadow: 0 3px 12px rgba(26,26,36,0.05); }
+  .chips .g { font-size: 27px; line-height: 1.25; }
+  .chips .l { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+              text-transform: uppercase; color: var(--ink-faint); margin-top: 4px; }
+
+  section { padding: 62px 0; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+             color: var(--thai); margin-bottom: 12px; }
+  h2 { font-size: clamp(26px, 3.6vw, 38px); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 10px; }
+  .sub { color: var(--ink-dim); max-width: 640px; }
+
+  .tablecard { background: var(--card); border: 1px solid var(--edge); border-radius: 22px;
+               padding: 8px 6px; margin-top: 28px; box-shadow: 0 6px 24px rgba(26,26,36,0.06);
+               overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+  th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--edge); }
+  th { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.13em; text-transform: uppercase;
+       color: var(--ink-faint); }
+  tr:last-child td { border-bottom: none; }
+  td { color: var(--ink-dim); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+  .pass { color: var(--thai); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+  .wip { color: var(--deva); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <span class="logo">One<i>Text</i></span>
+    <a href="#">Conformance</a><a href="#">Coverage</a><a href="#">Performance</a>
+    <span class="spacer"></span>
+    <a class="cta" href="#">GitHub</a>
+  </nav>
+
+  <div class="hero">
+    <div>
+      <span class="pill">Free &amp; open source · <b>MIT</b> · no paid tier</span>
+      <h1>Every writing system,<br><i>correct in uGUI</i>.</h1>
+      <p class="lede">
+        HarfBuzz shaping and the full bidirectional algorithm, in the UI system you
+        already use. Arabic joins. Thai stacks. Families stay one emoji.
+      </p>
+      <div class="stats">
+        <div class="stat"><b>888,289</b><span>conformance cases pass</span></div>
+        <div class="stat"><b>159,631</b><span>codepoints, 0 threw</span></div>
+        <div class="stat"><b>1</b><span>draw call</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="slab" id="slab">
+          <div class="face" id="face">
+            <canvas id="glyph" width="740" height="740"></canvas>
+            <div class="gloss"></div>
+          </div>
+          <div class="chip"><b id="scriptname">Arabic</b> · <span id="note">shaped, not substituted</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chips">
+    <div><div class="g">العربية</div><div class="l">Arabic · joining</div></div>
+    <div><div class="g">ภาษาไทย</div><div class="l">Thai · marks</div></div>
+    <div><div class="g">हिन्दी</div><div class="l">Devanagari · reorder</div></div>
+    <div><div class="g">한국어</div><div class="l">Korean</div></div>
+    <div><div class="g">日本語</div><div class="l">Japanese</div></div>
+    <div><div class="g">👨‍👩‍👧‍👦</div><div class="l">ZWJ · one glyph</div></div>
+  </div>
+
+  <section>
+    <div class="eyebrow">Conformance</div>
+    <h2>Unicode's own tests, all of them</h2>
+    <p class="sub">The standard's own data files, run in CI on every commit, against Unicode 17.0.0.</p>
+    <div class="tablecard">
+      <table>
+        <tr><th>Suite</th><th>Standard</th><th class="num">Cases</th><th>Result</th></tr>
+        <tr><td>BidiTest</td><td>UAX #9 · by class</td><td class="num">770,241</td><td class="pass">PASS</td></tr>
+        <tr><td>BidiCharacterTest</td><td>UAX #9 · by character</td><td class="num">91,707</td><td class="pass">PASS</td></tr>
+        <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num">19,338</td><td class="pass">PASS</td></tr>
+        <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num">1,944</td><td class="pass">PASS</td></tr>
+        <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num">766</td><td class="pass">PASS</td></tr>
+        <tr><td>emoji-test</td><td>UTS #51</td><td class="num">3,781</td><td class="pass">PASS</td></tr>
+        <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num">512</td><td class="pass">PASS</td></tr>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  var specimens = [
+    { ch: "ع", name: "Arabic",     note: "four forms, chosen by context", color: [108, 92, 231] },
+    { ch: "ก", name: "Thai",       note: "marks stack, dictionary breaks", color: [0, 184, 148] },
+    { ch: "क", name: "Devanagari", note: "vowels move before the consonant", color: [225, 112, 85] },
+    { ch: "한", name: "Korean",     note: "jamo compose into syllables",    color: [9, 132, 227] },
+    { ch: "永", name: "Japanese",   note: "one atlas, no charset to bake",  color: [214, 51, 132] },
+    { ch: "😀", name: "Emoji", note: "sequences merge into one glyph", color: [253, 203, 110] }
+  ];
+
+  var ctx = document.getElementById("glyph").getContext("2d");
+  var slab = document.getElementById("slab");
+  var face = document.getElementById("face");
+  var nameEl = document.getElementById("scriptname");
+  var noteEl = document.getElementById("note");
+  var N = 740;
+  var i = 0, fade = 1, dir = 0, hold = 0;
+
+  function draw(alpha) {
+    var s = specimens[i], c = s.color;
+    ctx.clearRect(0, 0, N, N);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = '400px "Pretendard", "Helvetica Neue", Arial, sans-serif';
+
+    // Prismatic split: the same glyph in three offset tints, the way a thick
+    // piece of glass separates what passes through it.
+    var offs = [[-9, 5, 0.30], [9, -5, 0.30], [0, 0, 1]];
+    for (var k = 0; k < offs.length; k++) {
+      var o = offs[k];
+      ctx.globalAlpha = alpha * o[2];
+      ctx.fillStyle = k === 2
+        ? "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")"
+        : (k === 0 ? "rgba(255,110,170,0.9)" : "rgba(90,200,255,0.9)");
+      ctx.fillText(s.ch, N / 2 + o[0], N / 2 + 18 + o[1]);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function apply() {
+    var c = specimens[i].color;
+    face.style.setProperty("--tint", "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0.55)");
+    document.documentElement.style.setProperty("--tintText", "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")");
+    nameEl.textContent = specimens[i].name;
+    noteEl.textContent = specimens[i].note;
+  }
+
+  function tick() {
+    if (dir === 0) { if (++hold > 105) { hold = 0; dir = -1; } }
+    else {
+      fade += dir * 0.055;
+      if (fade <= 0) { fade = 0; dir = 1; i = (i + 1) % specimens.length; apply(); }
+      else if (fade >= 1) { fade = 1; dir = 0; }
+    }
+    draw(fade);
+    requestAnimationFrame(tick);
+  }
+  apply();
+  tick();
+
+  document.addEventListener("pointermove", function (e) {
+    var r = slab.getBoundingClientRect();
+    var ry = ((e.clientX - (r.left + r.width / 2)) / r.width) * 18;
+    var rx = -((e.clientY - (r.top + r.height / 2)) / r.height) * 18;
+    slab.style.transform = "rotateX(" + rx + "deg) rotateY(" + ry + "deg)";
+  });
+})();
+</script>
+</body>
+</html>

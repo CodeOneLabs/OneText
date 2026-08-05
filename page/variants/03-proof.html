@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Proof</title>
+<style>
+  :root {
+    --bg: #07090b;
+    --panel: #0d1114;
+    --line: rgba(126,231,180,0.16);
+    --ink: #d6e5dd;
+    --ink-dim: rgba(214,229,221,0.55);
+    --ink-faint: rgba(214,229,221,0.30);
+    --green: #7ee7b4;
+    --amber: #ffcc66;
+    --red: #ff7b72;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--mono);
+    font-size: 14px; line-height: 1.7; overflow-x: hidden;
+  }
+  /* faint scanline grid — a report, not a poster */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.5;
+    background-image: repeating-linear-gradient(0deg, rgba(126,231,180,0.035) 0 1px, transparent 1px 3px);
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+
+  nav { display: flex; gap: 22px; padding: 18px 0; border-bottom: 1px solid var(--line);
+        font-size: 12px; letter-spacing: 0.1em; }
+  nav b { color: var(--green); }
+  nav a { color: var(--ink-dim); text-decoration: none; }
+  nav a:hover { color: var(--green); }
+  nav .spacer { flex: 1; }
+  nav .ok { color: var(--green); }
+
+  .hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; padding: 54px 0 34px;
+          align-items: center; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+
+  h1 { font-size: clamp(28px, 4.4vw, 50px); line-height: 1.12; letter-spacing: -0.02em;
+       font-weight: 700; margin-bottom: 18px; }
+  h1 span { color: var(--green); }
+  .lede { color: var(--ink-dim); max-width: 520px; font-size: 14.5px; }
+
+  .assert { margin-top: 30px; border-left: 2px solid var(--green); padding: 4px 0 4px 18px; }
+  .assert div { font-size: 13px; color: var(--ink-dim); }
+  .assert div b { color: var(--ink); }
+  .assert .v { color: var(--green); }
+
+  /* ==== the field: glyph rendered as its own distance field ==== */
+  .stage { perspective: 900px; display: flex; justify-content: center; }
+  .slab { position: relative; width: min(380px, 76vw); aspect-ratio: 1;
+          transform-style: preserve-3d; transition: transform 0.25s ease-out; cursor: crosshair; }
+  .face { position: absolute; inset: 0; overflow: hidden; background: var(--panel);
+          border: 1px solid var(--line);
+          box-shadow: 0 0 60px -18px rgba(126,231,180,0.35), 0 0 0 1px rgba(126,231,180,0.05) inset; }
+  .face canvas { width: 100%; height: 100%; display: block; }
+  .hud { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px;
+         font-size: 10.5px; letter-spacing: 0.12em; color: var(--ink-faint);
+         border-top: 1px solid var(--line); background: rgba(7,9,11,0.7);
+         display: flex; justify-content: space-between; }
+  .hud b { color: var(--green); }
+  .corner { position: absolute; width: 9px; height: 9px; border: 1px solid var(--green); opacity: 0.6; }
+  .corner.tl { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .corner.tr { top: -1px; right: -1px; border-left: none; border-bottom: none; }
+  .corner.bl { bottom: -1px; left: -1px; border-right: none; border-top: none; }
+  .corner.br { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+  section { padding: 46px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 19px; letter-spacing: 0.02em; margin-bottom: 6px; }
+  h2::before { content: "## "; color: var(--green); }
+  .sub { color: var(--ink-faint); font-size: 12.5px; margin-bottom: 22px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  th { color: var(--green); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; }
+  td { color: var(--ink-dim); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .pass { color: var(--green); }
+  .wip { color: var(--amber); }
+  tr:hover td { background: rgba(126,231,180,0.04); }
+
+  pre { background: var(--panel); border: 1px solid var(--line); padding: 18px 20px;
+        overflow-x: auto; font-size: 12.5px; line-height: 1.75; }
+  pre .c { color: var(--ink-faint); }
+  pre .g { color: var(--green); }
+  pre .a { color: var(--amber); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <b>onetext</b>
+    <a href="#">conformance</a><a href="#">coverage</a><a href="#">bench</a><a href="#">github</a>
+    <span class="spacer"></span>
+    <span class="ok">● 888,289 passing</span>
+  </nav>
+
+  <div class="hero">
+    <div>
+      <h1>Every writing system.<br><span>Every case, counted.</span></h1>
+      <p class="lede">
+        A free text engine for Unity uGUI. HarfBuzz shaping, the full bidirectional
+        algorithm, SDF rendering. Correctness is not a claim here — it is a number
+        that runs in CI on every commit.
+      </p>
+      <div class="assert">
+        <div><b>assert</b> unicode_suites_pass <span class="v">→ 888,289 / 888,289</span></div>
+        <div><b>assert</b> codepoints_survive <span class="v">→ 159,631 / 159,631</span></div>
+        <div><b>assert</b> emoji_sequences_merge <span class="v">→ 3,781 / 3,781</span></div>
+        <div><b>assert</b> draw_groups_per_screen <span class="v">→ 1</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="slab" id="slab">
+          <div class="face">
+            <canvas id="glyph" width="512" height="512"></canvas>
+            <div class="hud"><span>SDF · <b id="scriptname">arabic</b></span><span id="cp">U+0639</span></div>
+          </div>
+          <div class="corner tl"></div><div class="corner tr"></div>
+          <div class="corner bl"></div><div class="corner br"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <h2>conformance</h2>
+    <div class="sub">Unicode 17.0.0 · the standard's own data files, not a summary of them</div>
+    <table>
+      <tr><th>suite</th><th>standard</th><th class="num">cases</th><th>result</th></tr>
+      <tr><td>BidiTest</td><td>UAX #9 · by class</td><td class="num">770,241</td><td class="pass">PASS</td></tr>
+      <tr><td>BidiCharacterTest</td><td>UAX #9 · by character</td><td class="num">91,707</td><td class="pass">PASS</td></tr>
+      <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num">19,338</td><td class="pass">PASS</td></tr>
+      <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num">1,944</td><td class="pass">PASS</td></tr>
+      <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num">766</td><td class="pass">PASS</td></tr>
+      <tr><td>emoji-test</td><td>UTS #51</td><td class="num">3,781</td><td class="pass">PASS</td></tr>
+      <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num">512</td><td class="pass">PASS</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>coverage</h2>
+    <div class="sub">every assigned codepoint, through shaping → outline → SDF → atlas</div>
+    <pre><span class="c">$ unity -batchmode -runTests -testFilter CodepointCoverageTests</span>
+
+<span class="g">[coverage]</span> shaped 159,631/159,631 codepoints, 177,400 glyphs, 0 threw; 53 s
+<span class="g">[coverage]</span> 155,496 of 159,631 have a glyph in 213 fonts (97.41 %)
+<span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed
+<span class="a">[coverage]</span> 4,135 uncovered (2.59 %) — no free font exists for these blocks yet</pre>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  var specimens = [
+    { ch: "ع", name: "arabic",     cp: "U+0639" },
+    { ch: "ก", name: "thai",       cp: "U+0E01" },
+    { ch: "क", name: "devanagari", cp: "U+0915" },
+    { ch: "한", name: "korean",     cp: "U+D55C" },
+    { ch: "永", name: "han",        cp: "U+6C38" },
+    { ch: "R",      name: "latin",      cp: "U+0052" },
+    { ch: "א", name: "hebrew",     cp: "U+05D0" }
+  ];
+
+  var canvas = document.getElementById("glyph");
+  var ctx = canvas.getContext("2d", { willReadFrequently: true });
+  var slab = document.getElementById("slab");
+  var nameEl = document.getElementById("scriptname");
+  var cpEl = document.getElementById("cp");
+  var N = 512;
+
+  // A real distance field, computed from the glyph's own coverage: the picture
+  // is what the engine actually stores in its atlas, not a stylised stand-in.
+  function field(ch) {
+    ctx.clearRect(0, 0, N, N);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = '300px "Helvetica Neue", Arial, sans-serif';
+    ctx.fillText(ch, N / 2, N / 2 + 10);
+
+    var src = ctx.getImageData(0, 0, N, N).data;
+    var S = 128, step = N / S;
+    var inside = new Uint8Array(S * S);
+    for (var y = 0; y < S; y++)
+      for (var x = 0; x < S; x++)
+        inside[y * S + x] = src[((y * step | 0) * N + (x * step | 0)) * 4 + 3] > 127 ? 1 : 0;
+
+    // Two-pass chamfer: cheap, and close enough that the shape of the field reads.
+    var INF = 1e9, d = new Float32Array(S * S);
+    for (var i = 0; i < S * S; i++) d[i] = inside[i] ? 0 : INF;
+    for (var p = 0; p < 2; p++) {
+      var a = p === 0 ? 0 : S * S - 1;
+      for (var k = 0; k < S * S; k++) {
+        var idx = p === 0 ? k : S * S - 1 - k;
+        var xx = idx % S, yy = (idx / S) | 0, best = d[idx];
+        for (var oy = -1; oy <= 1; oy++) for (var ox = -1; ox <= 1; ox++) {
+          var nx = xx + ox, ny = yy + oy;
+          if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+          var cost = (ox && oy) ? 1.4142 : 1;
+          if (d[ny * S + nx] + cost < best) best = d[ny * S + nx] + cost;
+        }
+        d[idx] = best;
+      }
+    }
+
+    var img = ctx.createImageData(N, N);
+    for (var y2 = 0; y2 < N; y2++) {
+      for (var x2 = 0; x2 < N; x2++) {
+        var sx = (x2 / step) | 0, sy = (y2 / step) | 0;
+        var dist = d[sy * S + sx], on = inside[sy * S + sx];
+        var t = Math.min(1, dist / 14);
+        var o = (y2 * N + x2) * 4;
+        if (on) { img.data[o] = 126; img.data[o + 1] = 231; img.data[o + 2] = 180; img.data[o + 3] = 255; }
+        else {
+          // banded falloff: the contour rings a distance field is made of
+          var band = (dist % 3.2) < 1.1 ? 0.5 : 0.16;
+          img.data[o] = 126; img.data[o + 1] = 231; img.data[o + 2] = 180;
+          img.data[o + 3] = Math.round(255 * (1 - t) * band);
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  var i = 0;
+  function next() {
+    field(specimens[i].ch);
+    nameEl.textContent = specimens[i].name;
+    cpEl.textContent = specimens[i].cp;
+    i = (i + 1) % specimens.length;
+  }
+  next();
+  setInterval(next, 2200);
+
+  document.addEventListener("pointermove", function (e) {
+    var r = slab.getBoundingClientRect();
+    var ry = ((e.clientX - (r.left + r.width / 2)) / r.width) * 16;
+    var rx = -((e.clientY - (r.top + r.height / 2)) / r.height) * 16;
+    slab.style.transform = "rotateX(" + rx + "deg) rotateY(" + ry + "deg)";
+  });
+})();
+</script>
+</body>
+</html>

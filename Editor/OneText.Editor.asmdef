@@ -1,0 +1,22 @@
+{
+    "name": "OneText.Editor",
+    "rootNamespace": "OneText.Editor",
+    "references": [
+        "OneText",
+        "OneText.UGUI",
+        "UnityEngine.UI",
+        "UnityEditor.UI",
+        "Unity.Burst"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
