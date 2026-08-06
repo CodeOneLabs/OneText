@@ -7,7 +7,7 @@ OpenType text shaping engine, including `harfbuzz-subset`. Licensed under the
 
 The binaries in `Runtime/Plugins/` are HarfBuzz 14.2.1 as built and packaged by
 the `HarfBuzzSharp.NativeAssets.*` NuGet packages (14.2.1.1). Two notices are
-vendored at `Runtime/Plugins/`, and both cover every platform's binary — they
+vendored at `Runtime/Plugins/`, and both cover every platform's binary; they
 come from one build tree:
 
 - `HarfBuzz-COPYING.txt`, HarfBuzz's own "Old MIT" licence and copyright

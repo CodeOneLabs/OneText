@@ -3,7 +3,7 @@
   "displayName": "OneText",
   "version": "0.1.0",
   "unity": "2021.3",
-  "description": "Free, open-source text engine for Unity. Every language, shaped correctly — HarfBuzz + FreeType based OpenType shaping (Arabic, Devanagari, Thai, and more), bidirectional text, SDF rendering, and drop-in uGUI integration. MIT licensed, no paid tiers.",
+  "description": "Free, open-source text engine for Unity. Every language, shaped correctly. HarfBuzz + FreeType based OpenType shaping (Arabic, Devanagari, Thai, and more), bidirectional text, SDF rendering, and drop-in uGUI integration. MIT licensed, no paid tiers.",
   "keywords": [
     "text",
     "font",
@@ -29,7 +29,7 @@
   "samples": [
     {
       "displayName": "Word-break dictionaries (Thai, Lao, Khmer, Burmese)",
-      "description": "Full ICU word lists for the scripts that do not write spaces. The package ships a small starter list so Thai wraps sensibly out of the box; import this to wrap all four properly. 4.2 MB of text, so it is an import rather than a dependency — a project that ships none of these languages should not carry it. Unicode license, not LGPL.",
+      "description": "Full ICU word lists for the scripts that do not write spaces. The package ships a small starter list so Thai wraps sensibly out of the box; import this to wrap all four properly. 4.2 MB of text, so it is an import rather than a dependency, so a project that ships none of these languages does not carry it. Unicode license, not LGPL.",
       "path": "Samples~/Dictionaries"
     }
   ]

@@ -27,7 +27,7 @@ string
 
 | Module | asmdef | Depends on | Contents |
 |---|---|---|---|
-| Core | `OneText` | Burst, Collections, Mathematics | pipeline stages 1–5 up to mesh data; native bindings; font management; atlas |
+| Core | `OneText` | Burst, Collections, Mathematics | pipeline stages 1 through 5, up to mesh data; native bindings; font management; atlas |
 | UGUI | `OneText.UGUI` | Core, UnityEngine.UI | `OneTextUGUI : MaskableGraphic, ILayoutElement`; input field; menu items |
 | Editor | `OneText.Editor` | Core, UGUI | font asset importer, inspectors, tools window |
 
@@ -38,7 +38,7 @@ world-space frontend cheap.
 
 ## uGUI integration (design goal, M5)
 
-The TMP experience we want to keep — and the pain we want to remove:
+The TMP experience we want to keep, and the pain we want to remove:
 
 Keep:
 - `MaskableGraphic` + `ILayoutElement`: layout groups, `ContentSizeFitter`,
@@ -60,7 +60,7 @@ Remove (TMP pain points):
 - **HarfBuzzSharp / FreeType prebuilt natives** (MIT-licensed, maintained by
   the SkiaSharp project) to skip the 6-platform cross-compile wall initially.
   P/Invoke bindings live in `Runtime/Core/Native`.
-- Fonts load from memory (`FT_New_Memory_Face`, `hb_face_create`) — font bytes
+- Fonts load from memory (`FT_New_Memory_Face`, `hb_face_create`): font bytes
   are embedded in a `ScriptableObject` asset; no file I/O at runtime.
 - Shaping and rasterization run off the main thread; native handles are
   confined per-thread or locked.

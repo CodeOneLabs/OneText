@@ -1,8 +1,8 @@
-# OneText vs TextMeshPro vs UniText — compound scenarios
+# OneText vs TextMeshPro vs UniText: compound scenarios
 
-Unity 6000.0.77f1, Null, Apple M4 Pro. Median of the frames in each run; p99 and max are what a player feels as a hitch. Draw groups are distinct material+texture pairs — the thing that decides whether uGUI can batch — counted structurally, since a hand-driven render does not tick the engine's own batch statistics.
+Unity 6000.0.77f1, Null, Apple M4 Pro. Median of the frames in each run; p99 and max are what a player feels as a hitch. Draw groups are distinct material+texture pairs, the thing that decides whether uGUI can batch, counted structurally, since a hand-driven render does not tick the engine's own batch statistics.
 
-Allocation measured by: managed heap delta (a floor — collections inside a frame hide allocations). Each cell is the median of 3 repetitions, chosen by p99, so a stray GC pause in one repetition cannot decide the number.
+Allocation measured by: managed heap delta (a floor, since collections inside a frame hide allocations). Each cell is the median of 3 repetitions, chosen by p99, so a stray GC pause in one repetition cannot decide the number.
 
 | Scenario | System | Frames | Median ms | p99 ms | Max ms (frame) | Draw groups | Graphics | Alloc/frame | Texture |
 |---|---|---|---|---|---|---|---|---|---|

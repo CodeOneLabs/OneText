@@ -12,7 +12,7 @@ open-source references only**:
 - HarfBuzz documentation, API, and test suite
 - FreeType documentation and API
 - Open-source engines with compatible licenses (e.g. Chromium's text stack,
-  msdfgen) — for study, with attribution when code is derived
+  msdfgen): for study, with attribution when code is derived
 
 **Do not** reference the source code of proprietary or commercial text
 solutions for Unity (including decompiled output, or their public repositories)
@@ -24,7 +24,7 @@ this, we should too") is fine; implementation-level reference is not.
 
 Unicode algorithm implementations must pass the official Unicode test files
 (`BidiCharacterTest.txt`, `LineBreakTest.txt`, `GraphemeBreakTest.txt`,
-`WordBreakTest.txt` — all vendored in `Tests/UnicodeData/`).
+`WordBreakTest.txt`, all vendored in `Tests/UnicodeData/`).
 Shaping-path changes should be validated against HarfBuzz's expected outputs.
 
 Run the suite locally against a project that references the package:
@@ -35,8 +35,8 @@ Unity -batchmode -projectPath <dev-project> -runTests -testPlatform EditMode \
 ```
 
 `Tests/Editor/PerformanceTests.cs` carries throughput budgets. They are loose
-on purpose — they exist to catch an order-of-magnitude regression in CI, not to
-benchmark a machine — and every one of them logs its real number, so `[perf]`
+on purpose (they exist to catch an order-of-magnitude regression in CI, not to
+benchmark a machine), and every one of them logs its real number, so `[perf]`
 lines in the run output are the trend record. When a change moves those
 numbers, say so in the PR.
 
