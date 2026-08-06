@@ -47,11 +47,14 @@ jobs:
         # once. The host's own binary is the only one any run actually loads,
         # which is why NativesTests checks the rest of the matrix statically.
         #
-        # The Windows job is allowed to fail for now: game-ci's test runner
-        # documents package testing as Linux-only, so this may simply not work
-        # yet, and a job nobody has ever seen go green must not be the thing
-        # that blocks a pull request. It is here to be made to work, not to be
-        # trusted. See Docs/NATIVES.md.
+        # The Windows job is still allowed to fail, but not for the reason
+        # this comment used to give. game-ci documents package testing as
+        # Linux-only, which sounds like it rules this out; it does not, because
+        # that limit is on packageMode, and this workflow does not use it — it
+        # builds a real project and points it at the package, so the runner
+        # sees a project. The job works: it has run the whole suite and agreed
+        # with Linux to the test. It stays non-required only until it has been
+        # green often enough to trust. See Docs/NATIVES.md.
         include:
           - unityVersion: 2022.3.62f1
             os: ubuntu-latest
@@ -108,14 +111,25 @@ jobs:
           projectPath: CI~
           unityVersion: ${{ matrix.unityVersion }}
           testMode: editmode
-          artifactsPath: test-results
+          # Inside CI~, for the same reason the project is: artifactsPath is
+          # resolved against the workspace, and the workspace is the package,
+          # so a plain test-results/ is Packages/com.onetext.core/test-results
+          # — and the editor's own live log is in it. The log grows, its
+          # modification time changes, the pipeline reimports it, which writes
+          # more log. That is an infinite import loop, and Unity says so twelve
+          # times before giving up; the assets that were mid-refresh when it
+          # did keep their GUIDs and lose their artifacts, so the SDF shader
+          # and the Hub's UXML and USS resolve to null and about a hundred
+          # tests fail describing a package that is fine. Behind the tilde the
+          # asset database never looks.
+          artifactsPath: CI~/test-results
           checkName: EditMode results (${{ matrix.unityVersion }}, ${{ matrix.os }})
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-${{ matrix.unityVersion }}-${{ matrix.os }}
-          path: test-results
+          path: CI~/test-results
 
   playmode:
     name: PlayMode tests (${{ matrix.unityVersion }})
@@ -167,14 +181,18 @@ jobs:
           projectPath: CI~
           unityVersion: ${{ matrix.unityVersion }}
           testMode: playmode
-          artifactsPath: playmode-results
+          # Behind the tilde, for the reason spelled out in the EditMode job.
+          # This suite is where that bug hurt most: an EditMode run at least
+          # ends when its tests time out, and a PlayMode run just sits in the
+          # import loop until somebody cancels it an hour and a half later.
+          artifactsPath: CI~/playmode-results
           checkName: PlayMode results (${{ matrix.unityVersion }})
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playmode-results-${{ matrix.unityVersion }}
-          path: playmode-results
+          path: CI~/playmode-results
 
   # The Windows player smoke, in two halves. There is no Windows simulator on
   # a Mac the way there is an iOS simulator or an Android emulator, so the
