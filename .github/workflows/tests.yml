@@ -102,3 +102,57 @@ jobs:
           name: test-results-${{ matrix.unityVersion }}-${{ matrix.os }}
           path: test-results
 
+  playmode:
+    name: PlayMode tests (${{ matrix.unityVersion }})
+    runs-on: ubuntu-latest
+    # Allowed to fail, for the same reason the Windows EditMode job is: this
+    # suite has been made to pass locally on macOS and has never been seen go
+    # green on a headless Linux runner. It asserts things that need a running
+    # player loop AND a graphics device — that a label rebuilds its mesh after
+    # an enable/disable cycle, that the typewriter advances off Update, that a
+    # label whose atlas tile was evicted still draws — so a container without a
+    # working GL context would fail it for reasons that say nothing about the
+    # package. It is here to be made to work, not yet to be trusted.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        unityVersion: [6000.0.77f1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Create host project
+        run: |
+          mkdir -p CI/Assets CI/Packages CI/ProjectSettings
+          cat > CI/Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.unity.burst": "1.8.4",
+              "com.unity.collections": "1.4.0",
+              "com.unity.mathematics": "1.2.6",
+              "com.unity.ugui": "1.0.0",
+              "com.onetext.core": "file:../.."
+            },
+            "testables": ["com.onetext.core"]
+          }
+          JSON
+
+      - uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: CI
+          unityVersion: ${{ matrix.unityVersion }}
+          testMode: playmode
+          artifactsPath: playmode-results
+          checkName: PlayMode results (${{ matrix.unityVersion }})
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playmode-results-${{ matrix.unityVersion }}
+          path: playmode-results
