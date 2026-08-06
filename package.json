@@ -2,7 +2,7 @@
   "name": "com.onetext.core",
   "displayName": "OneText",
   "version": "0.1.0",
-  "unity": "2021.3",
+  "unity": "2022.3",
   "description": "Free, open-source text engine for Unity. Every language, shaped correctly. HarfBuzz + FreeType based OpenType shaping (Arabic, Devanagari, Thai, and more), bidirectional text, SDF rendering, and drop-in uGUI integration. MIT licensed, no paid tiers.",
   "keywords": [
     "text",

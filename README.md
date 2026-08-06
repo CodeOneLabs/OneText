@@ -112,7 +112,7 @@ package's Samples tab so those scripts wrap on real word boundaries.
 
 ## Requirements
 
-- Unity 2021.3 LTS or newer
+- Unity 2022.3 LTS or newer
 - Windows, macOS, Linux, Android, iOS or Web. HarfBuzz binaries ship with the
   package; see [Docs/NATIVES.md](Docs/NATIVES.md) for where they come from
   and what was verified. The Web native is built against Emscripten 3.1.38 and

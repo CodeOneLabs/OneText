@@ -42,7 +42,7 @@ jobs:
         # that blocks a pull request. It is here to be made to work, not to be
         # trusted. See Docs/NATIVES.md.
         include:
-          - unityVersion: 2021.3.45f1
+          - unityVersion: 2022.3.76f1
             os: ubuntu-latest
             required: true
           - unityVersion: 6000.0.77f1

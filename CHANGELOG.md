@@ -177,6 +177,14 @@
 
 ### Changed
 
+- **The floor is now Unity 2022.3.** The Hub rebuild draws its charts with
+  UI Toolkit's `painter2D`, which 2021.3 has never heard of, and the first
+  CI run against a 2021.3 editor said so in three compile errors. Guarding
+  an editor window's every stroke behind version defines would buy 2021.3
+  users a worse Hub and this package a permanent tax, so the minimum moves
+  to the LTS that can draw it. The runtime itself asked for nothing newer;
+  this is the price of the front door, paid once.
+
 - **The Hub is a different window.** Same tools, rebuilt on UI Toolkit (UXML
   and USS assets under `Editor/Hub/UI/`, one controller per section) and
   skinned to the project's own site rather than to the editor: near-black
