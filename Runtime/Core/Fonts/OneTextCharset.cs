@@ -25,11 +25,13 @@ namespace OneText
     /// A set of characters and sizes to rasterize before they are needed.
     ///
     /// Four ways to fill one, in the order they are worth reaching for:
-    /// record a play session (OneText > Save Recorded Charset — the game
+    /// record a play session (OneText > Save Recorded Charset; the game
     /// reports its own usage), scan the project's labels, add explicit ranges
     /// for user-generated content, or paste a frequency list for CJK where full
     /// coverage does not fit any budget.
     /// </summary>
+    // The Project window draws this rather than the default script sheet.
+    [Icon("Packages/com.onetext.core/Editor/Icons/OneTextCharset.png")]
     [CreateAssetMenu(menuName = "OneText/Charset", fileName = "OneTextCharset")]
     public sealed class OneTextCharset : ScriptableObject
     {
@@ -129,7 +131,7 @@ namespace OneText
 
         /// <summary>
         /// Rasterizes this charset into the shared atlas. Safe to call more than
-        /// once — anything already resident is skipped.
+        /// once; anything already resident is skipped.
         /// </summary>
         public PrewarmReport Prewarm() => Prewarm(SharedGlyphAtlas.Atlas);
 

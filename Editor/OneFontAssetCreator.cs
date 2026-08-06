@@ -7,7 +7,7 @@ namespace OneText.Editor
     /// <summary>
     /// Turns a .ttf/.otf in the project into a <see cref="OneFontAsset"/>.
     /// Unity's own importer owns those extensions, so OneText cannot import
-    /// them directly — this is the one-click bridge instead, and it is the only
+    /// them directly; this is the one-click bridge instead, and it is the only
     /// step between dropping a font in the project and rendering with it.
     /// </summary>
     public static class OneFontAssetCreator
@@ -44,7 +44,7 @@ namespace OneText.Editor
             }
             catch (IOException error)
             {
-                Debug.LogError($"OneText: cannot read {fontPath} — {error.Message}");
+                Debug.LogError($"OneText: cannot read {fontPath}: {error.Message}");
                 return null;
             }
 
@@ -62,7 +62,7 @@ namespace OneText.Editor
 
             float ratio = bytes.Length > 0 ? asset.StoredSize / (float)bytes.Length : 1f;
             Debug.Log($"OneText: {assetPath} ({bytes.Length / 1024} KB font, " +
-                      $"stored {asset.StoredSize / 1024} KB — {ratio:P0})");
+                      $"stored {asset.StoredSize / 1024} KB, {ratio:P0})");
             return asset;
         }
 

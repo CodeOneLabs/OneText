@@ -55,8 +55,8 @@ namespace OneText.Editor
 
     /// <summary>
     /// Why a glyph looks the way it does: which font in the chain provided it,
-    /// which characters it came from, whether the shaper substituted it, and —
-    /// when it sits at the end of a line — which line-breaking rule put it
+    /// which characters it came from, whether the shaper substituted it, and,
+    /// when it sits at the end of a line, which line-breaking rule put it
     /// there, by its name in UAX #14.
     ///
     /// Half the questions asked about text rendering are "why does this glyph
@@ -72,7 +72,7 @@ namespace OneText.Editor
             var reports = new List<GlyphReport>();
             if (layout == null || string.IsNullOrEmpty(text)) return reports;
 
-            // Line ends, so a glyph can say whether it is the last on its line —
+            // Line ends, so a glyph can say whether it is the last on its line,
             // which is the only place the break rule is the interesting answer.
             var lineEnds = new Dictionary<int, int>();
             for (int i = 0; i < layout.Lines.Count; i++)
@@ -135,7 +135,7 @@ namespace OneText.Editor
             return reports;
         }
 
-        /// <summary>The features a face registers, as one line — context for a substitution.</summary>
+        /// <summary>The features a face registers, as one line: context for a substitution.</summary>
         public static string FeatureSummary(FontData font)
         {
             if (font == null) return string.Empty;
@@ -163,7 +163,7 @@ namespace OneText.Editor
         {
             switch (rule)
             {
-                case "LB18": return "a space before the boundary — the ordinary case.";
+                case "LB18": return "a space before the boundary: the ordinary case.";
                 case "LB4":
                 case "LB5": return "a mandatory break: the text itself asked for a new line.";
                 case "LB8": return "after a zero-width space, which exists to allow exactly this.";
@@ -173,7 +173,7 @@ namespace OneText.Editor
                     return boundary > 0 && boundary <= text.Length &&
                            AsianTypography.IsIdeographic(text[boundary - 1])
                         ? "the default rule: between two ideographs, any boundary is a break."
-                        : "the default rule — nothing forbade a break here.";
+                        : "the default rule: nothing forbade a break here.";
                 case "LB9": return "the character is a combining mark and belongs to the one before it.";
                 default: return null;
             }

@@ -1,23 +1,23 @@
-using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 using OneText.Unicode;
 
 namespace OneText.Editor
 {
     /// <summary>
     /// Type a string, click a glyph, get the answer: which font drew it, which
-    /// characters it came from, whether the shaper substituted it, and — at the
-    /// end of a line — the UAX #14 rule that put the break there, by name.
+    /// characters it came from, whether the shaper substituted it, and, at the
+    /// end of a line, the UAX #14 rule that put the break there, by name.
     ///
     /// The layout is real: the same engine, the same font chain, the same
     /// language. Clicking maps back through the laid-out glyph boxes, so what
     /// is inspected is what is drawn.
     /// </summary>
-    public sealed class HubForensicsTab : IDisposable
+    public sealed class HubForensicsTab : HubSection
     {
-        private string _text = "The quick brown fox — 「こんにちは」と言った。 ค่าที่ตั้งไว้";
+        private string _text = "The quick brown fox, 「こんにちは」と言った。 ค่าที่ตั้งไว้";
         private OneFontAsset _font;
         private string _language = "";
         private float _fontSize = 34f;
@@ -26,47 +26,105 @@ namespace OneText.Editor
 
         private readonly TextLayoutEngine _engine = new TextLayoutEngine();
         private readonly TextLayoutResult _layout = new TextLayoutResult();
-        private readonly TextPreviewRenderer _renderer = new TextPreviewRenderer();
+        private readonly TextPreviewRenderer _renderer = new TextPreviewRenderer
+        {
+            Background = new Color(0.078f, 0.094f, 0.11f, 1f),
+        };
         private List<GlyphReport> _reports;
         private FontStack _fonts;
         private Texture2D _preview;
         private string _previewKey;
 
-        public void Draw(OneTextHub hub)
-        {
-            OneTextHub.Header("Forensics",
-                "Why does this glyph look like that, and why did the line break there? Both " +
-                "answers are in the engine at the moment it draws; this reads them back out.");
+        public override OneTextHub.Tab Tab => OneTextHub.Tab.Forensics;
 
-            EditorGUI.BeginChangeCheck();
-            _text = EditorGUILayout.TextField("Text", _text);
-            _font = (OneFontAsset)EditorGUILayout.ObjectField("Font", _font, typeof(OneFontAsset), false);
-            _language = EditorGUILayout.TextField(new GUIContent("Language",
-                "Passed to the shaper, so locl runs — ja, zh-Hans, ko, th."), _language);
-            _fontSize = EditorGUILayout.Slider("Font size", _fontSize, 8f, 96f);
-            _boxWidth = EditorGUILayout.Slider("Box width", _boxWidth, 60f, 900f);
-            if (EditorGUI.EndChangeCheck()) Invalidate();
+        public override string Title => "Forensics";
+
+        public override string Eyebrow => "Why does it look like that?";
+
+        public override string Lede =>
+            "Why does this glyph look like that, and why did the line break there? Both answers " +
+            "are inside the engine at the moment it draws; this reads them back out.";
+
+        public override string NavHint => "one glyph at a time";
+
+        public override string NavGroup => "Checks";
+
+        protected override void Compose(VisualElement content)
+        {
+            content.Add(InputCard());
 
             var font = _font != null ? _font
                 : OneTextSettings.Instance != null ? OneTextSettings.Instance.DefaultFont
                 : null;
             if (font == null || font.Font == null)
             {
-                EditorGUILayout.HelpBox(
-                    "Pick a font, or set a project default in Project Settings > OneText.",
-                    MessageType.Info);
+                var card = HubUI.MakeCard("Nothing to draw with",
+                    "There is no font chosen and no project default to borrow.");
+                card.Add(HubUI.Empty("Pick a font",
+                    "Choose one above, or set a project default so every screen in this window " +
+                    "has something to draw with.",
+                    "Open fonts", () => Hub.Go(OneTextHub.Tab.Fonts), "A"));
+                content.Add(card.Root);
                 return;
             }
 
-            Rebuild(font);
-            DrawPreview(font);
-            EditorGUILayout.Space();
-            DrawSelection(font);
-            EditorGUILayout.Space();
-            DrawGlyphList();
+            BuildLayout(font);
+            content.Add(StageCard(font));
+            content.Add(SelectionCard(font));
+            content.Add(GlyphListCard());
         }
 
-        private void Rebuild(OneFontAsset font)
+        // ---------------------------------------------------------------- input
+
+        private VisualElement InputCard()
+        {
+            var card = HubUI.MakeCard("Input",
+                "What to inspect. Real layout, real shaping, real fallback: the same engine a " +
+                "label uses.");
+
+            var text = HubUI.Input(_text);
+            text.isDelayed = true;
+            text.RegisterValueChangedCallback(evt =>
+            {
+                _text = evt.newValue;
+                Invalidate();
+                Refresh();
+            });
+            card.Add(HubUI.Field("Text", text));
+
+            card.Add(HubUI.Field("Font", HubUI.AssetPicker<OneFontAsset>(
+                () => _font,
+                value => { _font = value; Invalidate(); Refresh(); },
+                "Project default")));
+
+            var language = HubUI.Input(_language);
+            language.isDelayed = true;
+            language.RegisterValueChangedCallback(evt =>
+            {
+                _language = evt.newValue;
+                Invalidate();
+                Refresh();
+            });
+            card.Add(HubUI.Field("Language", language,
+                "Passed to the shaper, so the font's locl rules run: ja, zh-Hans, ko, th."));
+
+            card.Add(HubUI.Field("Font size", HubUI.Knob(_fontSize, 8f, 96f, "0", value =>
+            {
+                _fontSize = value;
+                Invalidate();
+                Refresh();
+            })));
+
+            card.Add(HubUI.Field("Box width", HubUI.Knob(_boxWidth, 60f, 900f, "0", value =>
+            {
+                _boxWidth = value;
+                Invalidate();
+                Refresh();
+            })));
+            return card.Root;
+        }
+
+        private void BuildLayout(OneFontAsset font)
         {
             if (_reports != null) return;
 
@@ -85,6 +143,8 @@ namespace OneText.Editor
             _reports = GlyphForensics.Inspect(_text, _layout, _fonts);
         }
 
+        // ---------------------------------------------------------------- stage
+
         /// <summary>
         /// The rendered text, with a click mapped back to a glyph.
         ///
@@ -92,40 +152,66 @@ namespace OneText.Editor
         /// on purpose: a caret answers "where would an edit go", and the
         /// question here is "what is this thing I am looking at".
         /// </summary>
-        private void DrawPreview(OneFontAsset font)
+        private VisualElement StageCard(OneFontAsset font)
         {
+            var card = HubUI.MakeCard("The line, as drawn",
+                "Click a glyph and the box moves to what you picked.");
+
             int width = Mathf.CeilToInt(_boxWidth);
             int height = Mathf.CeilToInt(Mathf.Max(_layout.Height + _fontSize, _fontSize * 2f));
-            var rect = GUILayoutUtility.GetRect(width, height, GUILayout.ExpandWidth(false));
 
             string key = $"{_text}|{font.GetInstanceID()}|{_language}|{_fontSize}|{_boxWidth}";
             if (_preview == null || _previewKey != key)
             {
-                if (_preview != null) UnityEngine.Object.DestroyImmediate(_preview);
+                if (_preview != null) Object.DestroyImmediate(_preview);
                 _preview = _renderer.Render(_text, font, _language, _fontSize, width, height,
                     TextWrap.Wrap, TextAlignment.Left);
                 _previewKey = key;
             }
-            if (_preview != null) GUI.DrawTexture(rect, _preview, ScaleMode.ScaleAndCrop);
+
+            var stage = new VisualElement();
+            stage.AddToClassList("preview");
+            stage.style.width = width;
+            stage.style.height = height;
+            stage.style.flexShrink = 0f;
+
+            if (_preview != null)
+            {
+                var picture = new Image { scaleMode = ScaleMode.ScaleAndCrop, image = _preview };
+                picture.style.position = Position.Absolute;
+                picture.style.left = 0f;
+                picture.style.top = 0f;
+                picture.style.width = width;
+                picture.style.height = height;
+                stage.Add(picture);
+            }
 
             // The selected glyph, boxed, in the same coordinates the engine laid
             // it out in: y down from the top of the block.
-            if (_selected >= 0 && _selected < _reports.Count)
+            if (_reports != null && _selected >= 0 && _selected < _reports.Count)
             {
                 var box = BoxOf(_reports[_selected]);
                 if (box.width > 0f)
                 {
-                    box.position += rect.position;
-                    DrawBox(box, new Color(0.4f, 0.85f, 1f, 0.9f));
+                    var outline = HubUI.Box("selection-box");
+                    outline.style.left = box.x;
+                    outline.style.top = box.y;
+                    outline.style.width = box.width;
+                    outline.style.height = box.height;
+                    outline.pickingMode = PickingMode.Ignore;
+                    stage.Add(outline);
                 }
             }
 
-            if (Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition))
+            stage.RegisterCallback<MouseDownEvent>(evt =>
             {
-                var local = Event.current.mousePosition - rect.position;
-                _selected = GlyphAt(local);
-                Event.current.Use();
-            }
+                _selected = GlyphAt(evt.localMousePosition);
+                Refresh();
+                evt.StopPropagation();
+            });
+
+            card.Add(stage);
+            return card.Root;
         }
 
         /// <summary>The glyph's box in layout coordinates, or an empty rect.</summary>
@@ -146,6 +232,7 @@ namespace OneText.Editor
 
         private int GlyphAt(Vector2 point)
         {
+            if (_reports == null) return -1;
             for (int i = 0; i < _reports.Count; i++)
             {
                 var box = BoxOf(_reports[i]);
@@ -154,52 +241,53 @@ namespace OneText.Editor
             return -1;
         }
 
-        private static void DrawBox(Rect rect, Color color)
-        {
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, rect.width, 1f), color);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 1f, rect.width, 1f), color);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, 1f, rect.height), color);
-            EditorGUI.DrawRect(new Rect(rect.xMax - 1f, rect.y, 1f, rect.height), color);
-        }
+        // ------------------------------------------------------------ selection
 
-        private void DrawSelection(OneFontAsset font)
+        private VisualElement SelectionCard(OneFontAsset font)
         {
-            if (_selected < 0 || _selected >= _reports.Count)
+            var card = HubUI.MakeCard("This glyph",
+                "Everything the engine knew about it at the moment it drew it.");
+
+            if (_reports == null || _selected < 0 || _selected >= _reports.Count)
             {
-                EditorGUILayout.LabelField("Click a glyph above.", EditorStyles.miniLabel);
-                return;
+                card.Add(HubUI.Empty("Nothing selected",
+                    "Click a glyph in the line above (or a row in the list below) and its font, " +
+                    "its cluster, its substitution and the rule that broke the line after it show " +
+                    "up here.", null, null, "◎"));
+                return card.Root;
             }
 
+            card.Flush();
             var report = _reports[_selected];
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            card.Add(HubUI.KeyValue("Characters",
+                $"'{report.Characters}'   {CodepointList(report.Characters)}   " +
+                $"at {report.TextStart}..{report.TextStart + report.TextLength}"));
+            card.Add(HubUI.KeyValue("Glyph",
+                report.Substituted
+                    ? $"{report.GlyphId}, substituted; the cmap maps this character to " +
+                      $"{report.NominalGlyphId}"
+                    : $"{report.GlyphId}",
+                report.Substituted ? HubTone.Good : HubTone.Neutral));
+            card.Add(HubUI.KeyValue("Font",
+                report.FontFamily + (string.IsNullOrEmpty(report.FontLanguage)
+                    ? "   (no language tag)"
+                    : $"   [{report.FontLanguage}]"),
+                string.IsNullOrEmpty(report.FontLanguage) ? HubTone.Warn : HubTone.Neutral));
+            card.Add(HubUI.KeyValue("Run",
+                $"line {report.LineIndex}, run {report.RunIndex}, " +
+                (report.RightToLeft ? "right-to-left" : "left-to-right") +
+                (report.Positioned ? ", moved by GPOS" : "")));
+
+            if (report.EndsLine)
             {
-                EditorGUILayout.LabelField("Characters",
-                    $"'{report.Characters}'  {CodepointList(report.Characters)}  " +
-                    $"at {report.TextStart}..{report.TextStart + report.TextLength}");
-                EditorGUILayout.LabelField("Glyph",
-                    report.Substituted
-                        ? $"{report.GlyphId} — substituted; the cmap maps this character to " +
-                          $"{report.NominalGlyphId}"
-                        : $"{report.GlyphId}");
-                EditorGUILayout.LabelField("Font",
-                    report.FontFamily + (string.IsNullOrEmpty(report.FontLanguage)
-                        ? "  (no language tag)"
-                        : $"  [{report.FontLanguage}]"));
-                EditorGUILayout.LabelField("Run",
-                    $"line {report.LineIndex}, run {report.RunIndex}, " +
-                    (report.RightToLeft ? "right-to-left" : "left-to-right") +
-                    (report.Positioned ? ", moved by GPOS" : ""));
-
-                if (report.EndsLine)
-                {
-                    EditorGUILayout.LabelField("Line break",
-                        report.BreakRule + (report.BreakNote != null ? $" — {report.BreakNote}" : ""));
-                }
-
-                EditorGUILayout.LabelField("Features",
-                    GlyphForensics.FeatureSummary(FontOf(report, font)),
-                    EditorStyles.wordWrappedMiniLabel);
+                card.Add(HubUI.KeyValue("Line break",
+                    report.BreakRule + (report.BreakNote != null ? $", {report.BreakNote}" : ""),
+                    HubTone.Good));
             }
+
+            card.Add(HubUI.KeyValue("Features",
+                GlyphForensics.FeatureSummary(FontOf(report, font))));
+            return card.Root;
         }
 
         private FontData FontOf(in GlyphReport report, OneFontAsset fallback)
@@ -212,20 +300,28 @@ namespace OneText.Editor
             return fallback != null ? fallback.Font : null;
         }
 
-        private void DrawGlyphList()
+        private VisualElement GlyphListCard()
         {
-            EditorGUILayout.LabelField($"Glyphs ({_reports.Count:n0})", EditorStyles.boldLabel);
+            var card = HubUI.MakeCard($"All {_reports.Count:n0} glyph(s)",
+                "In the order the shaper produced them, which is not always the order they read " +
+                "in.").Flush();
+
             for (int i = 0; i < _reports.Count; i++)
             {
-                var report = _reports[i];
-                using (new EditorGUILayout.HorizontalScope())
+                int index = i;
+                var row = new Button(() =>
                 {
-                    if (GUILayout.Button(i == _selected ? "•" : " ",
-                        EditorStyles.miniButton, GUILayout.Width(22f)))
-                        _selected = i;
-                    EditorGUILayout.LabelField(report.ToString(), EditorStyles.miniLabel);
-                }
+                    _selected = index;
+                    Refresh();
+                })
+                { text = string.Empty };
+                row.AddToClassList("glyph-row");
+                row.EnableInClassList("glyph-row--on", i == _selected);
+                row.Add(HubUI.Text(index.ToString(), "glyph-row__index"));
+                row.Add(HubUI.Mono(HubUI.Text(_reports[i].ToString(), "glyph-row__text")));
+                card.Add(row);
             }
+            return card.Root;
         }
 
         private static string CodepointList(string text)
@@ -241,9 +337,9 @@ namespace OneText.Editor
             _selected = -1;
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
-            if (_preview != null) UnityEngine.Object.DestroyImmediate(_preview);
+            if (_preview != null) Object.DestroyImmediate(_preview);
             _preview = null;
             _renderer.Dispose();
         }

@@ -9,7 +9,7 @@ namespace OneText
     ///
     /// This is the answer to material-preset hell. In TextMesh Pro a preset is
     /// welded to a specific atlas texture, fallback glyphs ignore your outline,
-    /// and swapping a font at runtime silently drops the preset — because the
+    /// and swapping a font at runtime silently drops the preset, because the
     /// preset is a material, and a material is a rendering object. Nothing
     /// about our rendering is welded to an atlas, so a style can be what it
     /// should have been all along: pure data.
@@ -22,15 +22,17 @@ namespace OneText
     ///
     /// Inheritance is a single <see cref="Extends"/> level with explicit
     /// overrides, and deliberately not more. A full CSS cascade is a debugging
-    /// trap — "why is this text blue" becomes an archaeology problem — and the
+    /// trap ("why is this text blue" becomes an archaeology problem), and the
     /// second level buys almost nothing the first does not.
     /// </summary>
+    // The Project window draws this rather than the default script sheet.
+    [Icon("Packages/com.onetext.core/Editor/Icons/OneTextStyle.png")]
     [CreateAssetMenu(menuName = "OneText/Text Style", fileName = "New Text Style", order = 210)]
     public sealed class OneTextStyle : ScriptableObject
     {
         /// <summary>
         /// Which fields this style sets. A style that does not set a field
-        /// inherits it — from its base style, and failing that from the label.
+        /// inherits it from its base style, and failing that from the label.
         /// Explicit rather than sentinel values, because "size 0" and "no
         /// opinion about size" are different things and a magic number cannot
         /// tell them apart.
@@ -52,7 +54,7 @@ namespace OneText
             Glow = 1 << 10,
         }
 
-        [Tooltip("Style this one inherits from. One level only — a style may extend a style, " +
+        [Tooltip("Style this one inherits from. One level only: a style may extend a style, " +
                  "and that style may not extend another.")]
         [SerializeField] private OneTextStyle _extends;
 
@@ -81,8 +83,8 @@ namespace OneText
         [SerializeField] private float _glowRadius = 0.75f;
 
         /// <summary>
-        /// Raised whenever any style changes. Labels subscribe once and rebuild
-        /// — the alternative is every label polling every style it references,
+        /// Raised whenever any style changes. Labels subscribe once and rebuild;
+        /// the alternative is every label polling every style it references,
         /// which is the same work multiplied by the number of labels.
         /// </summary>
         public static event Action<OneTextStyle> Changed;
@@ -117,7 +119,7 @@ namespace OneText
         }
 
         /// <summary>
-        /// The outline, shadow and glow this style asks for — only the parts it
+        /// The outline, shadow and glow this style asks for: only the parts it
         /// actually sets, so a style that says nothing about decorations lets
         /// the label's own base style and the markup through untouched.
         ///
@@ -159,7 +161,7 @@ namespace OneText
             }
         }
 
-        /// <summary>True if this style — or the one it extends — sets a field.</summary>
+        /// <summary>True if this style, or the one it extends, sets a field.</summary>
         public bool Sets(Fields field) => Resolved(field) != null;
 
         /// <summary>
@@ -226,7 +228,7 @@ namespace OneText
         /// <summary>
         /// Sets the decoration at runtime and tells every label. Only the parts
         /// <paramref name="decoration"/> sets are taken, and only those become
-        /// overrides — the same rule the getter reads by.
+        /// overrides, the same rule the getter reads by.
         /// </summary>
         public void SetDecoration(TextDecoration decoration)
         {
@@ -282,7 +284,7 @@ namespace OneText
             {
                 Debug.LogWarning(
                     $"OneText: style '{name}' extends '{_extends.name}', which already extends " +
-                    $"'{_extends._extends.name}'. Inheritance is one level deep — the third style " +
+                    $"'{_extends._extends.name}'. Inheritance is one level deep; the third style " +
                     "is ignored. A full cascade makes 'why is this text blue' an archaeology " +
                     "problem, which is the trap this rule exists to avoid.", this);
             }

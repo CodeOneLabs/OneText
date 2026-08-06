@@ -1,85 +1,152 @@
 using OneText.Editor;
 using NUnit.Framework;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace OneText.Tests
 {
     /// <summary>
-    /// The window, opened and drawn.
+    /// The window, built.
     ///
     /// The Hub's logic is tested headlessly next door; this is the other half
-    /// of the risk, which is IMGUI itself — a mismatched layout scope or a
-    /// style built during a layout pass throws at draw time and nowhere else,
-    /// and a tooling window that throws on its second repaint is a tooling
-    /// window nobody uses.
+    /// of the risk, which is the view: a section that throws while composing
+    /// itself is a section nobody can open, and it throws at build time and
+    /// nowhere else.
+    ///
+    /// This used to be the suite's one skipped test. It was skipped because the
+    /// Hub was IMGUI and batch mode loads no editor skin, so EditorStyles threw
+    /// before any of this window's own code ran. A visual tree needs no skin,
+    /// so the test runs everywhere now, which is as much the point of the
+    /// rewrite as the look is.
     /// </summary>
     public class HubWindowTests
     {
+        private OneTextHub _window;
+
+        [SetUp]
+        public void SetUp() => _window = ScriptableObject.CreateInstance<OneTextHub>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (_window != null) Object.DestroyImmediate(_window);
+            _window = null;
+        }
+
         [Test]
-        public void EveryTab_DrawsWithoutThrowing()
+        public void EverySection_BuildsWithoutThrowing()
         {
-            // Batch mode loads no editor skin, so EditorStyles is null and every
-            // IMGUI call throws for a reason that has nothing to do with this
-            // window. The test is then only meaningful from an editor that has
-            // one — which is where a person about to open the Hub is anyway.
-            // Probed rather than compared: with no skin loaded the property
-            // does not return null, it throws inside itself.
-            if (Application.isBatchMode || !HasEditorStyles())
-                Assert.Ignore("no editor GUI skin in this session (batch mode)");
+            Assert.That(_window.Sections.Count, Is.GreaterThan(0), "the Hub has no sections");
 
-            var window = ScriptableObject.CreateInstance<OneTextHub>();
-            try
+            foreach (var section in _window.Sections)
             {
-                foreach (OneTextHub.Tab tab in System.Enum.GetValues(typeof(OneTextHub.Tab)))
-                {
-                    // Twice: a layout pass and a repaint pass see different
-                    // things, and the bugs live in the difference.
-                    Draw(window, tab);
-                    Draw(window, tab);
-                }
-            }
-            finally
-            {
-                Object.DestroyImmediate(window);
+                var root = section.Build(_window);
+                Assert.NotNull(root, $"{section.Tab} built nothing");
+                Assert.That(root.childCount, Is.GreaterThan(0), $"{section.Tab} is empty");
+
+                // Twice: composing again over a live tree is what every button
+                // in this window does, and the bugs live in the difference.
+                Assert.DoesNotThrow(section.Rebuild, $"{section.Tab} could not rebuild");
+                Assert.DoesNotThrow(section.OnShow, $"{section.Tab} could not be shown");
+                Assert.DoesNotThrow(section.Tick, $"{section.Tab} could not tick");
             }
         }
 
-        private static bool HasEditorStyles()
+        [Test]
+        public void EveryTab_HasASection()
         {
-            try
+            foreach (OneTextHub.Tab tab in System.Enum.GetValues(typeof(OneTextHub.Tab)))
             {
-                return EditorStyles.toolbarButton != null;
-            }
-            catch (System.NullReferenceException)
-            {
-                return false;
+                var section = _window.Find(tab);
+                Assert.NotNull(section, $"no section for {tab}");
+                Assert.AreEqual(tab, section.Tab, $"{tab} resolved to {section.Tab}");
             }
         }
 
-        private static void Draw(OneTextHub window, OneTextHub.Tab tab)
+        [Test]
+        public void EverySection_SaysWhatItIsFor()
         {
-            var method = typeof(OneTextHub).GetMethod("OnGUI",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            var field = typeof(OneTextHub).GetField("_tab",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            field.SetValue(window, tab);
+            // The usability argument in one assertion: a panel whose title is a
+            // noun and whose explanation is missing is the editor window this
+            // one replaced.
+            foreach (var section in _window.Sections)
+            {
+                Assert.IsNotEmpty(section.Title, $"{section.Tab} has no title");
+                Assert.IsNotEmpty(section.Eyebrow, $"{section.Tab} has no eyebrow");
+                Assert.That(section.Lede, Is.Not.Null.And.Length.GreaterThan(30),
+                    $"{section.Tab} does not say what it is for");
+            }
+        }
 
-            // A window that was never shown has no GUI context of its own, so
-            // one is borrowed: this is what an EditorWindow repaint does.
-            var container = new IMGUIContainer(() => method.Invoke(window, null));
-            try
+        [Test]
+        public void Shell_BuildsAndSelectsEverySection()
+        {
+            var shell = new HubShell(_window);
+            Assert.NotNull(shell.Root, "no shell");
+            Assert.That(shell.Root.styleSheets.count, Is.GreaterThan(0),
+                "the shell loaded no stylesheet: the USS asset is missing");
+
+            foreach (var section in _window.Sections)
             {
-                container.style.width = 800f;
-                container.style.height = 600f;
-                container.MarkDirtyRepaint();
-                container.onGUIHandler();
+                Assert.DoesNotThrow(() => shell.Select(section), $"could not show {section.Tab}");
+                Assert.AreSame(section, shell.Current);
             }
-            catch (System.Exception e) when (e.InnerException is ExitGUIException)
+
+            Assert.DoesNotThrow(() => shell.Notify("built by a test"));
+            Assert.DoesNotThrow(shell.RefreshNav);
+        }
+
+        [Test]
+        public void Layout_LoadsFromThePackage()
+        {
+            Assert.NotNull(HubUI.LoadTree("OneTextHub"), "OneTextHub.uxml did not load");
+            Assert.NotNull(HubUI.LoadTree("HubCard"), "HubCard.uxml did not load");
+            Assert.NotNull(HubUI.LoadStyle("OneTextHub"), "OneTextHub.uss did not load");
+        }
+
+        [Test]
+        public void Card_HasATitleAndABody()
+        {
+            var card = HubUI.MakeCard("Title", "Note");
+            Assert.NotNull(card.Root);
+            Assert.NotNull(card.Body);
+            Assert.NotNull(card.Actions);
+            Assert.AreEqual("Title", card.TitleLabel.text);
+
+            card.Add(new Label("body"));
+            card.Act(HubUI.Ghost("act", () => { }));
+            Assert.AreEqual(1, card.Body.childCount);
+            Assert.AreEqual(1, card.Actions.childCount);
+        }
+
+        [Test]
+        public void BundledWordLists_AreStillInThePackage()
+        {
+            // The Dictionaries section offers one button that installs four
+            // files by name out of Samples~. Renaming one of them there would
+            // turn that button into a button that quietly installs nothing:
+            // the exact failure the whole section exists to make visible.
+            string folder = HubDictionariesTab.BundledWordListFolder();
+            Assert.NotNull(folder, "the package ships no Samples~/Dictionaries folder");
+
+            foreach (var (file, script) in HubDictionariesTab.BundledLists)
             {
-                // GUIUtility.ExitGUI is control flow, not a failure.
+                Assert.IsTrue(System.IO.File.Exists(System.IO.Path.Combine(folder, file)),
+                    $"{script}: {file} is missing from the bundled word lists");
             }
+        }
+
+        [Test]
+        public void Charts_TakeTheirDataWithoutThrowing()
+        {
+            var donut = new HubDonut();
+            donut.Slices((0.3f, Color.green), (0.2f, Color.yellow), (0.5f, Color.grey));
+            donut.Caption("50%", "FULL");
+            Assert.DoesNotThrow(donut.MarkDirtyRepaint);
+
+            var spark = new HubSparkline();
+            spark.Set(new[] { 0, 3, 9, 1, 0 }, "evictions");
+            Assert.DoesNotThrow(spark.MarkDirtyRepaint);
         }
     }
 }

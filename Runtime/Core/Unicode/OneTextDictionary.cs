@@ -14,17 +14,19 @@ namespace OneText
     /// <see cref="DictionaryLineBreaker"/> has always taken any newline-separated
     /// list; what it did not have was somewhere for one to live. A dictionary
     /// dropped in as a text file is a loose file somebody has to remember to
-    /// load, in a build where nobody notices it was not loaded — the failure is
+    /// load, in a build where nobody notices it was not loaded; the failure is
     /// wrapping that is subtly wrong in a language the team does not read. As an
     /// asset it is referenced by the project settings and installed before the
     /// first scene, like the prewarm charset beside it.
     ///
     /// The file is stored compressed, the way fonts are: ICU's Thai list is
     /// ~200 KB of highly repetitive UTF-8 and packs to a fraction of that. It is
-    /// not vendored into the package — a project that never ships Thai should
+    /// not vendored into the package; a project that never ships Thai should
     /// not carry it, and the licence notice belongs to the project that opts in,
     /// which is why <see cref="Notice"/> travels with the data.
     /// </summary>
+    // The Project window draws this rather than the default script sheet.
+    [Icon("Packages/com.onetext.core/Editor/Icons/OneTextDictionary.png")]
     public sealed class OneTextDictionary : ScriptableObject
     {
         [SerializeField, HideInInspector] private byte[] _data;

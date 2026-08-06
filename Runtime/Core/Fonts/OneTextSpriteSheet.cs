@@ -8,8 +8,8 @@ namespace OneText
     /// icons that appear in dialogue, next to the emoji that come from fonts.
     ///
     /// This is a list of ordinary Unity sprites rather than a bespoke sheet
-    /// format. Everything a project already has — an atlas, a slice, an
-    /// importer setting — keeps working, and the one thing this needs from them
+    /// format. Everything a project already has (an atlas, a slice, an
+    /// importer setting) keeps working, and the one thing this needs from them
     /// (pixels and an aspect ratio) every Sprite already carries.
     ///
     /// The sprites go into the same RGBA atlas as colour emoji and draw through
@@ -18,10 +18,12 @@ namespace OneText
     /// a second texture would be a second draw call, which is what inline
     /// sprites exist to avoid.
     /// </summary>
+    // The Project window draws this rather than the default script sheet.
+    [Icon("Packages/com.onetext.core/Editor/Icons/OneTextSpriteSheet.png")]
     [CreateAssetMenu(menuName = "OneText/Sprite Sheet", fileName = "New Sprite Sheet", order = 211)]
     public sealed class OneTextSpriteSheet : ScriptableObject
     {
-        [Tooltip("Sprites addressable by index — <sprite=0> is the first — or by name.")]
+        [Tooltip("Sprites addressable by index (<sprite=0> is the first) or by name.")]
         [SerializeField] private List<Sprite> _sprites = new List<Sprite>();
 
         public IReadOnlyList<Sprite> Sprites => _sprites;
@@ -59,7 +61,7 @@ namespace OneText
         /// Reads a sprite's pixels as an atlas tile, sized to
         /// <paramref name="pixelHeight"/>.
         ///
-        /// Returns false when the texture is not readable — which is the common
+        /// Returns false when the texture is not readable, which is the common
         /// case for imported sprites and worth a clear error rather than a
         /// silent blank, because the fix ("tick Read/Write") is not guessable.
         /// </summary>

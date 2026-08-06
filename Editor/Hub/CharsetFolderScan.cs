@@ -9,7 +9,7 @@ namespace OneText.Editor
     /// Keeps a charset in step with the folders it was built from.
     ///
     /// A charset filled once from a string table is correct until the day the
-    /// translators add a character — and nothing about that day announces
+    /// translators add a character, and nothing about that day announces
     /// itself: the atlas simply bakes a glyph at runtime that the prewarm was
     /// supposed to have covered, on a device, in a language nobody on the team
     /// reads. So the scan is recorded on the asset and repeated whenever a file
@@ -71,8 +71,8 @@ namespace OneText.Editor
         /// <summary>
         /// Rescans on import, for the charsets whose folders the import touched.
         ///
-        /// Scoped to the folders that actually changed because the alternative —
-        /// rescanning every charset on every import — is a cost paid on every
+        /// Scoped to the folders that actually changed because the alternative,
+        /// rescanning every charset on every import, is a cost paid on every
         /// asset in the project for a folder nobody edited.
         /// </summary>
         private sealed class ImportHook : AssetPostprocessor
@@ -96,7 +96,7 @@ namespace OneText.Editor
                     var report = Rescan(charset);
                     if (report.Added > 0)
                     {
-                        Debug.Log($"OneText: {charset.name} rescanned — {report}.", charset);
+                        Debug.Log($"OneText: {charset.name} rescanned: {report}.", charset);
                     }
                 }
             }

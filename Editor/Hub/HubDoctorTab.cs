@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace OneText.Editor
 {
@@ -10,113 +11,178 @@ namespace OneText.Editor
     /// Nothing in or around Unity answers "will every string in this build
     /// render", and every part of the answer is decidable before the build.
     /// </summary>
-    public sealed class HubDoctorTab
+    public sealed class HubDoctorTab : HubSection
     {
         private DoctorReport _report;
         private bool _showInfo = true;
 
-        public void Draw(OneTextHub hub)
+        /// <summary>The last run, for the overview to report.</summary>
+        public DoctorReport LastReport => _report;
+
+        public override OneTextHub.Tab Tab => OneTextHub.Tab.Doctor;
+
+        public override string Title => "Doctor";
+
+        public override string Eyebrow => "Will it render?";
+
+        public override string Lede =>
+            "Characters no font in the chain can draw, Japanese that will come out in Chinese " +
+            "shapes, a locale whose line breaking needs a dictionary nobody installed. All of it " +
+            "decidable before the build, and all of it decided here.";
+
+        public override string NavHint => "renderability lint";
+
+        public override string NavGroup => "Checks";
+
+        public override string BadgeText
         {
-            OneTextHub.Header("Doctor",
-                "Static renderability analysis: characters no font can draw, Japanese text that " +
-                "will come out in Chinese shapes, locales whose line breaking needs a dictionary " +
-                "that was never installed.");
-
-            hub.DrawStringFolders();
-
-            using (new EditorGUILayout.HorizontalScope())
+            get
             {
-                if (GUILayout.Button("Run"))
-                    _report = TextDoctor.Run(hub.StringFolders);
-                _showInfo = GUILayout.Toggle(_showInfo, "Show notes",
-                    EditorStyles.miniButton, GUILayout.Width(100f));
+                if (_report == null) return null;
+                if (_report.Passed) return "PASS";
+                int errors = 0;
+                foreach (var finding in _report.Findings)
+                    if (finding.Severity == DoctorSeverity.Error) errors++;
+                return errors.ToString("n0");
             }
+        }
 
-            EditorGUILayout.Space();
+        public override HubTone BadgeTone =>
+            _report == null ? HubTone.Neutral
+            : _report.Passed ? HubTone.Good
+            : HubTone.Bad;
+
+        protected override void Compose(VisualElement content)
+        {
+            content.Add(StringSources(
+                "Doctor reads every string it finds under these paths and checks each one."));
+            content.Add(RunCard());
+            if (_report != null && _report.Findings.Count > 0) content.Add(Findings());
+            content.Add(CiCard());
+        }
+
+        private VisualElement RunCard()
+        {
+            var card = HubUI.MakeCard("The check",
+                "One pass over your strings, the same one CI runs.");
+            card.Act(HubUI.Primary("Run Doctor", () =>
+            {
+                _report = TextDoctor.Run(Hub.StringFolders);
+                Refresh();
+                Say(_report.Summary());
+            }));
+
             if (_report == null)
             {
-                EditorGUILayout.LabelField("Not run yet.", EditorStyles.miniLabel);
-                DrawCiHint();
-                return;
+                card.Add(HubUI.Empty("Not run yet",
+                    Hub.StringFolders.Count == 0
+                        ? "Add a folder of strings above; Doctor has nothing to check until it " +
+                          "knows where your text is."
+                        : "One pass says whether every string in this project can be drawn with " +
+                          "the fonts and word lists it ships.",
+                    Hub.StringFolders.Count == 0 ? null : "Run Doctor",
+                    Hub.StringFolders.Count == 0 ? (System.Action)null : () =>
+                    {
+                        _report = TextDoctor.Run(Hub.StringFolders);
+                        Refresh();
+                    }, "✚"));
+                return card.Root;
             }
 
-            EditorGUILayout.LabelField(_report.Summary(),
-                _report.Passed ? EditorStyles.boldLabel : ErrorStyle());
+            card.Add(HubUI.Notice(_report.Summary(),
+                _report.Passed ? HubTone.Good : HubTone.Bad));
 
             if (_report.Findings.Count == 0)
             {
-                EditorGUILayout.HelpBox("Nothing to report — every string renders.", MessageType.Info);
-                DrawCiHint();
-                return;
+                card.Add(HubUI.Notice("Nothing to report: every string renders.", HubTone.Good));
+                return card.Root;
             }
 
+            card.Add(HubUI.Pill("Show notes", _showInfo, on =>
+            {
+                _showInfo = on;
+                Refresh();
+            }));
+            return card.Root;
+        }
+
+        private VisualElement Findings()
+        {
+            var host = new VisualElement();
             foreach (var finding in _report.Findings)
             {
                 if (finding.Severity == DoctorSeverity.Info && !_showInfo) continue;
-                DrawFinding(finding);
+                host.Add(Finding(finding));
             }
-
-            DrawCiHint();
+            return host;
         }
 
-        private static void DrawFinding(in DoctorFinding finding)
+        private VisualElement Finding(in DoctorFinding finding)
         {
-            var type = finding.Severity switch
+            var tone = finding.Severity switch
             {
-                DoctorSeverity.Error => MessageType.Error,
-                DoctorSeverity.Warning => MessageType.Warning,
-                _ => MessageType.Info,
+                DoctorSeverity.Error => HubTone.Bad,
+                DoctorSeverity.Warning => HubTone.Warn,
+                _ => HubTone.Neutral,
             };
 
-            EditorGUILayout.HelpBox($"[{finding.Rule}] {finding.Message}", type);
-            if (string.IsNullOrEmpty(finding.Source) && string.IsNullOrEmpty(finding.Sample)) return;
+            var card = HubUI.MakeCard(finding.Message, null);
+            card.TitleLabel.style.unityFontStyleAndWeight = FontStyle.Normal;
+            card.Actions.Add(HubUI.Badge(finding.Rule, tone));
 
-            using (new EditorGUILayout.HorizontalScope())
+            switch (tone)
             {
-                GUILayout.Space(12f);
-                using (new EditorGUILayout.VerticalScope())
-                {
-                    if (!string.IsNullOrEmpty(finding.Sample))
-                        EditorGUILayout.LabelField("sample", finding.Sample, EditorStyles.miniLabel);
-                    if (!string.IsNullOrEmpty(finding.Source))
-                    {
-                        using (new EditorGUILayout.HorizontalScope())
-                        {
-                            EditorGUILayout.LabelField("in", finding.Source, EditorStyles.miniLabel);
-                            var asset = AssetDatabase.LoadAssetAtPath<Object>(finding.Source);
-                            using (new EditorGUI.DisabledScope(asset == null))
-                            {
-                                if (GUILayout.Button("Show", EditorStyles.miniButton, GUILayout.Width(50f)))
-                                    EditorGUIUtility.PingObject(asset);
-                            }
-                        }
-                    }
-                }
+                case HubTone.Bad: card.Root.style.borderLeftWidth = 2f;
+                    card.Root.style.borderLeftColor = new Color(1f, 0.482f, 0.447f); break;
+                case HubTone.Warn: card.Root.style.borderLeftWidth = 2f;
+                    card.Root.style.borderLeftColor = new Color(1f, 0.8f, 0.4f); break;
+                default: card.Root.style.borderLeftWidth = 2f;
+                    card.Root.style.borderLeftColor = new Color(0.839f, 0.898f, 0.867f, 0.2f); break;
             }
+
+            if (string.IsNullOrEmpty(finding.Source) && string.IsNullOrEmpty(finding.Sample))
+            {
+                card.Body.style.display = DisplayStyle.None;
+                return card.Root;
+            }
+
+            if (!string.IsNullOrEmpty(finding.Sample))
+                card.Add(HubUI.KeyValue("Sample", finding.Sample));
+
+            if (!string.IsNullOrEmpty(finding.Source))
+            {
+                var row = HubUI.Box("row");
+                var path = HubUI.Mono(HubUI.Text(finding.Source, "kv__value"));
+                row.Add(path);
+                var asset = AssetDatabase.LoadAssetAtPath<Object>(finding.Source);
+                if (asset != null)
+                    row.Add(HubUI.Quiet("Show in project", () => EditorGUIUtility.PingObject(asset)));
+                card.Add(row);
+            }
+            return card.Root;
         }
 
         /// <summary>
         /// The command line, spelled out. A lint that only runs when somebody
         /// opens a window is a document; the point of this one is the exit code.
         /// </summary>
-        private static void DrawCiHint()
+        private VisualElement CiCard()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("On CI", EditorStyles.boldLabel);
-            EditorGUILayout.SelectableLabel(
-                "Unity -batchmode -projectPath . -executeMethod " +
-                "OneText.Editor.TextDoctor.RunFromCommandLine -oneStrings Assets/Localization",
-                EditorStyles.textArea, GUILayout.Height(34f));
-            EditorGUILayout.LabelField(
-                "Exits 1 when a string cannot render, so an unrenderable string fails the merge " +
-                "rather than the release.", EditorStyles.wordWrappedMiniLabel);
-        }
+            var card = HubUI.MakeCard("On CI",
+                "Run it on every merge. Exits 1 when a string cannot render, so an unrenderable " +
+                "string fails the pull request rather than the release.");
 
-        private static GUIStyle ErrorStyle()
-        {
-            var style = new GUIStyle(EditorStyles.boldLabel);
-            style.normal.textColor = new Color(0.95f, 0.45f, 0.45f);
-            return style;
+            const string command =
+                "Unity -batchmode -projectPath . -executeMethod " +
+                "OneText.Editor.TextDoctor.RunFromCommandLine -oneStrings Assets/Localization";
+
+            card.Add(HubUI.Mono(HubUI.Text(command, "code")));
+            card.Act(HubUI.Quiet("Copy", () =>
+            {
+                EditorGUIUtility.systemCopyBuffer = command;
+                Say("Command copied to the clipboard.");
+            }));
+            return card.Root;
         }
     }
 }

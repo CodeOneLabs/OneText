@@ -15,6 +15,8 @@ namespace OneText
     /// parse and one set of rasterized glyphs. Variable-font instances are
     /// cached per axis combination.
     /// </summary>
+    // The Project window draws this rather than the default script sheet.
+    [Icon("Packages/com.onetext.core/Editor/Icons/OneFontAsset.png")]
     public sealed class OneFontAsset : ScriptableObject
     {
         [SerializeField, HideInInspector] private byte[] _data;
@@ -24,7 +26,7 @@ namespace OneText
 
         /// <summary>
         /// How the embedded font file is packed. Stored per asset so fonts
-        /// imported before a codec changed keep loading — the field defaults to
+        /// imported before a codec changed keep loading; the field defaults to
         /// <see cref="Codec.Deflate"/>, which is what those assets contain.
         /// </summary>
         public enum Codec
@@ -36,7 +38,7 @@ namespace OneText
         [SerializeField] private string _familyName;
         [SerializeField] private string _sourcePath;
 
-        [Tooltip("Language this face is designed for — ja, zh-Hans, zh-Hant, ko. Optional, and " +
+        [Tooltip("Language this face is designed for: ja, zh-Hans, zh-Hant, ko. Optional, and " +
             "only meaningful for the unified scripts: a Japanese label with a tagged Japanese " +
             "font gets Japanese shapes for 直 even when a Chinese font sits above it in the chain.")]
         [SerializeField] private string _language;
@@ -67,7 +69,7 @@ namespace OneText
         /// <summary>Size actually stored in the asset.</summary>
         public int StoredSize => _data?.Length ?? 0;
 
-        /// <summary>The shared parsed font. Never dispose it — the asset owns it.</summary>
+        /// <summary>The shared parsed font. Never dispose it; the asset owns it.</summary>
         public FontData Font
         {
             get
@@ -85,7 +87,7 @@ namespace OneText
         /// <summary>
         /// A shared instance of this font with the given variation axes applied.
         /// Instances are cached, so two labels asking for <c>wght 700</c> get the
-        /// same handle — and therefore the same atlas entries.
+        /// same handle, and therefore the same atlas entries.
         /// </summary>
         public FontData GetVariant(IReadOnlyList<FontVariation> variations)
         {
@@ -137,11 +139,11 @@ namespace OneText
         ///
         /// Brotli rather than deflate: font tables are repetitive enough that
         /// the difference is not marginal. A 55 MB Korean face measured 30.9 MB
-        /// deflated and 12.0 MB brotli'd — 21.6 % of the original against
+        /// deflated and 12.0 MB brotli'd: 21.6 % of the original against
         /// 55.8 %, or 19 MB off the build for one font. Packing is slow (tens
         /// of seconds for a face that size) but happens once, at import;
         /// unpacking, which is what a player waits for, stays in the same range
-        /// as deflate — 119 ms against 77 ms for that same 55 MB face, once at
+        /// as deflate: 119 ms against 77 ms for that same 55 MB face, once at
         /// load rather than per frame.
         /// </summary>
         public void Initialize(byte[] fontBytes, string familyName, string sourcePath)

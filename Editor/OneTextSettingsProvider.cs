@@ -83,22 +83,44 @@ namespace OneText.Editor
             EditorGUILayout.LabelField("Texture memory", $"{budget.MemoryBytes / (1024f * 1024f):0.#} MB " +
                 $"({budget.TextureSize}x{budget.TextureSize} x {budget.LayerCount})");
 
+            // The budget figure above is R8; the precise atlas holds the same
+            // texels in four channels from the same setting, so a project with
+            // precise labels pays it again times four. Only said when that
+            // atlas exists; the existence check never creates one.
+            if (SharedGlyphAtlas.PreciseAtlasExists)
+            {
+                var preciseStats = SharedGlyphAtlas.PreciseAtlas.GetStats();
+                EditorGUILayout.LabelField("Precise atlas",
+                    $"+{preciseStats.MemoryBytes / (1024f * 1024f):0.#} MB (RGBA32, for labels with " +
+                    "Precise on)");
+            }
+
             // A CJK glyph at 48px rasterizes to roughly a 56px square once the
             // SDF padding is added; that ratio is what makes CJK the budget case.
             long capacity = (long)budget.TextureSize * budget.TextureSize * budget.LayerCount;
             EditorGUILayout.LabelField("Rough capacity",
                 $"~{capacity / (56 * 56):n0} CJK tiles @48px, ~{capacity / (26 * 26):n0} Latin tiles @36px");
 
-            if (!SharedGlyphAtlas.Exists)
+            if (!SharedGlyphAtlas.Exists && !SharedGlyphAtlas.PreciseAtlasExists)
             {
                 EditorGUILayout.LabelField("Live atlas", "not created yet");
                 return;
             }
 
-            var stats = SharedGlyphAtlas.Atlas.GetStats();
-            EditorGUILayout.LabelField("Live atlas",
-                $"{stats.TileCount:n0} tiles, {stats.UsedFraction * 100f:0.#}% full, " +
-                $"{stats.Evictions:n0} evictions, {stats.Compactions:n0} compactions");
+            if (SharedGlyphAtlas.Exists)
+            {
+                var stats = SharedGlyphAtlas.Atlas.GetStats();
+                EditorGUILayout.LabelField("Live atlas",
+                    $"{stats.TileCount:n0} tiles, {stats.UsedFraction * 100f:0.#}% full, " +
+                    $"{stats.Evictions:n0} evictions, {stats.Compactions:n0} compactions");
+            }
+            if (SharedGlyphAtlas.PreciseAtlasExists)
+            {
+                var stats = SharedGlyphAtlas.PreciseAtlas.GetStats();
+                EditorGUILayout.LabelField("Live precise atlas",
+                    $"{stats.TileCount:n0} tiles, {stats.UsedFraction * 100f:0.#}% full, " +
+                    $"{stats.Evictions:n0} evictions, {stats.Compactions:n0} compactions");
+            }
             EditorGUILayout.LabelField("Partial upload",
                 GlyphAtlas.SupportsPartialUpload ? "supported" : "not supported (full upload per flush)");
         }

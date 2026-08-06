@@ -8,7 +8,7 @@ namespace OneText.Editor
 {
     /// <summary>
     /// GameObject menu entries that create OneText components already wired
-    /// up — a fresh label renders immediately, and a fresh input field is
+    /// up: a fresh label renders immediately, and a fresh input field is
     /// editable without touching a single reference field.
     /// </summary>
     public static class OneTextMenuItems

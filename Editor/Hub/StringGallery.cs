@@ -22,7 +22,7 @@ namespace OneText.Editor
         /// <summary>Text wider or taller than the box it has to live in.</summary>
         public bool Overflow;
 
-        /// <summary>Overflow the label's own settings would hide — a clipped or ellipsized string.</summary>
+        /// <summary>Overflow the label's own settings would hide: a clipped or ellipsized string.</summary>
         public bool WouldTruncate;
 
         /// <summary>Characters in this string that no font in the chain can draw.</summary>
@@ -63,7 +63,7 @@ namespace OneText.Editor
     /// text wants. So the expensive pass becomes a table you scroll and a
     /// filter for the red rows.
     ///
-    /// Flipped around — one string across every style — it is how a typeface
+    /// Flipped around, one string across every style, it is how a typeface
     /// gets chosen in the first place, which is the view Korean font sites are
     /// built around and the reason anyone browses type with their own sentence.
     /// </summary>

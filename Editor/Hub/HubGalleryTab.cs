@@ -2,29 +2,32 @@ using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace OneText.Editor
 {
     /// <summary>
     /// Every string the project ships, laid out with its real font, style and
-    /// locale, in one grid — with the overflows in red.
+    /// locale, in one list, with the overflows in red.
     ///
     /// The pass this replaces is a person opening every screen in every
     /// language looking for the three buttons whose German label does not fit.
-    /// The layout engine needs no scene to answer that, so it is a table you
+    /// The layout engine needs no scene to answer that, so it is a list you
     /// scroll rather than a build you play.
     ///
-    /// The same view flipped — one string across every style — is how a
+    /// The same view flipped, one string across every style, is how a
     /// typeface gets chosen, with your own sentence rather than the pangram the
     /// foundry picked.
     /// </summary>
-    public sealed class HubGalleryTab : IDisposable
+    public sealed class HubGalleryTab : HubSection
     {
         private enum Mode
         {
             EveryString,
             OneStringEveryStyle,
         }
+
+        private static readonly string[] ModeNames = { "Every string", "One string, every style" };
 
         private Mode _mode;
         private GalleryOptions _options = GalleryOptions.Default;
@@ -36,175 +39,357 @@ namespace OneText.Editor
         private bool _preview = true;
         private int _shown;
 
-        private readonly TextPreviewRenderer _renderer = new TextPreviewRenderer();
+        // Composited over the window's own panel colour rather than the
+        // renderer's default grey, so a preview is part of the card it sits in.
+        private readonly TextPreviewRenderer _renderer = new TextPreviewRenderer
+        {
+            Background = new Color(0.078f, 0.094f, 0.11f, 1f),
+        };
         private readonly Dictionary<string, Texture2D> _previews = new Dictionary<string, Texture2D>();
 
-        /// <summary>Cells rendered per repaint, so a table of ten thousand strings still scrolls.</summary>
+        /// <summary>Cells rendered per pass, so a table of ten thousand strings still scrolls.</summary>
         private const int PreviewBudget = 60;
 
-        public void Draw(OneTextHub hub)
+        public override OneTextHub.Tab Tab => OneTextHub.Tab.Gallery;
+
+        public override string Title => "Gallery";
+
+        public override string Eyebrow => "Every string, drawn";
+
+        public override string Lede =>
+            "Your strings laid out at the size and in the box they will really have, without " +
+            "building anything. Red means the text does not fit, or that no font in the chain " +
+            "can draw it.";
+
+        public override string NavHint => "overflow and previews";
+
+        public override string NavGroup => "Checks";
+
+        public override string BadgeText
         {
-            OneTextHub.Header("Gallery",
-                "Strings laid out headlessly, at the size and in the box they will have. " +
-                "Red means the text does not fit, or that no font in the chain can draw it.");
-
-            _mode = (Mode)EditorGUILayout.EnumPopup("Show", _mode);
-            DrawOptions();
-
-            EditorGUILayout.Space();
-            if (_mode == Mode.OneStringEveryStyle) DrawOneString();
-            else DrawEveryString(hub);
+            get
+            {
+                if (_cells == null) return null;
+                int problems = 0;
+                foreach (var cell in _cells) if (!cell.Ok) problems++;
+                return problems == 0 ? "OK" : problems.ToString("n0");
+            }
         }
 
-        private void DrawOptions()
+        public override HubTone BadgeTone => BadgeText == "OK" ? HubTone.Good : HubTone.Bad;
+
+        protected override void Compose(VisualElement content)
         {
-            using (new EditorGUILayout.HorizontalScope())
+            content.Add(ModeCard());
+            if (_mode == Mode.OneStringEveryStyle) ComposeOneString(content);
+            else ComposeEveryString(content);
+        }
+
+        // --------------------------------------------------------------- setup
+
+        private VisualElement ModeCard()
+        {
+            var card = HubUI.MakeCard("View",
+                "One project's strings, or one sentence in everything you could set it in.");
+            card.Add(HubUI.Segments(ModeNames, (int)_mode, index =>
             {
-                _options.BoxWidth = EditorGUILayout.FloatField("Box", _options.BoxWidth);
-                _options.BoxHeight = EditorGUILayout.FloatField(_options.BoxHeight, GUILayout.Width(60f));
-            }
-            _options.FontSize = EditorGUILayout.FloatField("Font size", _options.FontSize);
-            _options.Wrap = (TextWrap)EditorGUILayout.EnumPopup("Wrap", _options.Wrap);
-            _preview = EditorGUILayout.Toggle(new GUIContent("Render previews",
-                "Draw each cell with the engine. Off is faster on very large tables."), _preview);
+                _mode = (Mode)index;
+                Refresh();
+            }));
+
+            var advanced = new VisualElement();
+
+            var box = HubUI.Box("row");
+            var width = HubUI.Input(_options.BoxWidth.ToString("0.#"));
+            width.isDelayed = true;
+            width.RegisterValueChangedCallback(evt =>
+            {
+                if (float.TryParse(evt.newValue, out float value)) _options.BoxWidth = value;
+                Refresh();
+            });
+            width.style.width = 90f;
+            var height = HubUI.Input(_options.BoxHeight.ToString("0.#"));
+            height.isDelayed = true;
+            height.RegisterValueChangedCallback(evt =>
+            {
+                if (float.TryParse(evt.newValue, out float value)) _options.BoxHeight = value;
+                Refresh();
+            });
+            height.style.width = 90f;
+            height.style.marginLeft = 8f;
+            box.Add(width);
+            box.Add(HubUI.Text("×", "muted"));
+            box.Add(height);
+            advanced.Add(HubUI.Field("Box, in pixels", box));
+
+            var size = HubUI.Input(_options.FontSize.ToString("0.#"));
+            size.isDelayed = true;
+            size.RegisterValueChangedCallback(evt =>
+            {
+                if (float.TryParse(evt.newValue, out float value)) _options.FontSize = value;
+                Refresh();
+            });
+            size.style.width = 90f;
+            advanced.Add(HubUI.Field("Font size", size));
+
+            advanced.Add(HubUI.Field("Wrapping", HubUI.Segments(
+                new[] { "No wrap", "Wrap" }, _options.Wrap == TextWrap.Wrap ? 1 : 0, index =>
+                {
+                    _options.Wrap = index == 1 ? TextWrap.Wrap : TextWrap.NoWrap;
+                    Refresh();
+                })));
+
+            advanced.Add(HubUI.Field("Pictures", HubUI.Pill(
+                "Render each cell with the engine", _preview, on =>
+                {
+                    _preview = on;
+                    Refresh();
+                })));
+
+            card.Add(HubUI.Disclose("The box these are measured in", advanced));
+            return card.Root;
         }
 
         // ------------------------------------------------- one string, all styles
 
-        private void DrawOneString()
+        private void ComposeOneString(VisualElement content)
         {
-            _sample = EditorGUILayout.TextField("String", _sample);
-            var styles = OneTextHub.AllStyles();
-            var fonts = OneTextHub.AllFonts();
+            var fonts = AllFonts();
+            var card = HubUI.MakeCard("Sample string",
+                "Type something you actually ship; a foundry's pangram tells you about the " +
+                "foundry.");
+            var field = HubUI.Input(_sample);
+            field.isDelayed = true;
+            field.RegisterValueChangedCallback(evt =>
+            {
+                _sample = evt.newValue;
+                ClearPreviews();
+                Refresh();
+            });
+            card.Add(HubUI.Field("String", field));
+            content.Add(card.Root);
 
             if (fonts.Count == 0)
             {
-                EditorGUILayout.HelpBox("No fonts imported yet.", MessageType.Info);
+                var empty = HubUI.MakeCard("Nothing to draw with",
+                    "There are no font assets in this project yet.");
+                empty.Add(HubUI.Empty("No fonts imported",
+                    "Import a font first; the gallery draws with the real engine and the real " +
+                    "font chain, so it needs one.",
+                    "Open fonts", () => Hub.Go(OneTextHub.Tab.Fonts), "A"));
+                content.Add(empty.Root);
                 return;
             }
 
-            EditorGUILayout.Space();
-            foreach (var style in styles)
+            var rows = HubUI.MakeCard("Styles and fonts",
+                $"{AllStyles().Count:n0} style(s) and {fonts.Count:n0} font(s).").Flush();
+
+            foreach (var style in AllStyles())
             {
                 var font = style.Sets(OneTextStyle.Fields.Font) ? style.Font : null;
-                DrawRow(style.name, _sample, font,
-                    style.Sets(OneTextStyle.Fields.Size) ? style.FontSize : _options.FontSize, null);
+                rows.Add(Row(style.name, _sample, font,
+                    style.Sets(OneTextStyle.Fields.Size) ? style.FontSize : _options.FontSize, null));
             }
 
             // Styles are how a project should choose type, and font assets are
             // what it has before anybody has made one.
             foreach (var font in fonts)
-                DrawRow(font.FamilyName, _sample, font, _options.FontSize, font.Language);
+                rows.Add(Row(font.FamilyName, _sample, font, _options.FontSize, font.Language));
+
+            content.Add(rows.Root);
         }
 
-        private void DrawRow(string label, string text, OneFontAsset font, float size, string language)
+        private VisualElement Row(string label, string text, OneFontAsset font, float size,
+            string language)
         {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(label, GUILayout.Width(160f));
-                var rect = GUILayoutUtility.GetRect(_options.BoxWidth, Mathf.Max(24f, size * 1.6f));
-                if (!_preview) return;
+            var row = HubUI.Box("style-row");
+            row.Add(HubUI.Text(label, "style-row__name"));
 
-                var texture = Preview($"{label}|{size}|{text}", text, font, language, size,
-                    (int)rect.width, (int)rect.height);
-                if (texture != null) GUI.DrawTexture(rect, texture, ScaleMode.ScaleAndCrop);
-                else EditorGUI.LabelField(rect, "(no font)", EditorStyles.miniLabel);
+            int width = Mathf.Max(8, Mathf.RoundToInt(_options.BoxWidth));
+            int height = Mathf.Max(24, Mathf.RoundToInt(size * 1.6f));
+
+            if (!_preview)
+            {
+                var plain = HubUI.Text(text, "kv__value");
+                row.Add(plain);
+                return row;
             }
+
+            var picture = new Image { scaleMode = ScaleMode.ScaleAndCrop };
+            picture.AddToClassList("preview");
+            picture.style.width = width;
+            picture.style.height = height;
+            picture.image = Preview($"{label}|{size}|{text}", text, font, language, size,
+                width, height);
+            if (picture.image == null)
+            {
+                row.Add(HubUI.Text("(no font)", "hint"));
+                return row;
+            }
+            row.Add(picture);
+            return row;
         }
 
         // ---------------------------------------------------- every string
 
-        private void DrawEveryString(OneTextHub hub)
+        private void ComposeEveryString(VisualElement content)
         {
-            hub.DrawStringFolders();
-            using (new EditorGUILayout.HorizontalScope())
+            content.Add(StringSources(
+                "The gallery lays out every string it finds under these paths."));
+
+            var card = HubUI.MakeCard("Scan results",
+                _cells == null
+                    ? "Nothing scanned yet."
+                    : $"{_cells.Count:n0} cell(s) from {_scan.FilesScanned} file(s).");
+            card.Act(HubUI.Primary("Scan and lay out", () =>
             {
-                if (GUILayout.Button("Scan and lay out")) Rebuild(hub);
-                _problemsOnly = GUILayout.Toggle(_problemsOnly, "Problems only",
-                    EditorStyles.miniButton, GUILayout.Width(110f));
-            }
+                Scan();
+                Refresh();
+            }));
 
             if (_cells == null)
             {
-                EditorGUILayout.LabelField("Nothing scanned yet.", EditorStyles.miniLabel);
+                card.Add(HubUI.Empty("Nothing scanned yet",
+                    Hub.StringFolders.Count == 0
+                        ? "Add a folder of strings above, then scan. Every string in it is laid " +
+                          "out with its real font at its real size."
+                        : "One scan lays out every string under those folders and flags the ones " +
+                          "that do not fit their box.",
+                    Hub.StringFolders.Count == 0 ? null : "Scan and lay out",
+                    Hub.StringFolders.Count == 0 ? (Action)null : () =>
+                    {
+                        Scan();
+                        Refresh();
+                    }, "▤"));
+                content.Add(card.Root);
                 return;
             }
 
-            var locales = _scan.Locales();
-            var options = new List<string> { "(all)" };
-            foreach (string locale in locales) options.Add(locale ?? "(unnamed)");
-            int index = Mathf.Max(0, options.IndexOf(_localeFilter));
-            _localeFilter = options[EditorGUILayout.Popup("Locale", index, options.ToArray())];
-
             int problems = 0;
             foreach (var cell in _cells) if (!cell.Ok) problems++;
-            EditorGUILayout.LabelField("Result",
-                $"{_cells.Count:n0} cell(s) from {_scan.FilesScanned} file(s); {problems:n0} " +
-                (problems == 1 ? "problem" : "problems"));
+            card.Add(problems == 0
+                ? HubUI.Notice($"{_cells.Count:n0} string(s) all fit their box and every " +
+                    "character has a font.", HubTone.Good)
+                : HubUI.Notice($"{problems:n0} of {_cells.Count:n0} string(s) overflow or " +
+                    "contain a character no font in the chain can draw.", HubTone.Bad));
 
-            EditorGUILayout.Space();
+            var filters = HubUI.Box("row");
+            var locales = new List<string> { "(all)" };
+            foreach (string locale in _scan.Locales()) locales.Add(locale ?? "(unnamed)");
+            int index = Mathf.Max(0, locales.IndexOf(_localeFilter));
+            filters.Add(HubUI.Text("Locale", "field__label"));
+            filters.Add(LocaleMenu(locales, index));
+            filters.Add(HubUI.Pill("Problems only", _problemsOnly, on =>
+            {
+                _problemsOnly = on;
+                Refresh();
+            }));
+            card.Add(filters);
+            content.Add(card.Root);
+
             _shown = 0;
+            var list = new VisualElement();
             foreach (var cell in _cells)
             {
                 if (_problemsOnly && cell.Ok) continue;
                 if (_localeFilter != "(all)" &&
                     (cell.Entry.Locale ?? "(unnamed)") != _localeFilter) continue;
-                DrawCell(cell);
+                list.Add(Cell(cell));
             }
 
             if (_shown == 0)
-                EditorGUILayout.LabelField("Nothing to show with these filters.", EditorStyles.miniLabel);
+                list.Add(HubUI.Notice("Nothing to show with these filters.", HubTone.Neutral));
+            else if (_preview && _shown > PreviewBudget)
+                list.Add(HubUI.Notice(
+                    $"The first {PreviewBudget} cells are drawn; the rest show their text. " +
+                    "Filter to fewer strings to draw them all.", HubTone.Neutral));
+            content.Add(list);
         }
 
-        private void DrawCell(in GalleryCell cell)
+        private Button LocaleMenu(List<string> locales, int index)
+        {
+            Button button = null;
+            button = new Button(() =>
+            {
+                var menu = new GenericMenu();
+                foreach (string locale in locales)
+                {
+                    string captured = locale;
+                    menu.AddItem(new GUIContent(locale), locale == _localeFilter, () =>
+                    {
+                        _localeFilter = captured;
+                        Refresh();
+                    });
+                }
+                menu.DropDown(button.worldBound);
+            })
+            { text = string.Empty };
+            button.AddToClassList("picker");
+            button.style.flexGrow = 0f;
+            button.style.width = 180f;
+            button.style.marginRight = 10f;
+            button.Add(HubUI.Text(locales[index], "picker__name"));
+            button.Add(HubUI.Text("▾", "picker__caret"));
+            return button;
+        }
+
+        private VisualElement Cell(in GalleryCell cell)
         {
             _shown++;
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            var root = HubUI.Box("cell");
+            if (!cell.Ok) root.AddToClassList("cell--bad");
+
+            var head = HubUI.Box("cell__head");
+            head.Add(HubUI.Text((cell.Entry.Locale ?? "-").ToUpperInvariant(), "cell__locale"));
+            head.Add(HubUI.Text(cell.Entry.Key, "cell__key"));
+            var status = HubUI.Text(Status(cell), "cell__status");
+            if (!cell.Ok) status.AddToClassList("cell__status--bad");
+            HubUI.Mono(status);
+            head.Add(status);
+            root.Add(head);
+
+            var body = HubUI.Box("cell__body");
+            int width = Mathf.Max(8, Mathf.RoundToInt(_options.BoxWidth));
+            int height = Mathf.Max(24, Mathf.RoundToInt(_options.BoxHeight));
+
+            if (_preview && _shown <= PreviewBudget)
             {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUILayout.LabelField(
-                        $"{cell.Entry.Locale ?? "—"}  {cell.Entry.Key}", EditorStyles.miniBoldLabel);
-                    EditorGUILayout.LabelField(Status(cell), StatusStyle(cell), GUILayout.Width(220f));
-                }
+                var style = cell.Style;
+                var font = style != null && style.Sets(OneTextStyle.Fields.Font)
+                    ? style.Font
+                    : OneTextSettings.Instance != null
+                        ? OneTextSettings.Instance.DefaultFont
+                        : null;
+                var texture = Preview(
+                    $"{cell.Entry.Source}|{cell.Entry.Key}|{cell.StyleName}|{_options.FontSize}",
+                    cell.Entry.Value, font, cell.Entry.Locale,
+                    style != null && style.Sets(OneTextStyle.Fields.Size)
+                        ? style.FontSize : _options.FontSize,
+                    width, height);
 
-                var rect = GUILayoutUtility.GetRect(_options.BoxWidth,
-                    Mathf.Max(24f, _options.BoxHeight));
-                rect.width = Mathf.Min(rect.width, _options.BoxWidth);
-
-                if (_preview && _shown <= PreviewBudget)
+                if (texture != null)
                 {
-                    var style = cell.Style;
-                    var font = style != null && style.Sets(OneTextStyle.Fields.Font)
-                        ? style.Font
-                        : OneTextSettings.Instance != null
-                            ? OneTextSettings.Instance.DefaultFont
-                            : null;
-                    var texture = Preview(
-                        $"{cell.Entry.Source}|{cell.Entry.Key}|{cell.StyleName}|{_options.FontSize}",
-                        cell.Entry.Value, font, cell.Entry.Locale,
-                        style != null && style.Sets(OneTextStyle.Fields.Size)
-                            ? style.FontSize : _options.FontSize,
-                        (int)rect.width, (int)rect.height);
-                    if (texture != null) GUI.DrawTexture(rect, texture, ScaleMode.ScaleAndCrop);
+                    // The box is drawn as a frame around the render, so overflow
+                    // is something you see rather than a number you compare.
+                    var picture = new Image { scaleMode = ScaleMode.ScaleAndCrop, image = texture };
+                    picture.AddToClassList("preview");
+                    if (!cell.Ok) picture.AddToClassList("preview--bad");
+                    picture.style.width = width;
+                    picture.style.height = height;
+                    body.Add(picture);
                 }
                 else
                 {
-                    EditorGUI.LabelField(rect, cell.Entry.Value, EditorStyles.wordWrappedMiniLabel);
+                    body.Add(HubUI.Text(cell.Entry.Value, "kv__value"));
                 }
-
-                // The box is drawn as a frame around the render so overflow is
-                // something you see rather than a number you compare.
-                if (!cell.Ok) DrawOutline(rect, new Color(0.95f, 0.35f, 0.35f, 0.9f));
             }
-        }
+            else
+            {
+                body.Add(HubUI.Text(cell.Entry.Value, "kv__value"));
+            }
 
-        private static void DrawOutline(Rect rect, Color color)
-        {
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, rect.width, 1f), color);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 1f, rect.width, 1f), color);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, 1f, rect.height), color);
-            EditorGUI.DrawRect(new Rect(rect.xMax - 1f, rect.y, 1f, rect.height), color);
+            root.Add(body);
+            return root;
         }
 
         private static string Status(in GalleryCell cell)
@@ -212,24 +397,22 @@ namespace OneText.Editor
             if (cell.MissingGlyphs > 0)
                 return $"{cell.MissingGlyphs} character(s) no font draws";
             if (cell.Overflow)
-                return $"overflows: needs {cell.Width:0}x{cell.Height:0}" +
+                return $"overflows: needs {cell.Width:0}×{cell.Height:0}" +
                        (cell.WouldTruncate ? " (will be cut)" : "");
-            return $"{cell.Width:0}x{cell.Height:0} in {cell.LineCount} line(s)";
+            return $"{cell.Width:0}×{cell.Height:0} in {cell.LineCount} line(s)";
         }
 
-        private static GUIStyle StatusStyle(in GalleryCell cell)
-        {
-            var style = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleRight };
-            if (!cell.Ok) style.normal.textColor = new Color(0.95f, 0.45f, 0.45f);
-            return style;
-        }
-
-        private void Rebuild(OneTextHub hub)
+        private void Scan()
         {
             ClearPreviews();
-            _scan = TextSourceScanner.Scan(hub.StringFolders);
-            var styles = OneTextHub.AllStyles();
+            _scan = TextSourceScanner.Scan(Hub.StringFolders);
+            var styles = AllStyles();
             _cells = StringGallery.Measure(_scan.Entries, styles, _options);
+
+            int problems = 0;
+            foreach (var cell in _cells) if (!cell.Ok) problems++;
+            Say($"{_cells.Count:n0} string(s) from {_scan.FilesScanned} file(s); " +
+                (problems == 0 ? "nothing overflows." : $"{problems:n0} need attention."));
         }
 
         // ------------------------------------------------------------ previews
@@ -254,7 +437,7 @@ namespace OneText.Editor
             _previews.Clear();
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             ClearPreviews();
             _renderer.Dispose();

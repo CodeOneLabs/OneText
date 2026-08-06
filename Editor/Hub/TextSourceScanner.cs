@@ -10,7 +10,7 @@ namespace OneText.Editor
     /// <summary>One string a project ships, and where it came from.</summary>
     public struct TextEntry
     {
-        /// <summary>Key, row name or JSON path — whatever the file called it.</summary>
+        /// <summary>Key, row name or JSON path: whatever the file called it.</summary>
         public string Key;
 
         /// <summary>The string itself.</summary>
@@ -78,7 +78,7 @@ namespace OneText.Editor
     ///
     /// The scene scan that came before this one catches static UI, and a play
     /// session catches what was assembled at runtime, but a game's real
-    /// characters live in its string tables — which are the one place neither
+    /// characters live in its string tables, which are the one place neither
     /// looks. Everything downstream of here wants the same list: prewarm and
     /// subsetting want its characters, the gallery lays each string out, Doctor
     /// asks whether any font can draw them.
@@ -104,7 +104,7 @@ namespace OneText.Editor
                 string full = Path.GetFullPath(folder);
                 if (!Directory.Exists(full))
                 {
-                    result.Skipped.Add($"{folder} — no such folder");
+                    result.Skipped.Add($"{folder}: no such folder");
                     continue;
                 }
 
@@ -133,7 +133,7 @@ namespace OneText.Editor
             }
             catch (IOException e)
             {
-                result.Skipped.Add($"{project} — {e.Message}");
+                result.Skipped.Add($"{project}: {e.Message}");
                 return;
             }
 
@@ -192,7 +192,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// RFC 4180 enough for real exports: quoted fields, doubled quotes
-        /// inside them, and newlines inside quotes — which is how a translator's
+        /// inside them, and newlines inside quotes, which is how a translator's
         /// two-line string arrives and how a naive split loses half a table.
         /// </summary>
         internal static List<List<string>> ParseSeparated(string text, char separator)
@@ -238,7 +238,7 @@ namespace OneText.Editor
         }
 
         /// <summary>
-        /// A header row is one whose cells all look like identifiers — no
+        /// A header row is one whose cells all look like identifiers: no
         /// spaces, no sentence punctuation. Guessing wrong costs one row of
         /// characters in a charset, which is why this is allowed to guess.
         /// </summary>
@@ -276,7 +276,7 @@ namespace OneText.Editor
             }
             catch (FormatException e)
             {
-                result.Skipped.Add($"{source} — {e.Message}");
+                result.Skipped.Add($"{source}: {e.Message}");
             }
         }
 
@@ -305,7 +305,7 @@ namespace OneText.Editor
                         i++;
 
                         // A top-level key that is a locale code names the block
-                        // below it — the other half of the two ways JSON
+                        // below it, the other half of the two ways JSON
                         // localization files are written.
                         string inner = depth == 0 && IsLocaleCode(key) ? NormalizeLocale(key) : locale;
                         path.Add(key);
@@ -400,7 +400,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// Unity's own Localization package keeps its strings in ScriptableObject
-        /// tables, not files, so they are read through the asset database — and
+        /// tables, not files, so they are read through the asset database, and
         /// through reflection, because the package is optional and this assembly
         /// must compile in a project that never installed it.
         /// </summary>
@@ -416,7 +416,7 @@ namespace OneText.Editor
             }
             catch (ArgumentException)
             {
-                return; // folder outside Assets/ — the file scan already covered it
+                return; // folder outside Assets/, so the file scan already covered it
             }
 
             foreach (string guid in guids)

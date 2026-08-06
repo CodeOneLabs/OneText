@@ -13,8 +13,8 @@ namespace OneText.Editor
     /// A gallery of measurements is useful and a gallery of pictures is what
     /// people mean by a gallery: the whole reason to preview a string in a
     /// typeface is that the answer is visual. This is the proof generators'
-    /// offscreen canvas, kept alive between draws — one camera, one render
-    /// texture, one label, reused per cell — because a window that builds a
+    /// offscreen canvas, kept alive between draws (one camera, one render
+    /// texture, one label, reused per cell), because a window that builds a
     /// scene per cell is a window nobody scrolls twice.
     ///
     /// Everything it creates is hidden and unsaved, and disposing it takes the
@@ -38,7 +38,7 @@ namespace OneText.Editor
         /// Draws one string into a fresh texture the caller owns.
         ///
         /// Returns null when there is no font to draw with, which an editor
-        /// window has to handle anyway — a project without a default font is
+        /// window has to handle anyway; a project without a default font is
         /// the state every project starts in.
         /// </summary>
         public Texture2D Render(string text, OneFontAsset font, string language, float fontSize,

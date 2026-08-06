@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Hub's shell: a sidebar of sections on the left, one section at a time
+    on the right under a header that says what the section is for. The sections
+    themselves are built in C#, because their content is the project's own
+    state rather than a fixed layout.
+-->
+<ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="True">
+    <ui:VisualElement name="hub-root" class="hub-root">
+
+        <ui:VisualElement name="sidebar" class="sidebar">
+            <ui:VisualElement class="brand">
+                <ui:Label text="OneText" class="brand__mark" />
+                <ui:Label text="TEXT ENGINE" class="brand__sub" />
+            </ui:VisualElement>
+            <ui:ScrollView name="nav" class="nav" />
+            <ui:VisualElement class="sidebar__foot">
+                <ui:Button name="settings-button" text="Project settings" class="btn--quiet" />
+                <ui:Label name="version" text="" class="sidebar__version" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement name="main" class="main">
+            <ui:VisualElement name="page-header" class="page-header">
+                <ui:Label name="eyebrow" text="" class="eyebrow" />
+                <ui:Label name="title" text="" class="page-title" />
+                <ui:Label name="lede" text="" class="lede" />
+            </ui:VisualElement>
+            <ui:ScrollView name="content" class="content" />
+            <ui:VisualElement name="toast" class="toast">
+                <ui:Label name="toast-text" text="" class="toast__text" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+</ui:UXML>

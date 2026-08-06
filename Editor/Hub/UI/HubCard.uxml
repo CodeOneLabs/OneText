@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    One card. Every section is a stack of these: a title, a line saying what
+    the card is for, the actions it offers on the right of that line, and a
+    body the section fills.
+-->
+<ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="True">
+    <ui:VisualElement name="card" class="card">
+        <ui:VisualElement name="card-head" class="card__head">
+            <ui:VisualElement class="card__heading">
+                <ui:Label name="card-title" text="" class="card__title" />
+                <ui:Label name="card-note" text="" class="card__note" />
+            </ui:VisualElement>
+            <ui:VisualElement name="card-actions" class="card__actions" />
+        </ui:VisualElement>
+        <ui:VisualElement name="card-body" class="card__body" />
+    </ui:VisualElement>
+</ui:UXML>

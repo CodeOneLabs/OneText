@@ -12,7 +12,7 @@ namespace OneText.UGUI
     /// the editor and not on the device, an atlas budget a phone cannot afford,
     /// natives that did not ship. The state of the art for debugging it is a
     /// screenshot of nothing, sent by a tester. So the same numbers the editor
-    /// shows travel with the build — per-label font resolution, characters no
+    /// shows travel with the build: per-label font resolution, characters no
     /// font could draw, live atlas pressure.
     ///
     /// Development builds and the editor only: <see cref="Debug.isDebugBuild"/>
@@ -39,7 +39,7 @@ namespace OneText.UGUI
         private float _nextRefresh;
 
         /// <summary>
-        /// Adds the overlay to any scene, from anywhere — a build that is
+        /// Adds the overlay to any scene, from anywhere; a build that is
         /// already misbehaving is not one you want to rebuild to instrument.
         /// </summary>
         public static OneTextDiagnostics Install()
@@ -104,7 +104,7 @@ namespace OneText.UGUI
         private void Refresh()
         {
             _builder.Clear();
-            _builder.Append("OneText diagnostics — ").Append(_toggleKey).Append(" to hide\n\n");
+            _builder.Append("OneText diagnostics · ").Append(_toggleKey).Append(" to hide\n\n");
 
             AppendAtlas();
             AppendLabels();
@@ -112,15 +112,28 @@ namespace OneText.UGUI
 
         private void AppendAtlas()
         {
-            if (!SharedGlyphAtlas.Exists)
+            // Existence checks, not the getters: a diagnostics overlay must
+            // never be the thing that allocates an atlas.
+            if (!SharedGlyphAtlas.Exists && !SharedGlyphAtlas.PreciseAtlasExists)
             {
                 _builder.Append("atlas: not created yet\n\n");
                 return;
             }
 
-            var atlas = SharedGlyphAtlas.Atlas;
+            if (SharedGlyphAtlas.Exists)
+                AppendAtlas("atlas", SharedGlyphAtlas.Atlas);
+            if (SharedGlyphAtlas.PreciseAtlasExists)
+                AppendAtlas("precise atlas", SharedGlyphAtlas.PreciseAtlas);
+        }
+
+        private void AppendAtlas(string name, GlyphAtlas atlas)
+        {
             var stats = atlas.GetStats();
-            _builder.Append("atlas ").Append(atlas.Settings)
+            // Demand is counted in texels; the precise atlas pays four bytes
+            // for each of them, and a memory line that forgot that would
+            // under-report by the difference.
+            long bytesPerTexel = stats.CapacityPixels > 0 ? stats.MemoryBytes / stats.CapacityPixels : 1;
+            _builder.Append(name).Append(' ').Append(atlas.Settings)
                 .Append("  ").Append(Megabytes(stats.MemoryBytes)).Append('\n');
             _builder.Append("  ").Append(stats.TileCount).Append(" tiles, ")
                 .Append((stats.UsedFraction * 100f).ToString("0.0")).Append("% full (")
@@ -132,7 +145,8 @@ namespace OneText.UGUI
             if (stats.DemandTiles > 0)
             {
                 _builder.Append("  this session wanted ").Append(stats.DemandTiles)
-                    .Append(" distinct tiles, ").Append(Megabytes(stats.DemandPixels)).Append('\n');
+                    .Append(" distinct tiles, ")
+                    .Append(Megabytes(stats.DemandPixels * bytesPerTexel)).Append('\n');
             }
             if (stats.Drops > 0)
                 _builder.Append("  ! tiles are being dropped: the budget is too small\n");
@@ -164,7 +178,7 @@ namespace OneText.UGUI
             var fonts = label.ResolvedFonts;
             if (fonts == null || fonts.Primary == null)
             {
-                _builder.Append("NO FONT RESOLVED — this label draws nothing\n");
+                _builder.Append("NO FONT RESOLVED · this label draws nothing\n");
                 return;
             }
 

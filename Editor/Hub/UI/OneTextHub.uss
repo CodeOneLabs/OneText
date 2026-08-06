@@ -1,0 +1,1133 @@
+/*
+ * The Hub's skin.
+ *
+ * Deliberately not an editor window: the palette, the spacing and the type
+ * scale are the project's own site, so the tool a person meets first looks
+ * like the thing it belongs to rather than like a settings dialog.
+ *
+ * Every selector is prefixed with .hub-root on purpose. The editor theme is
+ * still underneath, and USS specificity counts type selectors; a bare
+ * .card__title would lose its colour to the ".hub-root Label" reset. One
+ * prefix everywhere puts every rule in this file on the same footing, so the
+ * order they are written in is the order that decides.
+ */
+
+.hub-root {
+    --bg: rgb(7, 9, 11);
+    --panel: rgb(12, 16, 19);
+    --panel-2: rgb(16, 22, 26);
+    --panel-3: rgb(21, 28, 33);
+    --line: rgba(126, 231, 180, 0.15);
+    --line-hi: rgba(126, 231, 180, 0.32);
+    --ink: rgb(214, 229, 221);
+    --ink-dim: rgba(214, 229, 221, 0.58);
+    --ink-faint: rgba(214, 229, 221, 0.32);
+    --green: rgb(126, 231, 180);
+    --green-ink: rgb(6, 32, 24);
+    --green-wash: rgba(126, 231, 180, 0.09);
+    --amber: rgb(255, 204, 102);
+    --amber-wash: rgba(255, 204, 102, 0.09);
+    --violet: rgb(179, 157, 255);
+    --red: rgb(255, 123, 114);
+    --red-wash: rgba(255, 123, 114, 0.09);
+
+    flex-direction: row;
+    flex-grow: 1;
+    background-color: var(--bg);
+    color: var(--ink);
+    font-size: 12px;
+}
+
+/* ------------------------------------------------------- control resets */
+
+.hub-root Label {
+    margin: 0;
+    padding: 0;
+    white-space: normal;
+}
+
+.hub-root Button {
+    margin: 0;
+    padding: 6px 14px;
+    border-width: 1px;
+    border-color: var(--line-hi);
+    border-radius: 980px;
+    background-color: rgba(0, 0, 0, 0);
+    background-image: none;
+    color: var(--green);
+    font-size: 12px;
+    -unity-font-style: normal;
+    -unity-text-align: middle-center;
+}
+
+.hub-root Button:hover {
+    background-color: var(--green-wash);
+    border-color: var(--green);
+}
+
+.hub-root Button:disabled {
+    opacity: 0.4;
+}
+
+.hub-root TextField {
+    margin: 0;
+}
+
+.hub-root .unity-base-field__input,
+.hub-root .unity-base-text-field__input {
+    background-color: var(--bg);
+    background-image: none;
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 5px;
+    padding: 5px 9px;
+    color: var(--ink);
+    font-size: 12px;
+    --unity-cursor-color: rgb(126, 231, 180);
+    --unity-selection-color: rgba(126, 231, 180, 0.28);
+}
+
+.hub-root .unity-base-field__input:hover {
+    border-color: var(--line-hi);
+}
+
+.hub-root .unity-base-field__input:focus {
+    border-color: var(--green);
+}
+
+.hub-root .unity-base-field__label {
+    display: none;
+}
+
+.hub-root .unity-text-element {
+    color: var(--ink);
+}
+
+/* Scrollers: a thin dark rail, never the editor's chunky one. */
+.hub-root .unity-scroller--vertical {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+    width: 10px;
+}
+
+.hub-root .unity-scroller--horizontal {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+    height: 10px;
+}
+
+.hub-root .unity-scroller__low-button,
+.hub-root .unity-scroller__high-button {
+    display: none;
+}
+
+.hub-root .unity-scroller .unity-base-slider__tracker {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+}
+
+.hub-root .unity-scroller .unity-base-slider__dragger {
+    background-color: rgba(126, 231, 180, 0.2);
+    border-width: 0;
+    border-radius: 4px;
+    width: 6px;
+    margin-left: 2px;
+}
+
+.hub-root .unity-scroller .unity-base-slider__dragger:hover {
+    background-color: rgba(126, 231, 180, 0.45);
+}
+
+/* the real sliders: forensics' size and width knobs. The field reset above
+   dresses every .unity-base-field__input as a text box, which a slider's
+   track is not, so it is undressed again here. */
+.hub-root .knob {
+    flex-grow: 1;
+    min-width: 200px;
+    margin: 0;
+    height: 18px;
+}
+
+.hub-root .knob .unity-base-field__input {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+    border-radius: 0;
+    padding: 0;
+    flex-grow: 1;
+    min-width: 120px;
+}
+
+.hub-root .knob .unity-base-slider__tracker {
+    background-color: rgba(214, 229, 221, 0.12);
+    border-width: 0;
+    border-radius: 2px;
+    height: 4px;
+    margin-top: 7px;
+    margin-bottom: 7px;
+    left: 0;
+    right: 0;
+}
+
+.hub-root .knob .unity-base-slider__dragger-border {
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.hub-root .knob .unity-base-slider__dragger {
+    background-color: var(--green);
+    border-width: 0;
+    border-radius: 7px;
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+}
+
+/* ------------------------------------------------------------- sidebar */
+
+.hub-root .sidebar {
+    width: 216px;
+    min-width: 216px;
+    flex-shrink: 0;
+    background-color: var(--panel);
+    border-right-width: 1px;
+    border-right-color: var(--line);
+}
+
+.hub-root .brand {
+    padding: 16px 18px 14px 18px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--line);
+}
+
+.hub-root .brand__mark {
+    font-size: 19px;
+    -unity-font-style: bold;
+    color: var(--green);
+    letter-spacing: -0.5px;
+}
+
+.hub-root .brand__sub {
+    font-size: 9px;
+    letter-spacing: 2.4px;
+    color: var(--ink-faint);
+    margin-top: 3px;
+}
+
+.hub-root .nav {
+    flex-grow: 1;
+    padding-top: 8px;
+}
+
+.hub-root .nav__group {
+    font-size: 9px;
+    letter-spacing: 1.8px;
+    color: var(--ink-faint);
+    padding: 13px 18px 5px 18px;
+}
+
+.hub-root .nav-item {
+    flex-direction: row;
+    align-items: center;
+    padding: 7px 14px 7px 16px;
+    border-left-width: 2px;
+    border-left-color: rgba(0, 0, 0, 0);
+    border-right-width: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-text-align: middle-left;
+}
+
+.hub-root .nav-item:hover {
+    background-color: rgba(126, 231, 180, 0.05);
+    border-left-color: rgba(0, 0, 0, 0);
+}
+
+.hub-root .nav-item--on {
+    background-color: var(--panel-2);
+    border-left-color: var(--green);
+}
+
+.hub-root .nav-item--on:hover {
+    border-left-color: var(--green);
+}
+
+.hub-root .nav-item__text {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.hub-root .nav-item__label {
+    font-size: 12.5px;
+    color: var(--ink-dim);
+}
+
+.hub-root .nav-item:hover .nav-item__label {
+    color: var(--ink);
+}
+
+.hub-root .nav-item--on .nav-item__label {
+    color: var(--green);
+}
+
+.hub-root .nav-item__hint {
+    font-size: 9.5px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hub-root .sidebar__foot {
+    padding: 12px 14px 14px 14px;
+    border-top-width: 1px;
+    border-top-color: var(--line);
+}
+
+.hub-root .sidebar__version {
+    font-size: 9.5px;
+    letter-spacing: 1.2px;
+    color: var(--ink-faint);
+    margin-top: 10px;
+    -unity-text-align: middle-center;
+}
+
+/* ---------------------------------------------------------------- main */
+
+.hub-root .main {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    background-color: var(--bg);
+}
+
+.hub-root .page-header {
+    padding: 24px 32px 20px 32px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--line);
+    flex-shrink: 0;
+}
+
+.hub-root .eyebrow {
+    font-size: 9.5px;
+    letter-spacing: 2.4px;
+    color: var(--green);
+    margin-bottom: 8px;
+}
+
+.hub-root .page-title {
+    font-size: 27px;
+    -unity-font-style: bold;
+    letter-spacing: -0.6px;
+    color: var(--ink);
+}
+
+.hub-root .lede {
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    margin-top: 9px;
+    max-width: 780px;
+}
+
+.hub-root .content {
+    flex-grow: 1;
+}
+
+.hub-root .section {
+    padding: 22px 32px 44px 32px;
+}
+
+/* --------------------------------------------------------------- cards */
+
+.hub-root .card {
+    background-color: var(--panel);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 8px;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+
+.hub-root .card__head {
+    flex-direction: row;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--line);
+    background-color: var(--panel-2);
+}
+
+.hub-root .card__heading {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.hub-root .card__title {
+    font-size: 13px;
+    -unity-font-style: bold;
+    color: var(--ink);
+}
+
+.hub-root .card__note {
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-top: 3px;
+}
+
+.hub-root .card__actions {
+    flex-direction: row;
+    flex-shrink: 0;
+}
+
+.hub-root .card__actions > Button {
+    margin-left: 7px;
+}
+
+.hub-root .card__body {
+    padding: 16px;
+}
+
+.hub-root .card--flush > .card__body {
+    padding: 0;
+}
+
+/* A button is as wide as its label. Left to the column's stretch it becomes a
+   1200-pixel pill, which is the one thing a primary action must not look like. */
+.hub-root .card__body > Button,
+.hub-root .disclose__body > Button {
+    align-self: flex-start;
+}
+
+/* ------------------------------------------------------------ typography */
+
+.hub-root .h3 {
+    font-size: 10.5px;
+    letter-spacing: 1.6px;
+    color: var(--green);
+    margin-bottom: 9px;
+}
+
+.hub-root .body {
+    font-size: 12px;
+    color: var(--ink-dim);
+    max-width: 720px;
+}
+
+.hub-root .hint {
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 6px;
+    max-width: 640px;
+}
+
+.hub-root .muted {
+    color: var(--ink-faint);
+}
+
+/* Data, not prose: a touch of tracking and a colder colour, which is as far as
+   the mono distinction goes without a font asset to set it in. */
+.hub-root .mono {
+    letter-spacing: 0.15px;
+}
+
+/* ---------------------------------------------------------------- rows */
+
+.hub-root .row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.hub-root .row--wrap {
+    flex-wrap: wrap;
+}
+
+.hub-root .row > Button {
+    margin-right: 8px;
+}
+
+.hub-root .field {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 9px;
+}
+
+.hub-root .field__label {
+    width: 128px;
+    min-width: 128px;
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--ink-dim);
+}
+
+.hub-root .field__control {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+}
+
+.hub-root .field__control > TextField {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.hub-root .kv {
+    flex-direction: row;
+    align-items: flex-start;
+    padding: 7px 16px;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(126, 231, 180, 0.07);
+}
+
+.hub-root .kv:hover {
+    background-color: rgba(126, 231, 180, 0.035);
+}
+
+.hub-root .kv__key {
+    width: 176px;
+    min-width: 176px;
+    flex-shrink: 0;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+}
+
+.hub-root .kv__value {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--ink);
+}
+
+.hub-root .kv__value--good { color: var(--green); }
+.hub-root .kv__value--warn { color: var(--amber); }
+.hub-root .kv__value--bad  { color: var(--red); }
+
+/* -------------------------------------------------------------- buttons */
+
+.hub-root .btn--primary {
+    background-color: var(--green);
+    border-color: var(--green);
+    color: var(--green-ink);
+    -unity-font-style: bold;
+    padding: 7px 18px;
+}
+
+.hub-root .btn--primary:hover {
+    background-color: rgb(151, 241, 198);
+    border-color: rgb(151, 241, 198);
+    color: var(--green-ink);
+}
+
+.hub-root .btn--quiet {
+    border-color: var(--line);
+    color: var(--ink-dim);
+    padding: 5px 12px;
+    font-size: 11px;
+}
+
+.hub-root .btn--quiet:hover {
+    border-color: var(--line);
+    color: var(--ink);
+    background-color: rgba(126, 231, 180, 0.06);
+}
+
+.hub-root .btn--danger {
+    border-color: rgba(255, 123, 114, 0.4);
+    color: var(--red);
+}
+
+.hub-root .btn--danger:hover {
+    background-color: var(--red-wash);
+    border-color: var(--red);
+}
+
+.hub-root .btn--tiny {
+    padding: 3px 10px;
+    font-size: 10.5px;
+}
+
+.hub-root .pill {
+    padding: 5px 13px;
+    border-radius: 980px;
+    border-width: 1px;
+    border-color: var(--line);
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--ink-faint);
+    font-size: 11.5px;
+}
+
+.hub-root .pill:hover {
+    color: var(--ink);
+    border-color: var(--line-hi);
+    background-color: rgba(126, 231, 180, 0.05);
+}
+
+.hub-root .pill--on {
+    color: var(--green);
+    border-color: var(--green);
+    background-color: var(--green-wash);
+}
+
+.hub-root .segments {
+    flex-direction: row;
+}
+
+.hub-root .segment {
+    padding: 6px 16px;
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--ink-faint);
+    font-size: 11.5px;
+    margin: 0;
+    margin-left: -1px;
+}
+
+.hub-root .segment:hover {
+    color: var(--ink);
+    background-color: rgba(126, 231, 180, 0.05);
+    border-color: var(--line);
+}
+
+.hub-root .segment--on {
+    color: var(--green);
+    background-color: var(--panel-2);
+    border-color: var(--line-hi);
+}
+
+/* -------------------------------------------------------------- badges */
+
+.hub-root .badge {
+    padding: 2px 8px;
+    border-radius: 980px;
+    font-size: 9.5px;
+    letter-spacing: 0.6px;
+    color: var(--ink-faint);
+    background-color: rgba(214, 229, 221, 0.07);
+    -unity-text-align: middle-center;
+    flex-shrink: 0;
+}
+
+.hub-root .badge--good { color: var(--green); background-color: var(--green-wash); }
+.hub-root .badge--warn { color: var(--amber); background-color: var(--amber-wash); }
+.hub-root .badge--bad  { color: var(--red);   background-color: var(--red-wash); }
+.hub-root .badge--info { color: var(--violet); background-color: rgba(179, 157, 255, 0.1); }
+
+/* ------------------------------------------------------------- notices */
+
+.hub-root .notice {
+    flex-direction: row;
+    align-items: flex-start;
+    padding: 11px 14px;
+    border-left-width: 2px;
+    border-left-color: var(--ink-faint);
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    background-color: var(--panel-2);
+    margin-bottom: 10px;
+}
+
+.hub-root .notice__text {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+}
+
+.hub-root .notice--good { border-left-color: var(--green); background-color: var(--green-wash); }
+.hub-root .notice--warn { border-left-color: var(--amber); background-color: var(--amber-wash); }
+.hub-root .notice--bad  { border-left-color: var(--red);   background-color: var(--red-wash); }
+.hub-root .notice--good .notice__text,
+.hub-root .notice--warn .notice__text,
+.hub-root .notice--bad .notice__text { color: var(--ink); }
+
+/* --------------------------------------------------------- empty states */
+
+.hub-root .empty {
+    align-items: center;
+    padding: 38px 24px;
+}
+
+.hub-root .empty__glyph {
+    font-size: 30px;
+    color: rgba(126, 231, 180, 0.35);
+    margin-bottom: 12px;
+}
+
+.hub-root .empty__title {
+    font-size: 15px;
+    -unity-font-style: bold;
+    color: var(--ink);
+    margin-bottom: 7px;
+    -unity-text-align: middle-center;
+}
+
+.hub-root .empty__body {
+    font-size: 12px;
+    color: var(--ink-dim);
+    max-width: 470px;
+    -unity-text-align: middle-center;
+    margin-bottom: 16px;
+}
+
+/* --------------------------------------------------------------- tiles */
+
+.hub-root .tiles {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.hub-root .tile {
+    width: 166px;
+    min-height: 92px;
+    background-color: var(--panel);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 8px;
+    padding: 13px 15px;
+    margin-right: 12px;
+    margin-bottom: 12px;
+    justify-content: space-between;
+}
+
+.hub-root .tile:hover {
+    border-color: var(--line-hi);
+    background-color: var(--panel-2);
+}
+
+.hub-root .tile__label {
+    font-size: 9.5px;
+    letter-spacing: 1.6px;
+    color: var(--ink-faint);
+}
+
+.hub-root .tile__value {
+    font-size: 25px;
+    -unity-font-style: bold;
+    letter-spacing: -1px;
+    color: var(--green);
+    margin-top: 8px;
+}
+
+.hub-root .tile__value--warn { color: var(--amber); }
+.hub-root .tile__value--bad  { color: var(--red); }
+.hub-root .tile__value--idle { color: var(--ink-faint); }
+
+.hub-root .tile__note {
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    margin-top: 4px;
+}
+
+/* ------------------------------------------------------------- folders */
+
+.hub-root .folder-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 7px;
+}
+
+.hub-root .folder-row > TextField {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 7px;
+}
+
+/* --------------------------------------------------------- the checklist */
+
+.hub-root .step {
+    flex-direction: row;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--line);
+}
+
+.hub-root .step__tick {
+    width: 22px;
+    min-width: 22px;
+    font-size: 13px;
+    color: var(--green);
+}
+
+.hub-root .step__tick--todo { color: var(--ink-faint); }
+
+.hub-root .step__text {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 12px;
+}
+
+.hub-root .step__title {
+    font-size: 12.5px;
+    -unity-font-style: bold;
+    color: var(--ink);
+}
+
+.hub-root .step--done .step__title {
+    color: var(--ink-dim);
+    -unity-font-style: normal;
+}
+
+.hub-root .step__why {
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-top: 2px;
+}
+
+/* --------------------------------------------------------------- charts */
+
+.hub-root .chart-row {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.hub-root .donut {
+    width: 150px;
+    height: 150px;
+    margin-right: 24px;
+    flex-shrink: 0;
+}
+
+.hub-root .legend {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 200px;
+}
+
+.hub-root .legend__row {
+    flex-direction: row;
+    align-items: center;
+    padding: 5px 0;
+}
+
+.hub-root .legend__swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+
+.hub-root .legend__name {
+    width: 132px;
+    min-width: 132px;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+}
+
+.hub-root .legend__value {
+    flex-grow: 1;
+    font-size: 11.5px;
+    color: var(--ink);
+}
+
+.hub-root .spark {
+    height: 46px;
+    background-color: var(--bg);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 5px;
+    margin-top: 4px;
+}
+
+.hub-root .spark__caption {
+    font-size: 10px;
+    color: var(--ink-faint);
+    position: absolute;
+    left: 9px;
+    top: 6px;
+}
+
+.hub-root .meter {
+    height: 6px;
+    background-color: rgba(214, 229, 221, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 7px;
+}
+
+.hub-root .meter__fill {
+    height: 6px;
+    background-color: var(--green);
+    border-radius: 3px;
+}
+
+.hub-root .meter__fill--warn { background-color: var(--amber); }
+.hub-root .meter__fill--bad  { background-color: var(--red); }
+
+/* -------------------------------------------------------------- gallery */
+
+.hub-root .cell {
+    background-color: var(--panel);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 6px;
+    margin-bottom: 9px;
+    overflow: hidden;
+}
+
+.hub-root .cell--bad {
+    border-color: rgba(255, 123, 114, 0.55);
+}
+
+.hub-root .cell__head {
+    flex-direction: row;
+    align-items: center;
+    padding: 7px 12px;
+    background-color: var(--panel-2);
+}
+
+.hub-root .cell__locale {
+    font-size: 9.5px;
+    letter-spacing: 1px;
+    color: var(--violet);
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+
+.hub-root .cell__key {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--ink-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hub-root .cell__status {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    flex-shrink: 0;
+    margin-left: 12px;
+    -unity-text-align: middle-right;
+}
+
+.hub-root .cell__status--bad { color: var(--red); }
+
+.hub-root .cell__body {
+    padding: 10px 12px;
+}
+
+.hub-root .preview {
+    background-color: rgb(20, 24, 28);
+    border-width: 1px;
+    border-color: rgba(126, 231, 180, 0.12);
+    border-radius: 4px;
+}
+
+.hub-root .preview--bad {
+    border-color: var(--red);
+}
+
+.hub-root .style-row {
+    flex-direction: row;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(126, 231, 180, 0.07);
+}
+
+.hub-root .style-row__name {
+    width: 168px;
+    min-width: 168px;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+}
+
+/* ------------------------------------------------------------ forensics */
+
+.hub-root .glyph-row {
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 12px;
+    border-width: 0;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(126, 231, 180, 0.06);
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-text-align: middle-left;
+}
+
+.hub-root .glyph-row:hover {
+    background-color: rgba(126, 231, 180, 0.05);
+    border-color: rgba(0, 0, 0, 0);
+    border-bottom-color: rgba(126, 231, 180, 0.06);
+}
+
+.hub-root .glyph-row--on {
+    background-color: rgba(126, 231, 180, 0.11);
+}
+
+.hub-root .glyph-row__index {
+    width: 32px;
+    min-width: 32px;
+    font-size: 10.5px;
+    color: var(--ink-faint);
+}
+
+.hub-root .glyph-row__text {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--ink-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hub-root .glyph-row--on .glyph-row__text {
+    color: var(--ink);
+}
+
+.hub-root .selection-box {
+    position: absolute;
+    border-width: 1px;
+    border-color: var(--green);
+    border-radius: 2px;
+    background-color: rgba(126, 231, 180, 0.14);
+}
+
+/* ----------------------------------------------------------- disclosure */
+
+.hub-root .disclose__head {
+    flex-direction: row;
+    align-items: center;
+    padding: 7px 0;
+    border-width: 0;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-text-align: middle-left;
+}
+
+.hub-root .disclose__head:hover {
+    background-color: rgba(0, 0, 0, 0);
+    border-color: rgba(0, 0, 0, 0);
+}
+
+.hub-root .disclose__arrow {
+    width: 15px;
+    min-width: 15px;
+    font-size: 9px;
+    color: var(--green);
+}
+
+.hub-root .disclose__title {
+    font-size: 10.5px;
+    letter-spacing: 1.4px;
+    color: var(--ink-faint);
+}
+
+.hub-root .disclose__head:hover .disclose__title {
+    color: var(--ink-dim);
+}
+
+.hub-root .disclose__body {
+    padding-top: 6px;
+    padding-bottom: 2px;
+}
+
+/* ---------------------------------------------------------- asset picker */
+
+.hub-root .picker {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+    padding: 5px 10px;
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 5px;
+    background-color: var(--bg);
+    color: var(--ink);
+    -unity-text-align: middle-left;
+    font-size: 12px;
+}
+
+.hub-root .picker:hover {
+    border-color: var(--green);
+    background-color: rgba(126, 231, 180, 0.05);
+    color: var(--ink);
+}
+
+.hub-root .picker--empty {
+    color: var(--ink-faint);
+}
+
+.hub-root .picker__name {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hub-root .picker__caret {
+    font-size: 8px;
+    color: var(--ink-faint);
+    margin-left: 8px;
+}
+
+/* --------------------------------------------------------------- toast */
+
+.hub-root .toast {
+    position: absolute;
+    right: 24px;
+    bottom: 20px;
+    max-width: 480px;
+    padding: 11px 16px;
+    border-width: 1px;
+    border-color: var(--green);
+    border-radius: 8px;
+    background-color: rgb(8, 26, 21);
+    display: none;
+}
+
+.hub-root .toast--on {
+    display: flex;
+}
+
+.hub-root .toast--bad {
+    border-color: var(--red);
+    background-color: rgb(31, 12, 12);
+}
+
+.hub-root .toast__text {
+    font-size: 11.5px;
+    color: var(--ink);
+}
+
+/* ---------------------------------------------------------------- misc */
+
+.hub-root .divider {
+    height: 1px;
+    background-color: var(--line);
+    margin-top: 14px;
+    margin-bottom: 14px;
+}
+
+.hub-root .code {
+    background-color: var(--bg);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 5px;
+    padding: 12px 14px;
+    font-size: 11.5px;
+    color: var(--green);
+    white-space: normal;
+}
