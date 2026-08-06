@@ -1,13 +1,18 @@
 // Minimal SDF text shader for uGUI: samples the R8 glyph atlas
 // (Texture2DArray, layer in uv.z) and does screen-space antialiased
 // coverage from the 0.5 isoline. Stencil block keeps RectMask/Mask working.
+// A label with `precise` on samples the RGBA multi-channel atlas instead and
+// takes the median of three channels, which keeps corners sharp; same
+// material either way, so the two batch together.
 Shader "OneText/SDF"
 {
     Properties
     {
         _GlyphTex ("Glyph Atlas", 2DArray) = "" {}
         _ColorTex ("Colour Atlas", 2DArray) = "" {}
+        _MsdfTex ("Precise Glyph Atlas", 2DArray) = "" {}
         _GlyphTexelSize ("Glyph Atlas Texel Size", Vector) = (0, 0, 0, 0)
+        _MsdfTexelSize ("Precise Atlas Texel Size", Vector) = (0, 0, 0, 0)
 
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -42,7 +47,7 @@ Shader "OneText/SDF"
         // The canvas system drives this global: overlay canvases get Always,
         // world-space canvases get LEqual so text can be occluded correctly.
         // Code that renders a canvas by hand (editor/headless capture) must set
-        // it itself — see OneTextProofScene.
+        // it itself; see OneTextProofScene.
         ZTest [unity_GUIZTestMode]
         Blend SrcAlpha OneMinusSrcAlpha
         ColorMask [_ColorMask]
@@ -60,17 +65,24 @@ Shader "OneText/SDF"
             // Texture2DArray has one format for all its slices, so colour
             // cannot share the R8 SDF array, and the coverage maths below would
             // binarize a colour image into a silhouette anyway. Same material
-            // and same draw call regardless — the choice rides in a vertex
+            // and same draw call regardless; the choice rides in a vertex
             // channel, not in a second pass.
             UNITY_DECLARE_TEX2DARRAY(_ColorTex);
+            // Multi-channel fields (the label's `precise` option) live in a
+            // third array for the same reason colour does: RGBA cannot share an
+            // R8 array. Still one material and one draw call; which of the
+            // three a tile came from rides in TEXCOORD2.w, exactly as the
+            // colour flag already did.
+            UNITY_DECLARE_TEX2DARRAY(_MsdfTex);
 
             // Set from C# beside _GlyphTex rather than relied on from Unity's
             // automatic _TexelSize, which is documented for 2D textures and not
             // for arrays. The shadow offset is the only thing that reads it.
             float4 _GlyphTexelSize;
+            float4 _MsdfTexelSize;
 
-            // One reach — how far outside the ink the field still knows
-            // anything — in texels. Must equal GlyphRasterizer.SpreadPixels,
+            // One reach (how far outside the ink the field still knows
+            // anything) in texels. Must equal GlyphRasterizer.SpreadPixels,
             // which is also GlyphRasterizer.Padding; a disagreement here draws
             // shadows at the wrong distance with nothing to catch it.
             #define REACH_TEXELS 4.0
@@ -79,7 +91,7 @@ Shader "OneText/SDF"
             // 0..1 range.
             #define REACH_FIELD 0.5
 
-            // Decoration parameters ride in channels the mesh already carried —
+            // Decoration parameters ride in channels the mesh already carried:
             // TEXCOORD1, TEXCOORD3 and TEXCOORD2.yz used to be the second and
             // third sweep-line samples, dead since joints moved inside the
             // field with cluster-union rasterization. The full budget, and why
@@ -138,11 +150,37 @@ Shader "OneText/SDF"
             // the glyph the atlas shelf packed next door and drawing it as this
             // one's shadow. The ring the clamp lands on is padding the
             // rasterizer guarantees is a full reach from the ink, so outside the
-            // tile the field reads exactly 0 — the right answer, not a fallback.
+            // tile the field reads exactly 0: the right answer, not a fallback.
             float Field(float2 uv, float2 tileMin, float2 tileMax, float layer)
             {
                 float3 s = float3(clamp(uv, tileMin, tileMax), layer);
                 return UNITY_SAMPLE_TEX2DARRAY(_GlyphTex, s).r;
+            }
+
+            /// The multi-channel field, reconstructed. Each channel holds the
+            /// distance to a subset of the glyph's edges, chosen so that the two
+            /// edges meeting at a corner share exactly one channel; the median
+            /// of the three is then the intersection of their half-planes, and
+            /// the corner survives the bilinear sampler that rounds a
+            /// single-channel cone off.
+            float Median(float3 d)
+            {
+                return max(min(d.r, d.g), min(max(d.r, d.g), d.b));
+            }
+
+            float MsdfField(float2 uv, float2 tileMin, float2 tileMax, float layer)
+            {
+                float3 s = float3(clamp(uv, tileMin, tileMax), layer);
+                return Median(UNITY_SAMPLE_TEX2DARRAY(_MsdfTex, s).rgb);
+            }
+
+            /// Alpha of a precise tile: the ordinary single-channel field, which
+            /// the rasterizer gets for free (every edge is in two channels, so
+            /// the nearest edge overall is the nearest in some channel).
+            float MsdfTrueField(float2 uv, float2 tileMin, float2 tileMax, float layer)
+            {
+                float3 s = float3(clamp(uv, tileMin, tileMax), layer);
+                return UNITY_SAMPLE_TEX2DARRAY(_MsdfTex, s).a;
             }
 
             /// Premultiplied source over premultiplied destination.
@@ -165,7 +203,13 @@ Shader "OneText/SDF"
                 // guaranteed-empty margin to land in. Two different wrong
                 // pictures, and drawing a bad halo round an emoji is worse than
                 // drawing none.
-                if (i.bounds.w > 0.5)
+                // 0 the single-channel atlas, 1 the colour one, 2 the
+                // multi-channel one. A branch, not a keyword: a shader variant
+                // per atlas would be a material per atlas, and one material is
+                // what keeps a line of text with an emoji and a precise word in
+                // it inside one draw call.
+                float precise = step(1.5, i.bounds.w);
+                if (i.bounds.w > 0.5 && precise < 0.5)
                 {
                     float3 s = float3(i.uv.x, clamp(i.uv.y, i.uv.w, i.bounds.x), i.uv.z);
                     return UNITY_SAMPLE_TEX2DARRAY(_ColorTex, s) * i.color;
@@ -173,7 +217,9 @@ Shader "OneText/SDF"
 
                 float2 tileMin = float2(i.bounds.y, i.uv.w);
                 float2 tileMax = float2(i.bounds.z, i.bounds.x);
-                float d = Field(i.uv.xy, tileMin, tileMax, i.uv.z);
+                float d = precise > 0.5
+                    ? MsdfField(i.uv.xy, tileMin, tileMax, i.uv.z)
+                    : Field(i.uv.xy, tileMin, tileMax, i.uv.z);
                 float aa = max(fwidth(d), 1e-4);
                 float faceA = i.color.a * smoothstep(0.5 - aa, 0.5 + aa, d);
 
@@ -201,9 +247,21 @@ Shader "OneText/SDF"
                 // this pixel would have been had the glyph sat at the offset.
                 // Softness widens the antialiasing band instead of blurring
                 // anything, which is what makes it free.
+                //
+                // A precise tile is read through its alpha here (the plain
+                // distance) rather than through the median. The displaced
+                // sample lands where the three channels disagree, which is
+                // exactly where the median's reconstruction is a claim about a
+                // corner this pixel does not belong to; and a shadow is offset
+                // and usually softened, so nobody can inspect its corners
+                // anyway. The face, the outline and the glow all keep the
+                // median, which is the whole point of the option.
+                float2 texel = precise > 0.5 ? _MsdfTexelSize.xy : _GlyphTexelSize.xy;
                 float2 shadowUv = i.uv.xy - float2(Signed(offset.x), Signed(offset.y))
-                    * REACH_TEXELS * _GlyphTexelSize.xy;
-                float shadowD = Field(shadowUv, tileMin, tileMax, i.uv.z);
+                    * REACH_TEXELS * texel;
+                float shadowD = precise > 0.5
+                    ? MsdfTrueField(shadowUv, tileMin, tileMax, i.uv.z)
+                    : Field(shadowUv, tileMin, tileMax, i.uv.z);
                 float soft = max(aa, softRadius.x * REACH_FIELD);
                 float shadowA = shadowBA.y * i.color.a
                     * smoothstep(0.5 - soft, 0.5 + soft, shadowD);
@@ -216,7 +274,7 @@ Shader "OneText/SDF"
 
                 // The outline: the same field read at a second threshold, one
                 // width further out. The threshold is held above the
-                // antialiasing band because the field saturates at one reach —
+                // antialiasing band because the field saturates at one reach;
                 // past that an outline stops thickening and starts fringing the
                 // whole background, and stopping is the honest answer.
                 float outlineT = max(0.5 - REACH_FIELD * outlineBW.y, aa * 1.5);
