@@ -12,6 +12,8 @@ namespace OneText
     /// without any editor code; if it is missing, labels simply have no default
     /// font until one is assigned.
     /// </summary>
+    // The Project window draws this rather than the default script sheet.
+    [Icon("Packages/com.onetext.core/Editor/Icons/OneTextSettings.png")]
     public sealed class OneTextSettings : ScriptableObject
     {
         /// <summary>Resources path (no extension) the runtime loads from.</summary>
@@ -25,6 +27,13 @@ namespace OneText
 
         [Tooltip("Default em size for new labels.")]
         [SerializeField] private float _defaultFontSize = 36f;
+
+        [Tooltip("When no font above covers a character, draw it from a font the operating system " +
+            "has instead of a box. On by default, because a box is the worst outcome for a reader. " +
+            "Doctor still warns about every character that needs one: the face is the one on this " +
+            "machine, and another device may have a different one or none. Web has no font " +
+            "directory to look in, so the option does nothing there.")]
+        [SerializeField] private bool _systemFontFallback = true;
 
         [Header("Glyph atlas")]
         [Tooltip("Edge length of each atlas layer. Bigger holds more glyphs at once; " +
@@ -73,6 +82,13 @@ namespace OneText
         public IReadOnlyList<OneFontAsset> FallbackFonts => _fallbackFonts;
 
         public float DefaultFontSize => _defaultFontSize;
+
+        /// <summary>
+        /// Whether a character no font in the chain covers may be drawn from an
+        /// operating-system font. See <see cref="SystemFonts"/> for what that
+        /// costs and why Doctor reports it anyway.
+        /// </summary>
+        public bool SystemFontFallback => _systemFontFallback;
 
         /// <summary>The atlas budget this project asks for.</summary>
         public GlyphAtlasSettings AtlasSettings => new GlyphAtlasSettings

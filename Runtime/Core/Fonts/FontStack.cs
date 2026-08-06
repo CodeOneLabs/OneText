@@ -6,13 +6,13 @@ namespace OneText
     /// <summary>
     /// An ordered list of fonts: the first one that has a glyph for a
     /// character wins. Fallback is configured once, here, instead of being
-    /// chained per font asset — the pain point this project set out to remove.
+    /// chained per font asset, the pain point this project set out to remove.
     ///
     /// Each entry may also carry bold, italic and bold-italic faces. When it
     /// does not, and the face is variable, <c>&lt;b&gt;</c> and
     /// <c>&lt;i&gt;</c> are served by instancing its axes instead. When it is
     /// neither, they do nothing at all and say so through
-    /// <see cref="TryGetStyled"/> — a wrong-looking bold is a bug report, and
+    /// <see cref="TryGetStyled"/>; a wrong-looking bold is a bug report, and
     /// a silently ignored one is a question on the forum.
     ///
     /// <para><b>Lifetime.</b> Instanced faces borrow the parent face they were
@@ -20,8 +20,8 @@ namespace OneText
     /// arrangement even with <c>ownsFonts: false</c>: disposing a regular face
     /// while the stack is alive leaves its instanced bold pointing at a
     /// destroyed face. Dispose the stack first. For the same reason,
-    /// <see cref="Clear"/> destroys instanced faces — nobody else holds a
-    /// reference to create them again — so a <see cref="TextLayoutResult"/>
+    /// <see cref="Clear"/> destroys instanced faces (nobody else holds a
+    /// reference to create them again), so a <see cref="TextLayoutResult"/>
     /// still holding runs from this stack is stale once it is cleared, exactly
     /// as it would be after the fonts themselves went away.</para>
     /// </summary>
@@ -29,8 +29,8 @@ namespace OneText
     {
         /// <summary>
         /// Which form of a dual-purpose character is wanted, from a variation
-        /// selector. U+FE0E asks for the text form, U+FE0F for the emoji one —
-        /// ✔︎ against ✔️ — and the difference is which font in the stack should
+        /// selector. U+FE0E asks for the text form, U+FE0F for the emoji one
+        /// (✔︎ against ✔️), and the difference is which font in the stack should
         /// get the cluster, not something one font can resolve.
         /// </summary>
         public enum Presentation
@@ -58,7 +58,7 @@ namespace OneText
             /// BCP 47 tag this family is for, or null for "any". Han
             /// unification means one codepoint is drawn differently in Japanese
             /// and Chinese, and without this the fallback *order* decides which
-            /// a reader gets — so a Japanese player sees Chinese glyph shapes
+            /// a reader gets, so a Japanese player sees Chinese glyph shapes
             /// because someone listed the Chinese font first.
             /// </summary>
             public string Language;
@@ -99,7 +99,10 @@ namespace OneText
 
         public IReadOnlyList<FontData> Fonts => _fonts;
 
-        /// <summary>The font used for characters no font in the stack covers.</summary>
+        /// <summary>
+        /// The head of the stack, and what draws the box for a character
+        /// neither the stack nor the operating system has a glyph for.
+        /// </summary>
         public FontData Primary => _fonts.Count > 0 ? _fonts[0] : null;
 
         public int Count => _fonts.Count;
@@ -109,7 +112,7 @@ namespace OneText
         /// <summary>
         /// Adds a family for a specific language. When a label names the same
         /// language, this family wins over anything earlier in the stack that
-        /// merely covers the character — which is how a Japanese label gets 直
+        /// merely covers the character, which is how a Japanese label gets 直
         /// from the Japanese font with a Chinese font sitting above it.
         /// </summary>
         public void Add(FontData font, string language)
@@ -123,8 +126,8 @@ namespace OneText
 
         /// <summary>
         /// Adds a family: a regular face and, optionally, the real bold and
-        /// italic faces that go with it. Real faces always beat instanced ones
-        /// — a designed bold is not an interpolated one.
+        /// italic faces that go with it. Real faces always beat instanced ones:
+        /// a designed bold is not an interpolated one.
         /// </summary>
         public void Add(FontData regular, FontData bold, FontData italic, FontData boldItalic)
         {
@@ -136,6 +139,9 @@ namespace OneText
             _entries.Add(entry);
             _fonts.Add(regular);
             _coverage.Clear();
+            // A font that arrives after a character was answered by the
+            // operating system may well cover it; the project's own font wins.
+            _system?.Clear();
         }
 
         private static FontData Valid(FontData font) => font != null && font.IsValid ? font : null;
@@ -154,26 +160,65 @@ namespace OneText
             _entries.Clear();
             _fonts.Clear();
             _coverage.Clear();
+            // Not disposed: system faces are shared process-wide and belong to
+            // SystemFonts, not to whichever stack happened to ask for one.
+            _system?.Clear();
         }
 
         /// <summary>
-        /// The first font covering <paramref name="codepoint"/>, or
-        /// <see cref="Primary"/> when none does (so the caller still gets
-        /// notdef boxes rather than nothing).
+        /// The first font covering <paramref name="codepoint"/>; failing that,
+        /// a font the operating system has for it; failing that,
+        /// <see cref="Primary"/>, so the caller still gets notdef boxes rather
+        /// than nothing.
+        ///
+        /// The system tier is <see cref="SystemFonts"/> and is on unless the
+        /// project turns it off. It is a last resort in the literal sense:
+        /// every font the project actually ships has already said no.
         /// </summary>
         public FontData Resolve(int codepoint)
         {
-            if (_fonts.Count <= 1) return Primary;
+            if (_fonts.Count == 0) return null;
             if (!_coverage.TryGetValue(codepoint, out int index))
             {
-                index = 0;
+                // -1 rather than 0 for "nobody has it": the two answers used to
+                // be the same value, and the system tier below needs to tell
+                // them apart. Both are cached, so a character that misses the
+                // whole chain asks the fonts once and not once per occurrence.
+                index = -1;
                 for (int i = 0; i < _fonts.Count; i++)
                 {
                     if (_fonts[i].HasGlyph(codepoint)) { index = i; break; }
                 }
                 _coverage[codepoint] = index;
             }
-            return _fonts[index];
+            if (index >= 0) return _fonts[index];
+            return ResolveFromSystem(codepoint) ?? Primary;
+        }
+
+        // Characters the chain missed and the operating system answered for.
+        // Cached here as well as in SystemFonts so the steady state is one
+        // dictionary lookup on this side of the lock.
+        private Dictionary<int, FontData> _system;
+
+        /// <summary>
+        /// The operating system's answer for a character no font in this stack
+        /// covers, or null: when the tier is switched off, when the platform
+        /// has no font directory to walk, or when nothing on the machine has
+        /// the character either.
+        ///
+        /// Public because a diagnostic has to be able to ask the same question
+        /// the renderer asked, and answer it the same way: Doctor reports a
+        /// character that only draws because of this, and it needs to name the
+        /// face that caught it.
+        /// </summary>
+        public FontData ResolveFromSystem(int codepoint)
+        {
+            if (!SystemFonts.Enabled) return null;
+            _system ??= new Dictionary<int, FontData>();
+            if (_system.TryGetValue(codepoint, out var cached)) return cached;
+            var font = SystemFonts.Resolve(codepoint);
+            _system[codepoint] = font;
+            return font;
         }
 
         /// <summary>
@@ -223,7 +268,7 @@ namespace OneText
         /// <summary>
         /// The language tag a font was added under, or null.
         ///
-        /// Diagnostics ask this — the Hub's forensics to say which family drew
+        /// Diagnostics ask this: the Hub's forensics to say which family drew
         /// a glyph and why, Doctor to notice a Japanese string resolving
         /// through an untagged chain, which is Han unification going wrong
         /// quietly rather than loudly.
@@ -250,7 +295,7 @@ namespace OneText
 
         /// <summary>
         /// The first family declared for this language that covers the
-        /// character, or null when none is — in which case ordinary coverage
+        /// character, or null when none is, in which case ordinary coverage
         /// order decides, which is the right answer for a character the locale
         /// has no opinion about.
         /// </summary>
@@ -261,7 +306,7 @@ namespace OneText
             // Only where the locale actually has an opinion. A CJK font tagged
             // "ja" covers ASCII too, so letting the language decide every
             // codepoint would silently move a Japanese label's Latin text,
-            // digits and punctuation into the CJK face — a whole-label font
+            // digits and punctuation into the CJK face, a whole-label font
             // swap dressed up as a Han-unification fix. Han and kana are the
             // characters whose correct shape depends on the reader.
             if (codepoint > char.MaxValue ||
@@ -303,7 +348,7 @@ namespace OneText
 
         /// <summary>
         /// The styled face for a family, if one can be had. False means the
-        /// family has neither a real face nor the axes to instance one — the
+        /// family has neither a real face nor the axes to instance one; the
         /// caller gets the regular face and may want to say so.
         /// </summary>
         public bool TryGetStyled(FontData regular, Face face, out FontData styled)
@@ -370,7 +415,7 @@ namespace OneText
                 else if (hasSlant) variations.Add(new FontVariation("slnt", ItalicSlant));
             }
 
-            // Nothing moved means nothing to instance — say so rather than
+            // Nothing moved means nothing to instance; say so rather than
             // hand back a duplicate of the regular face, which would cost an
             // hb_font and a second set of atlas tiles for identical glyphs.
             return variations.Count == 0 ? null : regular.CreateVariant(variations.ToArray());

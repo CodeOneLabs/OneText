@@ -6,7 +6,7 @@ using UnityEngine;
 namespace OneText.Tests
 {
     /// <summary>
-    /// M8: markup. Two questions run through all of it — does a well-formed tag
+    /// M8: markup. Two questions run through all of it: does a well-formed tag
     /// change exactly what it says it changes, and does a malformed one leave
     /// the text alone? The second matters more. Text that silently disappears
     /// because someone typed "5 &lt; 6" is the worst failure a text engine has,
@@ -365,7 +365,7 @@ namespace OneText.Tests
             // narrow enough that greedy wrapping breaks *inside* the phrase and
             // wide enough that the phrase fits on a line of its own. Pick it by
             // hand and the test quietly stops proving anything the first time a
-            // font metric moves — which is exactly how this test failed to
+            // font metric moves, which is exactly how this test failed to
             // discriminate before.
             float box = -1f;
             for (float candidate = 120f; candidate <= 400f; candidate += 5f)
@@ -375,7 +375,7 @@ namespace OneText.Tests
                 box = candidate;
                 break;
             }
-            Assert.Greater(box, 0f, "no width both splits the phrase and fits it — check the font");
+            Assert.Greater(box, 0f, "no width both splits the phrase and fits it; check the font");
 
             Assert.IsTrue(SplitsThePhrase(fonts, plain, phrase, box),
                 "without <nobr> the phrase must actually break, or this test proves nothing");
@@ -513,7 +513,11 @@ namespace OneText.Tests
                 "a static font with no bold face must report that it cannot do bold, " +
                 "rather than quietly drawing regular and leaving the author guessing");
             Assert.AreSame(font, styled, "the fallback still has to be a usable face");
-            Assert.AreSame(font, fonts.Resolve('A', bold: true, italic: false));
+            // 'O' rather than 'A': this font's cmap holds only "OQSI" and a
+            // space, and the question here is what bold does to a character the
+            // font has; a character it does not have is the system-fallback
+            // tier's question, and it now answers it.
+            Assert.AreSame(font, fonts.Resolve('O', bold: true, italic: false));
         }
     }
 }

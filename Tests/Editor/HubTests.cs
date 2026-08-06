@@ -10,7 +10,7 @@ namespace OneText.Tests
     /// <summary>
     /// M11: the parts of the Hub that are not a window.
     ///
-    /// Every tab is a view over something answerable without a window — what
+    /// Every tab is a view over something answerable without a window: what
     /// strings a project ships, which of them no font can draw, how much of the
     /// atlas a session actually wanted. Those are the parts tested here, and
     /// the window is then a way of looking at them.
@@ -27,6 +27,12 @@ namespace OneText.Tests
         {
             _folder = Path.Combine(Path.GetTempPath(), "OneTextHubTests", Path.GetRandomFileName());
             Directory.CreateDirectory(_folder);
+            // Doctor's verdict on a missing character depends on what the
+            // machine running the test has installed: Hangul is tofu on a bare
+            // Linux runner and a system-fallback warning on a Mac. These tests
+            // are about the chain, so the chain is all they get to see;
+            // SystemFontTests covers the other half deliberately.
+            SystemFonts.Enabled = false;
         }
 
         [TearDown]
@@ -34,6 +40,7 @@ namespace OneText.Tests
         {
             if (Directory.Exists(_folder)) Directory.Delete(_folder, true);
             DictionaryLineBreaker.ResetToDefaults();
+            SystemFonts.UseProjectSetting();
         }
 
         private void Write(string name, string contents) =>
@@ -60,7 +67,7 @@ namespace OneText.Tests
         [Test]
         public void Csv_KeepsQuotedCommasAndNewlines()
         {
-            // The row a naive split loses half of — and losing half a row means
+            // The row a naive split loses half of. And losing half a row means
             // a charset missing exactly the characters of the longest string.
             Write("ui.csv", "key,en\nline,\"one, two\"\nwrapped,\"first\nsecond\"\n");
 
