@@ -14,5 +14,5 @@ carried here and copied into the throwaway CI project by the workflow:
 
 The trailing tilde on this directory keeps Unity from importing any of it
 into the package. The fonts the self-test loads are assembled by the
-workflow: two ship in `Tests/Fonts/`, the other four are downloaded from
+workflow: two ship in `Tests/Fonts~/`, the other four are downloaded from
 the same URLs `Tools/fetch_coverage_fonts.py` uses.

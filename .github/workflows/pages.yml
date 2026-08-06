@@ -1,4 +1,10 @@
-# Publishes page/ to GitHub Pages.
+# Publishes page~/ to GitHub Pages.
+#
+# The trailing tilde is for Unity, not for us: this repository's root is the
+# package, so a plain page/ directory is package content, and every consumer
+# who installs from the git URL imports the site's thirteen screenshots as
+# textures. Unity skips a folder whose name ends in a tilde; GitHub Pages does
+# not care either way.
 #
 # Not the "main branch /docs folder" setting, which would be simpler: this
 # repository already has a Docs/ directory, and on a case-insensitive
@@ -11,7 +17,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'page/**'
+      - 'page~/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -37,6 +43,6 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: page
+          path: page~
       - id: deploy
         uses: actions/deploy-pages@v4

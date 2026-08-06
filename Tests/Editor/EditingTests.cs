@@ -20,7 +20,7 @@ namespace OneText.Tests
     /// </summary>
     public class EditingTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         // "안녕" typed, then "하" being composed: ᄒ, 하, 한 (the states a Hangul
         // IME actually walks through as three keys are pressed).

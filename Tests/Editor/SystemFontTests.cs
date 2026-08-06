@@ -20,7 +20,7 @@ namespace OneText.Tests
     /// </summary>
     public class SystemFontTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         /// <summary>U+D55C HANGUL SYLLABLE HAN: absent from every bundled test font.</summary>
         private const int Hangul = 0xD55C;

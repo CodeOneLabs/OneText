@@ -15,8 +15,8 @@ namespace OneText.Editor
     /// </summary>
     public static class M6ProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         // Not vendored and not required: a system CJK font, used only to
         // measure how many CJK tiles a budget really holds on this machine.

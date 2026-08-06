@@ -18,15 +18,15 @@ namespace OneText.Tests
     /// half: reading CBDT bitmaps and COLRv0 layers out of a font and getting
     /// them into an RGBA atlas the same shader and the same draw call can use.
     ///
-    /// The test face is authored, not vendored (Tests/Fonts/ColorGlyphs.ttf,
+    /// The test face is authored, not vendored (Tests/Fonts~/ColorGlyphs.ttf,
     /// 1.3 KB, built by the script beside it). Noto Color Emoji would also do
     /// it, at 10.7 MB of someone else's font carried forever to exercise two
     /// code paths.
     /// </summary>
     public class ColorGlyphTests
     {
-        private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts/ColorGlyphs.ttf";
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts~/ColorGlyphs.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private static FontData LoadFont(string path) =>
             FontData.Load(File.ReadAllBytes(Path.GetFullPath(path)));

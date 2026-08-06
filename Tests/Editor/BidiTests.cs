@@ -7,7 +7,7 @@ namespace OneText.Tests
 {
     public class BidiTests
     {
-        private const string TestFile = "Packages/com.onetext.core/Tests/UnicodeData/BidiCharacterTest.txt";
+        private const string TestFile = "Packages/com.onetext.core/Tests/UnicodeData~/BidiCharacterTest.txt";
 
         [Test]
         public void Passes_Complete_BidiCharacterTest()

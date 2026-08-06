@@ -35,7 +35,7 @@ namespace OneText.Tests
     /// </summary>
     public class AllocationTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
         private const string Sample = "The quick brown fox jumps over the lazy dog";
 
         private GameObject _canvas;

@@ -33,21 +33,21 @@ correctly, out of the box, for free.
 Vertical writing, with columns right to left, kinsoku holding the column ends,
 and ruby beside the column:
 
-![Vertical writing](page/assets/shots/vertical.png)
+![Vertical writing](page~/assets/shots/vertical.png)
 
 Ruby placed by the W3C simple-placement rules, with distribution, overhang and
 a decorated reading:
 
-![Ruby](page/assets/shots/ruby.png)
+![Ruby](page~/assets/shots/ruby.png)
 
 The Hub (one window for fonts, charsets, dictionaries, the atlas, a string
 gallery and Doctor), restyled as the tool it is:
 
-![The Hub](page/assets/shots/hub-overview.png)
+![The Hub](page~/assets/shots/hub-overview.png)
 
-![The atlas, live](page/assets/shots/hub-atlas.png)
+![The atlas, live](page~/assets/shots/hub-atlas.png)
 
-More in the site's [quick tour](page/index.html): MSDF `precise`,
+More in the site's [quick tour](page~/index.html): MSDF `precise`,
 decorations, Doctor and the word-break dictionaries, screen by screen.
 
 ## Why

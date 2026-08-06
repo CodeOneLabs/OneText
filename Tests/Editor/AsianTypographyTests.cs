@@ -18,9 +18,9 @@ namespace OneText.Tests
     /// </summary>
     public class AsianTypographyTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts/ColorGlyphs.ttf";
-        private const string LoclFontPath = "Packages/com.onetext.core/Tests/Fonts/LoclRegional.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts~/ColorGlyphs.ttf";
+        private const string LoclFontPath = "Packages/com.onetext.core/Tests/Fonts~/LoclRegional.ttf";
 
         private static LineBreaker.Opportunity[] Analyze(string text,
             AsianTypography.Kinsoku kinsoku = AsianTypography.Kinsoku.Off, bool korean = false)
