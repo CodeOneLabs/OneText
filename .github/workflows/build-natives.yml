@@ -1,0 +1,87 @@
+name: Build natives
+
+# Builds Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so and uploads it as an
+# artifact, for a human to download and commit. It does not commit anything and
+# it does not run on push: a binary that rebuilds itself on every merge is a
+# binary nobody has read the checks of.
+#
+# Why this exists at all, when every other platform's binary is vendored from
+# the HarfBuzzSharp NuGet packages: the vendored Linux one crashes the Linux
+# editor. Unity's editor has its own HarfBuzz in it for TextCore, ELF resolves
+# a library's calls to its own exported functions through the global scope, and
+# the first definition in that scope is Unity's. The vendored .so is not linked
+# against that happening; nothing about how it is imported or shipped can make
+# it be. See Tools/build_linux_natives.sh, which is where all the reasoning
+# lives, and Docs/NATIVES.md for the crash.
+#
+# The compile happens inside an old-glibc container rather than on the runner,
+# because the glibc the library is linked against becomes the oldest glibc it
+# can ever load on, and ubuntu-latest's is newer than the Unity images this
+# package is tested on. Everything that needs the network (the HarfBuzz
+# checkout) happens on the runner instead: the container is old enough that its
+# own TLS stack is not something to rely on.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Container to compile in
+        default: quay.io/pypa/manylinux2014_x86_64
+        required: false
+      glibcCeiling:
+        description: Highest glibc version the result may require
+        default: "2.17"
+        required: false
+
+jobs:
+  linux-x86_64:
+    name: libHarfBuzzSharp.so (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch HarfBuzz
+        # Pinned to the version in Docs/NATIVES.md, which is the version every
+        # other platform's binary is. A Linux that shapes to a different
+        # HarfBuzz than macOS is the drift that file exists to prevent.
+        run: |
+          HB_VERSION=$(sed -n 's/^HB_VERSION=\([0-9.]*\).*/\1/p' Tools/build_linux_natives.sh)
+          echo "HarfBuzz $HB_VERSION"
+          git clone --depth 1 --branch "$HB_VERSION" \
+              https://github.com/harfbuzz/harfbuzz.git "$RUNNER_TEMP/harfbuzz"
+          git -C "$RUNNER_TEMP/harfbuzz" rev-parse HEAD
+
+      - name: Build, check and smoke it
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            -v "$RUNNER_TEMP/harfbuzz:/hb:ro" \
+            -v "$RUNNER_TEMP/work:/work" \
+            -e HB_SRC=/hb \
+            -e ONETEXT_LINUX_WORK=/work \
+            -e ONETEXT_GLIBC_CEILING="${{ inputs.glibcCeiling }}" \
+            "${{ inputs.image }}" \
+            bash -c 'source /opt/rh/devtoolset-10/enable 2>/dev/null || true
+                     gcc --version | head -1
+                     /repo/Tools/build_linux_natives.sh'
+
+      - name: Load it once more on a modern glibc
+        # The container proves the floor. The runner is a different distribution
+        # with a much newer loader, and the Unity images are somewhere between
+        # the two, so loading it here as well is the cheap half of the range.
+        run: |
+          B=$(echo "$RUNNER_TEMP"/work/build-*)
+          sudo chown -R "$USER" "$RUNNER_TEMP/work" Runtime/Plugins/Linux/x86_64
+          cc -shared -fPIC "$B/fakehb.c" -o "$RUNNER_TEMP/libfakehb.so"
+          cc "$B/smoke.c" -o "$RUNNER_TEMP/smoke" -ldl
+          "$RUNNER_TEMP/smoke" Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so \
+                               Tests/Fonts/NotoSans.ttf "$RUNNER_TEMP/libfakehb.so"
+          echo
+          ldd Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so
+          readelf -d Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so | head -20
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libHarfBuzzSharp-linux-x86_64
+          path: Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so
+          retention-days: 14
