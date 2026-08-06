@@ -233,7 +233,7 @@ namespace OneText.UGUI
 
         /// <summary>
         /// Drops keyboard focus, committing anything the input method was still
-        /// composing — the character that every Unity input field loses here.
+        /// composing: the character that every Unity input field loses here.
         /// </summary>
         public void DeactivateInputField()
         {
@@ -278,7 +278,7 @@ namespace OneText.UGUI
             }
 
             // Order matters. A commit the platform owed us but never sent is
-            // resolved first, then the live composition is committed — the
+            // resolved first, then the live composition is committed; the
             // other way round, committing would arm the echo guard and the
             // flush would immediately disarm it.
             bool changed = _model.FlushCommit();
@@ -458,7 +458,7 @@ namespace OneText.UGUI
             {
                 // While an IME composes, the keyboard belongs to it. Backspace
                 // shortens the composition, the arrows walk the candidate list,
-                // Enter accepts a candidate — and every one of those also
+                // Enter accepts a candidate. And every one of those also
                 // arrives here. Acting on them edits the committed text behind
                 // the composition, or submits a form the user was only
                 // confirming a syllable in.
@@ -642,6 +642,12 @@ namespace OneText.UGUI
             // Whatever the user types is text, not markup: a name with an angle
             // bracket in it must not turn half the field bold.
             _textComponent.RichText = false;
+            // And a field is horizontal, the same way and for the same reason:
+            // the field owns this label, and editing in a column (a caret that
+            // moves down, arrow keys that mean the other axis, an IME candidate
+            // window beside a column) is not implemented. Better to decline
+            // here than to draw a field whose caret is at right angles to it.
+            _textComponent.WritingMode = TextWritingMode.Horizontal;
             _textComponent.Text = _model.DisplayText;
             if (_placeholder != null)
                 _placeholder.enabled = _model.DisplayText.Length == 0;

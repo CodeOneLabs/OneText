@@ -19,8 +19,8 @@ namespace OneText
     /// <summary>
     /// Splits a shaped run into clusters of ink-overlapping glyphs. Each
     /// cluster is rasterized as ONE merged SDF, so joints between connected
-    /// glyphs (Arabic joins, positioned marks) live in the field's interior
-    /// — there is no per-glyph boundary left to seam.
+    /// glyphs (Arabic joins, positioned marks) live in the field's interior:
+    /// there is no per-glyph boundary left to seam.
     ///
     /// Membership is decided by interval union over the glyphs' ink extents,
     /// NOT by list adjacency: zero-advance marks positioned over a later
@@ -37,13 +37,23 @@ namespace OneText
             /// <summary>Pen position the cluster's offsets are relative to, font units from run start.</summary>
             public int PenX;
 
+            /// <summary>
+            /// The same, across the run: font units from the run's baseline.
+            /// Zero for every horizontal run (a glyph's cross-axis offset is
+            /// baked into its tile there) and used only by the upright split
+            /// below, where a column's glyphs sit at different distances from
+            /// the centre line and must not each bake a tile of their own for
+            /// it.
+            /// </summary>
+            public int PenY;
+
             /// <summary>Content hash for atlas caching (glyph ids + offsets).</summary>
             public long Hash;
 
             /// <summary>
             /// Source text this tile came from, as UTF-16 indices [Start, End).
-            /// A merged tile can cover several characters — that is the point of
-            /// merging — so anything counting units of text (reveal, effects,
+            /// A merged tile can cover several characters (that is the point of
+            /// merging), so anything counting units of text (reveal, effects,
             /// carets) needs the range rather than a single index.
             /// </summary>
             public int TextStart, TextEnd;
@@ -70,7 +80,7 @@ namespace OneText
         /// shows a seam. Merging anything further apart than that is pure cost:
         /// the tile then covers several glyphs, so its cache key changes
         /// whenever any of them changes, and a word-sized tile has to be
-        /// re-rasterized when one letter is edited. Keep it tight — 1% of an em
+        /// re-rasterized when one letter is edited. Keep it tight: 1% of an em
         /// is well above the real join gaps and far below the spacing between
         /// separate letters at any size.
         /// </summary>
@@ -84,7 +94,7 @@ namespace OneText
         /// its tile fits the atlas. <paramref name="mergeGapUnits"/> is the
         /// interaction distance: some fonts leave a tiny real gap (a few
         /// units) at visually-continuous joins, and any two tiles closer
-        /// than their padding reach can also blend visibly — both must
+        /// than their padding reach can also blend visibly; both must
         /// cluster together, so pass roughly twice the tile padding
         /// converted to font units.
         /// </summary>
@@ -94,7 +104,7 @@ namespace OneText
             Split(font, glyphs, 0, glyphs.Count, clusters, positioned, maxWidthUnits, mergeGapUnits);
 
         /// <summary>
-        /// Same, for one slice of a shared glyph buffer — the layout engine
+        /// Same, for one slice of a shared glyph buffer: the layout engine
         /// packs every run of a text block into a single list.
         /// </summary>
         public static void Split(FontData font, List<ShapedGlyph> glyphs, int start, int count,
@@ -147,6 +157,54 @@ namespace OneText
                 {
                     groupMax = spans[s].Max;
                 }
+            }
+        }
+
+        /// <summary>
+        /// One tile per glyph, for a run set upright in a vertical column.
+        ///
+        /// The clustering above is an interval union over ink along the run's
+        /// advance, and that question has no answer for a column: upright CJK
+        /// glyphs advance downward and their ink overlaps completely in x, so
+        /// the interval union would merge a whole column into one tile the
+        /// size of the atlas. It also has nothing to find. Merging exists so
+        /// the joints of connected scripts live inside one distance field, and
+        /// UAX #50 sets upright exactly the scripts that do not join: Han,
+        /// kana, Hangul, Yi, the full-width forms. Every one of them is a
+        /// square that touches nothing.
+        ///
+        /// So this is the same output shape with the grouping skipped: one
+        /// cluster per glyph, its pen recorded along the column in
+        /// <see cref="Cluster.PenX"/> and across it in <see cref="Cluster.PenY"/>,
+        /// and the glyph itself at the origin so its tile hashes exactly as
+        /// the same glyph would anywhere else and shares the cache with it.
+        /// </summary>
+        public static void SplitUpright(FontData font, List<ShapedGlyph> glyphs, int start, int count,
+            List<Cluster> clusters, List<PositionedGlyph> positioned)
+        {
+            clusters.Clear();
+            positioned.Clear();
+
+            int pen = 0;
+            for (int i = start; i < start + count; i++)
+            {
+                var g = glyphs[i];
+                if (font.TryGetInkBounds(g.GlyphId, out _, out _))
+                {
+                    int outStart = positioned.Count;
+                    positioned.Add(new PositionedGlyph(g.GlyphId, 0, 0));
+                    clusters.Add(new Cluster
+                    {
+                        Start = outStart,
+                        Count = 1,
+                        PenX = pen + g.XOffset,
+                        PenY = g.YOffset,
+                        Hash = HashOf(positioned, outStart, 1),
+                        TextStart = g.Cluster,
+                        TextEnd = g.Cluster + 1,
+                    });
+                }
+                pen += g.XAdvance;
             }
         }
 

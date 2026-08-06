@@ -25,6 +25,30 @@ namespace OneText
         Bottom,
     }
 
+    /// <summary>
+    /// Which way the text flows, and which way its lines stack.
+    ///
+    /// The two axes are named after the flow rather than after the screen,
+    /// because that is the only naming that survives being rotated: the
+    /// <em>inline</em> axis is the one characters advance along, and the
+    /// <em>block</em> axis is the one lines stack along. Horizontally they are
+    /// x and y; vertically they are y and −x, and every rule in the engine
+    /// (wrapping, kinsoku, alignment, ruby placement) is written about the
+    /// axes and not about the screen.
+    /// </summary>
+    public enum TextWritingMode
+    {
+        /// <summary>Left to right, lines top to bottom. The default, and unchanged by any of this.</summary>
+        Horizontal,
+
+        /// <summary>
+        /// 縦書き: characters top to bottom, columns right to left. Han, kana
+        /// and Hangul stand upright; Latin and everything else Unicode calls
+        /// rotated turns ninety degrees clockwise (UAX #50).
+        /// </summary>
+        VerticalRightToLeft,
+    }
+
     /// <summary>Whether lines wrap at the layout width.</summary>
     public enum TextWrap
     {
@@ -63,6 +87,17 @@ namespace OneText
         public TextWrap Wrap;
         public TextOverflow Overflow;
 
+        /// <summary>
+        /// Horizontal (the default) or 縦書き.
+        ///
+        /// <see cref="MaxWidth"/> and <see cref="MaxHeight"/> keep meaning
+        /// width and height of the box; the caller has a rectangle, not a
+        /// pair of abstract axes. What changes is which one wraps: vertically
+        /// a column ends at the box's <em>height</em>, and the box's width is
+        /// the budget <see cref="TextOverflow"/> spends.
+        /// </summary>
+        public TextWritingMode WritingMode;
+
         /// <summary>Multiplier on the font's natural line height; 0 means 1.</summary>
         public float LineSpacing;
 
@@ -85,6 +120,20 @@ namespace OneText
         public System.Collections.Generic.IReadOnlyList<(int Start, TextAlignment Alignment)> Alignments;
 
         /// <summary>
+        /// Ruby annotations over ranges of the text, from
+        /// <c>&lt;ruby=…&gt;</c>. Null or empty is the ordinary path and costs
+        /// nothing.
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<TextRubySpan> Rubies;
+
+        /// <summary>
+        /// Ruby size as a fraction of the size of the text it annotates; 0 or
+        /// less means <see cref="RubyPlacement.DefaultScale"/>, the half the
+        /// spec asks for.
+        /// </summary>
+        public float RubyScale;
+
+        /// <summary>
         /// Resolves a <c>&lt;font=…&gt;</c> index to a font, or null. Markup
         /// names a font; only the frontend knows what that name means.
         /// </summary>
@@ -105,7 +154,7 @@ namespace OneText
         public System.Func<int, float> ResolveSpriteAspect;
 
         /// <summary>
-        /// BCP 47 language tag for this text — "ja", "ko", "zh-Hans".
+        /// BCP 47 language tag for this text: "ja", "ko", "zh-Hans".
         ///
         /// It does three things, and each of them is a complaint from a
         /// community that has been asking. It reaches HarfBuzz so `locl`
@@ -122,7 +171,7 @@ namespace OneText
 
         /// <summary>
         /// Apply the UAX #14 Korean tailoring: break at spaces, not between
-        /// syllables. Set from the locale rather than globally — a Korean line
+        /// syllables. Set from the locale rather than globally; a Korean line
         /// in a Japanese UI still wants Korean wrapping.
         /// </summary>
         public bool KoreanWordWrap;
@@ -166,20 +215,29 @@ namespace OneText
         /// <summary>Source text range, in UTF-16 code units.</summary>
         public int TextStart, TextLength;
 
-        /// <summary>Left edge of the run, in render units from the block's left edge.</summary>
+        /// <summary>
+        /// Start of the run along the inline axis, in render units from the
+        /// block's start edge: its left edge horizontally, the top of its
+        /// column vertically.
+        /// </summary>
         public float X;
 
-        /// <summary>Baseline, in render units downward from the block's top edge.</summary>
+        /// <summary>
+        /// The run's baseline along the block axis, in render units from the
+        /// block's start edge. Horizontally that is downward from the top;
+        /// vertically it is leftward from the right, and the "baseline" is the
+        /// centre line of the column.
+        /// </summary>
         public float Baseline;
 
-        /// <summary>Advance width in render units.</summary>
+        /// <summary>Advance along the inline axis in render units.</summary>
         public float Width;
 
         /// <summary>Resolved bidi embedding level; odd means right-to-left.</summary>
         public byte Level;
 
         /// <summary>
-        /// Em size this run was shaped and measured at — the label's size with
+        /// Em size this run was shaped and measured at: the label's size with
         /// the run's style applied, not the label's size. Everything that
         /// converts font units to render units for this run uses it.
         /// </summary>
@@ -190,6 +248,49 @@ namespace OneText
 
         /// <summary>Baseline offset in render units, positive up.</summary>
         public float BaselineShift;
+
+        /// <summary>
+        /// True if this run is a ruby annotation rather than text on the line.
+        ///
+        /// A ruby run is an ordinary run everywhere that draws: same glyphs,
+        /// same atlas, same style, and clusters pointing at the base it
+        /// annotates, so reveal, effects and decorations follow the base with
+        /// nothing added. It is not ordinary anywhere that <em>measures</em>:
+        /// it contributes no advance to the line, and a caret must never land
+        /// in it.
+        /// </summary>
+        public bool IsRuby;
+
+        /// <summary>
+        /// True if this run's glyphs are turned ninety degrees clockwise:
+        /// a Latin, Cyrillic or Greek stretch inside a vertical column, per
+        /// UAX #50.
+        ///
+        /// A rotated run is shaped horizontally, because that is what it is:
+        /// a line of Latin, with its kerning and its ligatures, laid down the
+        /// column instead of across the page. Only the drawing is rotated,
+        /// which is why every measurement above still reads
+        /// <see cref="Width"/> and every glyph still carries an
+        /// <see cref="ShapedGlyph.XAdvance"/>.
+        /// </summary>
+        public bool Rotated;
+
+        /// <summary>
+        /// How far a rotated run's own baseline sits from the centre line of
+        /// its column, as an offset to add to <see cref="Baseline"/> along the
+        /// block axis. Zero for everything else.
+        ///
+        /// Upright text needs no such offset: its baseline <em>is</em> the
+        /// column's centre line, which is where HarfBuzz's vertical origin puts
+        /// it. A rotated run keeps its horizontal baseline, and a horizontal
+        /// baseline has unequal ink above and below it; laying that baseline on
+        /// the centre line would push a stretch of Latin visibly to one side of
+        /// the column it is set in. Half of the line box, moved back.
+        /// </summary>
+        public float CrossAxisBaselineOffset =>
+            Rotated && Font != null && Font.UnitsPerEm > 0
+                ? (Font.Ascender + Font.Descender) * (FontSize / Font.UnitsPerEm) * 0.5f
+                : 0f;
 
         public bool IsRightToLeft => (Level & 1) != 0;
     }
@@ -203,13 +304,24 @@ namespace OneText
         /// <summary>Source text range, in UTF-16 code units.</summary>
         public int TextStart, TextLength;
 
-        /// <summary>Width excluding trailing whitespace, in render units.</summary>
+        /// <summary>
+        /// Extent along the inline axis excluding trailing whitespace, in
+        /// render units: the line's width, or the column's length.
+        /// </summary>
         public float Width;
 
-        /// <summary>Baseline, in render units downward from the block's top edge.</summary>
+        /// <summary>
+        /// The line's baseline along the block axis, in render units from the
+        /// block's start edge. Vertically, the centre line of the column.
+        /// </summary>
         public float Baseline;
 
-        /// <summary>Line box metrics in render units (ascent above the baseline).</summary>
+        /// <summary>
+        /// Line box metrics in render units. <see cref="Ascent"/> is the
+        /// extent on the far side of the baseline from the block direction
+        /// (above it horizontally, to its right in a right-to-left column), and
+        /// <see cref="Height"/> is what the block cursor advances by.
+        /// </summary>
         public float Ascent, Descent, Height;
 
         /// <summary>Embedding level of the paragraph this line belongs to.</summary>
@@ -235,11 +347,33 @@ namespace OneText
 
         public readonly List<TextLine> Lines = new List<TextLine>();
 
-        /// <summary>Width of the widest line, in render units.</summary>
+        /// <summary>
+        /// Width of the laid-out block on screen, in render units: the
+        /// widest line horizontally, the stack of columns vertically.
+        /// </summary>
         public float Width;
 
-        /// <summary>Total height of all laid-out lines, in render units.</summary>
+        /// <summary>
+        /// Height of the laid-out block on screen, in render units: the
+        /// stack of lines horizontally, the longest column vertically.
+        /// </summary>
         public float Height;
+
+        /// <summary>
+        /// Which way this result flows. Everything in <see cref="Runs"/> and
+        /// <see cref="Lines"/> is in the inline/block axes it names, so
+        /// nothing that reads a position can be right without it.
+        /// </summary>
+        public TextWritingMode WritingMode;
+
+        /// <summary>True if this result was laid out in a vertical writing mode.</summary>
+        public bool IsVertical => WritingMode == TextWritingMode.VerticalRightToLeft;
+
+        /// <summary>Extent along the inline axis: the longest line or column.</summary>
+        public float InlineExtent => IsVertical ? Height : Width;
+
+        /// <summary>Extent along the block axis: what the lines or columns stack to.</summary>
+        public float BlockExtent => IsVertical ? Width : Height;
 
         /// <summary>Em size this result was laid out at, in render units.</summary>
         public float FontSize;
@@ -254,7 +388,7 @@ namespace OneText
         /// The engine publishes this because only the engine knows it, and
         /// everything above needs it: "one character at a time" is not a thing
         /// in shaped text. An Arabic ligature is two characters in one glyph, a
-        /// Hangul syllable is three, and a flag emoji is four — revealing half
+        /// Hangul syllable is three, and a flag emoji is four. Revealing half
         /// of any of them is nonsense. A typewriter counts these, not chars.
         /// </summary>
         public readonly List<int> GraphemeStarts = new List<int>();
@@ -287,6 +421,7 @@ namespace OneText
             GraphemeStarts.Clear();
             Width = 0f;
             Height = 0f;
+            WritingMode = TextWritingMode.Horizontal;
             FontSize = 0f;
             Truncated = false;
         }

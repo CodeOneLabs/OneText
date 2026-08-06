@@ -6,7 +6,7 @@ namespace OneText
 {
     /// <summary>
     /// OpenType shaping via HarfBuzz: turns a string plus a font into
-    /// positioned glyphs (GSUB/GPOS — ligatures, contextual forms, kerning,
+    /// positioned glyphs (GSUB/GPOS: ligatures, contextual forms, kerning,
     /// mark positioning).
     ///
     /// M1 scope: one run, script/direction guessed from content. Script
@@ -34,7 +34,23 @@ namespace OneText
         }
 
         /// <summary>Run direction for shaping. Auto lets HarfBuzz guess from content.</summary>
-        public enum Direction { Auto, LeftToRight, RightToLeft }
+        public enum Direction
+        {
+            Auto,
+            LeftToRight,
+            RightToLeft,
+
+            /// <summary>
+            /// A column of vertical text. This is what turns on OpenType's
+            /// <c>vert</c> feature (the vertical forms of small kana, 、。 and
+            /// the brackets) and what makes HarfBuzz answer with
+            /// <c>vmtx</c>/<c>VORG</c> metrics instead of <c>hmtx</c> ones.
+            ///
+            /// The glyphs come back in <em>flow space</em> rather than in
+            /// HarfBuzz's own axes; see <see cref="Shape(FontData,string,int,int,Direction,List{ShapedGlyph},string)"/>.
+            /// </summary>
+            TopToBottom,
+        }
 
         /// <summary>
         /// Shape a substring of <paramref name="text"/> with <paramref name="font"/>,
@@ -53,6 +69,19 @@ namespace OneText
         /// Japanese reader and a Chinese one. Passing it is the difference
         /// between a font that <em>can</em> do the right thing and one that
         /// does.
+        ///
+        /// A <see cref="Direction.TopToBottom"/> run comes back in
+        /// <em>flow space</em>: <see cref="ShapedGlyph.XAdvance"/> is the
+        /// advance <em>along the column</em> (positive, from
+        /// <c>vmtx</c>), <see cref="ShapedGlyph.XOffset"/> displaces the glyph
+        /// along that same axis, and <see cref="ShapedGlyph.YOffset"/>
+        /// displaces it across the column. That is a rotation of HarfBuzz's
+        /// own answer, done here rather than in the layout engine on purpose:
+        /// everything above this line (wrapping, tracking, justification,
+        /// ruby placement, hit testing) measures a run by walking
+        /// <c>XAdvance</c>, and a vertical column is the same walk in a frame
+        /// turned ninety degrees. The alternative was a second arithmetic for
+        /// every one of them.
         /// </summary>
         public void Shape(FontData font, string text, int start, int length,
             Direction direction, List<ShapedGlyph> output, string language)
@@ -75,13 +104,31 @@ namespace OneText
                     HarfBuzzApi.hb_buffer_set_direction(_buffer, HarfBuzzApi.HB_DIRECTION_LTR);
                 else if (direction == Direction.RightToLeft)
                     HarfBuzzApi.hb_buffer_set_direction(_buffer, HarfBuzzApi.HB_DIRECTION_RTL);
+                else if (direction == Direction.TopToBottom)
+                    HarfBuzzApi.hb_buffer_set_direction(_buffer, HarfBuzzApi.HB_DIRECTION_TTB);
                 HarfBuzzApi.hb_shape(font.Font, _buffer, IntPtr.Zero, 0);
 
                 HBGlyphInfo* infos = HarfBuzzApi.hb_buffer_get_glyph_infos(_buffer, out uint count);
                 HBGlyphPosition* positions = HarfBuzzApi.hb_buffer_get_glyph_positions(_buffer, out _);
 
+                bool vertical = direction == Direction.TopToBottom;
                 for (uint i = 0; i < count; i++)
                 {
+                    if (vertical)
+                    {
+                        // HarfBuzz places a vertical run with y growing upward
+                        // and the pen at the glyph's *vertical* origin: the
+                        // advance is negative (downward) and the offsets already
+                        // carry the VORG/vmtx correction that centres the glyph
+                        // on the column and drops it below the pen. Negating the
+                        // y axis turns all three into the flow-space triple the
+                        // rest of the engine reads.
+                        output.Add(new ShapedGlyph(
+                            infos[i].Codepoint, (int)infos[i].Cluster,
+                            -positions[i].YAdvance, 0,
+                            -positions[i].YOffset, positions[i].XOffset));
+                        continue;
+                    }
                     output.Add(new ShapedGlyph(
                         infos[i].Codepoint, (int)infos[i].Cluster,
                         positions[i].XAdvance, positions[i].YAdvance,
