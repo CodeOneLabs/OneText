@@ -29,7 +29,13 @@ jobs:
       fail-fast: false
       matrix:
         # Two editor versions on Linux for the version-churn axis, and one
-        # Windows editor because the natives are per-platform: a Linux runner
+        # Windows editor because the natives are per-platform. The 2022.3 pin
+        # stops at .62f1 deliberately: later 2022.3 builds are Extended LTS,
+        # which a personal license cannot activate (the editor itself says
+        # "requires either a valid Unity Industry or Unity Enterprise
+        # license" and exits), so the newest build CI can legally run is the
+        # last one inside the standard support window.
+        # A note on the natives: a Linux runner
         # exercises libHarfBuzzSharp.so and would never notice if the Windows
         # DLL were missing, mis-tagged, or named something the Windows loader
         # will not look for, which is a mistake this package has already made
@@ -42,7 +48,7 @@ jobs:
         # that blocks a pull request. It is here to be made to work, not to be
         # trusted. See Docs/NATIVES.md.
         include:
-          - unityVersion: 2022.3.76f1
+          - unityVersion: 2022.3.62f1
             os: ubuntu-latest
             required: true
           - unityVersion: 6000.0.77f1
