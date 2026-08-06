@@ -249,6 +249,16 @@
 
 ### Fixed
 
+- **iOS could not call HarfBuzz at all.** Every non-Web platform loads the
+  native library by name, and on iOS that lookup has nowhere to land: an
+  embedded framework is resolved through its install name, not through a
+  search path holding the file, so the first shaping call threw
+  DllNotFoundException on the simulator and would have thrown identically
+  on every device. iOS now binds through `__Internal` instead, which works
+  because UnityFramework already links the framework and every hb_* symbol
+  is in the process before managed code runs. Found by the mobile smoke
+  tier on its first ever iOS run, which is the kind of thing it is for.
+
 - **Player builds no longer need a project setting to draw anything.** The
   SDF shader was resolved by name at runtime and referenced by nothing else,
   so Unity stripped it from every player: labels measured, wrapped and

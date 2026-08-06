@@ -59,6 +59,19 @@ namespace OneText.Native
         /// nothing about them changes.
         /// </summary>
         private const string HbPrefix = "onetext_";
+#elif UNITY_IOS && !UNITY_EDITOR
+        // iOS is the other place the name walk fails, for the opposite
+        // reason. The framework is embedded at Frameworks/libHarfBuzzSharp
+        // .framework inside the app, and a bare dlopen("libHarfBuzzSharp")
+        // never looks there: iOS resolves an embedded framework through its
+        // install name (@rpath/...), not through a search path holding the
+        // file. But UnityFramework already links the framework, so every
+        // hb_* symbol is in the process before managed code runs, and
+        // `__Internal` binds to them directly instead of asking the loader
+        // to find a file it cannot. The symbols keep their real names on
+        // iOS, so the prefix stays empty.
+        private const string Lib = "__Internal";
+        private const string HbPrefix = "";
 #else
         private const string Lib = "libHarfBuzzSharp";
         private const string HbPrefix = "";
