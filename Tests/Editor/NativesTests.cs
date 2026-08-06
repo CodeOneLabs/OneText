@@ -69,8 +69,15 @@ namespace OneText.Tests
 
                 Assert.IsTrue(importer.GetCompatibleWithPlatform(target),
                     $"{path} is not enabled for {target}");
-                Assert.AreEqual(cpu, importer.GetPlatformData(target, "CPU"),
-                    $"{path} is tagged for the wrong CPU; Unity would ship it to the wrong ABI");
+                // 2022.3 offers no CPU choice for Linux (32-bit Linux left in
+                // 2019.2) and reads the meta's x86_64 back as AnyCPU. Linux
+                // has one ABI, so the two are the same claim there; anywhere
+                // else the difference is a wrong ABI shipped, so only Linux
+                // gets the allowance.
+                string platformCpu = importer.GetPlatformData(target, "CPU");
+                if (!(target == BuildTarget.StandaloneLinux64 && platformCpu == "AnyCPU"))
+                    Assert.AreEqual(cpu, platformCpu,
+                        $"{path} is tagged for the wrong CPU; Unity would ship it to the wrong ABI");
 
                 foreach (var other in (BuildTarget[])System.Enum.GetValues(typeof(BuildTarget)))
                 {

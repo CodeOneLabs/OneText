@@ -296,6 +296,18 @@
   every test that shapes. The Linux plugin's import settings are written in the
   older form now, which Unity 6 reads back unchanged.
 
+  The other nine plugins had the same `.meta` problem with quieter symptoms:
+  folder-guessing covers the player platforms, so what 2022.3 lost was only
+  what no folder name can imply — the macOS dylib's editor OS, and the iOS
+  framework's `AddToEmbeddedBinaries`, the flag without which the framework is
+  in the Xcode project and absent from the shipped app. All ten `.meta`s are
+  the older form now, GUIDs untouched, with the Android `Is16KbAligned` values
+  and the iOS embed flag carried over intact. Fixing the first assertion in
+  line let the tagging test walk further than it ever had, and it found one
+  more: 2022.3 has no CPU choice for Linux and reads `x86_64` back as
+  `AnyCPU`, which on a one-ABI platform is the same claim, and is now the one
+  substitution the test accepts.
+
 - **iOS could not call HarfBuzz at all.** Every non-Web platform loads the
   native library by name, and on iOS that lookup has nowhere to land: an
   embedded framework is resolved through its install name, not through a
