@@ -13,7 +13,7 @@ namespace OneText.Editor
     /// plugins of the same name are both enabled for one platform, and every
     /// one of these files is called libHarfBuzzSharp. Hand-writing that YAML is
     /// how it goes wrong quietly, so it is generated here instead, by the API
-    /// that defines it — run once when the natives are re-vendored, and the
+    /// that defines it; run once when the natives are re-vendored, and the
     /// resulting `.meta` files are what the package ships.
     ///
     /// See Docs/NATIVES.md for where the binaries come from.
@@ -56,9 +56,14 @@ namespace OneText.Editor
             new Target("Android/x86_64/libHarfBuzzSharp.so", "Android", "X86_64", null),
             // One plugin for iOS, not two. Device and simulator binaries have
             // the same name, and the plugin importer has no device/simulator
-            // switch to keep them apart — an .xcframework is the format that
+            // switch to keep them apart; an .xcframework is the format that
             // carries both and lets Xcode pick, which is why Apple invented it.
             new Target("iOS/libHarfBuzzSharp.xcframework", "iOS", "AnyCPU", null),
+            // Web is a static archive of wasm objects that Emscripten links
+            // into the player, not a library loaded by name at runtime; see
+            // the Web section of Docs/NATIVES.md, and the `__Internal` branch
+            // in HarfBuzzApi.cs. Player-only: the editor never loads it.
+            new Target("WebGL/libHarfBuzzSharp.a", "WebGL", "AnyCPU", null),
         };
 
         [MenuItem("Tools/OneText/Apply Native Plugin Settings")]
@@ -71,7 +76,7 @@ namespace OneText.Editor
                 var importer = AssetImporter.GetAtPath(path) as PluginImporter;
                 if (importer == null)
                 {
-                    Debug.LogWarning($"OneText: no plugin at {path} — skipped.");
+                    Debug.LogWarning($"OneText: no plugin at {path}, skipped.");
                     continue;
                 }
 

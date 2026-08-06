@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OneText · HarfBuzz on wasm, WebGL2 and WebGPU</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 24px 28px 60px;
+    background: #0d1117; color: #c9d1d9;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; color: #e6edf3; }
+  .sub { color: #7d8590; margin-bottom: 20px; }
+  .panes { display: flex; gap: 18px; flex-wrap: wrap; }
+  .pane { border: 1px solid #30363d; border-radius: 8px; overflow: hidden; background: #010409; }
+  .pane h2 {
+    margin: 0; padding: 7px 12px; font-size: 12px; font-weight: 600;
+    background: #161b22; border-bottom: 1px solid #30363d; color: #e6edf3;
+    display: flex; justify-content: space-between; gap: 20px;
+  }
+  .pane h2 .badge { font-weight: 400; color: #7d8590; }
+  .pane .status { padding: 5px 12px; border-top: 1px solid #21262d; color: #7d8590; font-size: 11px; }
+  canvas { display: block; }
+  #summary { margin: 22px 0 10px; font-size: 13px; }
+  .ok { color: #3fb950; } .bad { color: #f85149; } .warn { color: #d29922; }
+  table { border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  td, th { padding: 3px 14px 3px 0; text-align: left; vertical-align: top; }
+  th { color: #7d8590; font-weight: 500; border-bottom: 1px solid #30363d; }
+  td.d { color: #7d8590; }
+  pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+        padding: 12px; overflow: auto; max-height: 380px; font-size: 11px; color: #8b949e; }
+  details summary { cursor: pointer; color: #7d8590; margin-top: 18px; }
+</style>
+</head>
+<body>
+
+<h1>OneText · HarfBuzz 14.2.1 compiled to WebAssembly</h1>
+<div class="sub" id="build">loading…</div>
+
+<div class="panes">
+  <div class="pane">
+    <h2>WebGL2 <span class="badge" id="glbadge">…</span></h2>
+    <canvas id="cgl" width="620" height="330"></canvas>
+    <div class="status" id="glstatus">waiting</div>
+  </div>
+  <div class="pane">
+    <h2>WebGPU <span class="badge" id="gpubadge">…</span></h2>
+    <canvas id="cgpu" width="620" height="330"></canvas>
+    <div class="status" id="gpustatus">waiting</div>
+  </div>
+</div>
+
+<div id="summary">running…</div>
+<table id="results"></table>
+
+<details>
+  <summary>full result JSON (also at <code>window.__onetext.results</code>)</summary>
+  <pre id="json"></pre>
+</details>
+
+<script src="./onetext-hb.js"></script>
+<script type="module">
+import { HarfBuzz } from './hb.js';
+import { buildAtlas, buildQuads, renderWebGL2, renderWebGPU } from './render.js';
+import { runShapingTests, buildScenes, FONTS, FONT_DIR } from './tests.js';
+
+const CLEAR = [0.004, 0.016, 0.035];
+const $ = (id) => document.getElementById(id);
+
+async function loadFont(file) {
+  const res = await fetch(FONT_DIR + file);
+  if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+async function main() {
+  const results = {
+    ok: false, harfbuzz: null, emscripten: '3.1.38 (matches Unity 6 "3.1.38-unity")',
+    fonts: {}, tests: [], renderers: {}, errors: [],
+  };
+
+  const module = await createHarfBuzz();
+  const hb = new HarfBuzz(module);
+  results.harfbuzz = hb.version();
+  results.wasmBytes = (await fetch('./onetext-hb.wasm')).headers.get('content-length');
+  $('build').textContent =
+    `hb_version_string() = ${results.harfbuzz} · Emscripten 3.1.38 · ` +
+    `wasm ${(results.wasmBytes / 1024).toFixed(0)} KB`;
+
+  // Real fonts, off disk, unmodified.
+  const faces = {};
+  for (const [key, file] of Object.entries(FONTS)) {
+    const bytes = await loadFont(file);
+    const f = hb.createFace(bytes);
+    f.bytes = bytes;
+    faces[key] = f;
+    results.fonts[key] = {
+      file, bytes: bytes.length, upem: f.upem,
+      immutable: !!hb.faceIsImmutable(f.face),
+      variable: !!hb.varHasData(f.face), axes: hb.varAxisCount(f.face),
+    };
+  }
+
+  results.tests = runShapingTests(hb, faces);
+
+  // One shaped scene, two graphics APIs, identical vertex data.
+  const scenes = buildScenes(hb, faces);
+  const atlas = await buildAtlas(hb, scenes);
+  results.atlas = {
+    glyphsRasterised: atlas.map.size,
+    pathCommandsFromHbDraw: atlas.drawCommands,
+    colourBitmapsFromHbOtColor: atlas.bitmaps,
+  };
+
+  const viewport = [$('cgl').width, $('cgl').height];
+  const mesh = buildQuads(scenes, atlas, viewport);
+  results.scenes = scenes.map((s) => ({
+    id: s.id, text: s.label, font: FONTS[s.fontKey],
+    glyphs: s.glyphs.length, widthPx: Math.round(s.measuredWidth),
+  }));
+
+  try {
+    results.renderers.webgl2 = { ...renderWebGL2($('cgl'), atlas.bitmap, mesh, CLEAR), ok: true };
+    $('glbadge').textContent = results.renderers.webgl2.renderer;
+    $('glstatus').innerHTML = `<span class="ok">drew ${mesh.quads} glyph quads ` +
+      `(${mesh.count} vertices)</span>`;
+  } catch (e) {
+    results.renderers.webgl2 = { ok: false, error: String(e) };
+    $('glstatus').innerHTML = `<span class="bad">${e}</span>`;
+  }
+
+  try {
+    results.renderers.webgpu = { ...await renderWebGPU($('cgpu'), atlas.bitmap, mesh, CLEAR), ok: true };
+    $('gpubadge').textContent = results.renderers.webgpu.renderer;
+    $('gpustatus').innerHTML = `<span class="ok">drew ${mesh.quads} glyph quads ` +
+      `(${mesh.count} vertices)</span>`;
+  } catch (e) {
+    // Graceful fallback: the page still works, and says exactly why.
+    results.renderers.webgpu = {
+      ok: false, error: String(e),
+      navigatorGpu: typeof navigator.gpu,
+      unavailable: !navigator.gpu,
+    };
+    $('gpubadge').textContent = 'unavailable';
+    $('gpustatus').innerHTML = `<span class="bad">WebGPU unavailable: ${e}</span>` +
+      `<br>navigator.gpu is <code>${typeof navigator.gpu}</code>` +
+      `. The WebGL2 pane above is the fallback path.`;
+    const c = $('cgpu').getContext('2d');
+    if (c) {
+      c.fillStyle = '#010409'; c.fillRect(0, 0, 620, 330);
+      c.fillStyle = '#f85149'; c.font = '13px monospace';
+      c.fillText('WebGPU unavailable: navigator.gpu is ' + typeof navigator.gpu, 20, 40);
+    }
+  }
+
+  const failed = results.tests.filter((t) => !t.pass);
+  results.ok = failed.length === 0 && results.renderers.webgl2.ok;
+  results.passed = results.tests.length - failed.length;
+  results.failed = failed.length;
+
+  render(results);
+  // Faces stay alive on purpose: window.__onetext.shape(...) is how a driver
+  // (or a person at a console) asks the wasm shaper a question the canned
+  // assertions did not think to ask.
+  window.__onetext.hb = hb;
+  window.__onetext.faces = faces;
+  window.__onetext.shape = (fontKey, text) => hb.shape(faces[fontKey].font, text);
+  return results;
+}
+
+/**
+ * Reads both canvases back and compares them pixel for pixel.
+ *
+ * Two screenshots that look alike are not proof that both graphics paths drew
+ * the same thing, and "it rendered" is not proof that it rendered *text*. Both
+ * renderers were handed byte-identical vertex data and the same atlas, so the
+ * images should agree to within the filtering differences between a GL driver
+ * and a WebGPU one. A large disagreement means one of them is drawing
+ * something else; an all-background image means neither is drawing at all.
+ */
+function compareRenderers() {
+  const grab = (canvas) => {
+    const c = document.createElement('canvas');
+    c.width = canvas.width; c.height = canvas.height;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(canvas, 0, 0);
+    return cx.getImageData(0, 0, c.width, c.height).data;
+  };
+  const a = grab($('cgl')), b = grab($('cgpu'));
+  let diff = 0, worst = 0, inkA = 0, inkB = 0;
+  const n = a.length / 4;
+  for (let i = 0; i < a.length; i += 4) {
+    const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]),
+                       Math.abs(a[i + 2] - b[i + 2]));
+    if (d > 8) diff++;
+    if (d > worst) worst = d;
+    if (a[i] + a[i + 1] + a[i + 2] > 60) inkA++;
+    if (b[i] + b[i + 1] + b[i + 2] > 60) inkB++;
+  }
+  return {
+    pixels: n,
+    inkWebGL2: inkA, inkWebGPU: inkB,
+    inkPercentWebGL2: +(100 * inkA / n).toFixed(2),
+    inkPercentWebGPU: +(100 * inkB / n).toFixed(2),
+    pixelsDifferingByMoreThan8: diff,
+    percentDiffering: +(100 * diff / n).toFixed(3),
+    worstChannelDelta: worst,
+    bothDrewInk: inkA > n * 0.01 && inkB > n * 0.01,
+    agree: diff < n * 0.02,
+  };
+}
+
+function render(r) {
+  const gl = r.renderers.webgl2.ok, gpu = r.renderers.webgpu.ok;
+  $('summary').innerHTML =
+    `<span class="${r.failed ? 'bad' : 'ok'}">${r.passed}/${r.tests.length} shaping ` +
+    `assertions passed</span> · ` +
+    `WebGL2 <span class="${gl ? 'ok' : 'bad'}">${gl ? 'rendered' : 'failed'}</span> · ` +
+    `WebGPU <span class="${gpu ? 'ok' : 'bad'}">${gpu ? 'rendered' : 'unavailable'}</span> · ` +
+    `${r.atlas.pathCommandsFromHbDraw} path commands from hb_font_draw_glyph, ` +
+    `${r.atlas.colourBitmapsFromHbOtColor} colour bitmap(s) from hb_ot_color_*`;
+
+  const rows = r.tests.map((t) => {
+    const detail = t.error ? t.error
+      : [t.text != null ? `"${t.text}"` : null,
+         t.codepoints != null ? `${t.codepoints} cp → ${t.glyphCount} glyphs` : null,
+         t.contextualSubstitutions != null ? `${t.contextualSubstitutions} contextual forms, ` +
+           `clusters ${t.clusters.join(' ')} (RTL visual order), ` +
+           `${t.zeroAdvanceMarks} ccmp mark` : null,
+         t.pairWidth != null ? `لا = ${t.pairGlyphs.join('+')} at ${t.pairWidth} units, ` +
+           `precomposed U+FEFB = ${t.precomposedWidth}` : null,
+         t.matraCameFirst != null ? `matra first: ${t.matraCameFirst}, ` +
+           `width-matched variant: ${t.matraIsVariant} (${t.shapedGlyphs.join(' ')})` : null,
+         t.kernedPairs != null ? `${t.kernedPairs} kerned pairs, ` +
+           t.pairs.map((p) => `${p.pair}${p.delta}`).join(' ') : null,
+         t.totalPathCommands != null ? `${t.totalPathCommands} path cmds, ` +
+           `${t.totalCurveCommands} curves` : null,
+         t.hasPng != null ? `CBDT/sbix PNG: ${t.hasPng}` : null,
+         t.subsetBytes ? `${t.sourceBytes} → ${t.subsetBytes} bytes` : null,
+         t.found ? `${t.featureCount} GSUB features` : null,
+         t.ascender != null ? `asc ${t.ascender} desc ${t.descender} upem ${t.upem}` : null,
+        ].filter(Boolean).join(' · ');
+    return `<tr><td class="${t.pass ? 'ok' : 'bad'}">${t.pass ? 'PASS' : 'FAIL'}</td>` +
+           `<td>${t.name}</td><td class="d">${detail}</td></tr>`;
+  }).join('');
+  $('results').innerHTML =
+    `<tr><th></th><th>assertion</th><th>observed</th></tr>${rows}`;
+  $('json').textContent = JSON.stringify(r, null, 2);
+}
+
+// The API the browser test driver calls.
+const ready = main().then((r) => {
+  window.__onetext.results = r;
+  window.__onetext.done = true;
+  return r;
+}).catch((e) => {
+  const r = { ok: false, fatal: String(e && e.stack || e) };
+  window.__onetext.results = r;
+  window.__onetext.done = true;
+  $('summary').innerHTML = `<span class="bad">fatal: ${e}</span>`;
+  return r;
+});
+
+window.__onetext = {
+  done: false,
+  results: null,
+  ready,
+  runTests: () => ready,
+  compareRenderers,
+  /** Shows one pane alone, so a screenshot can be attributed to one API. */
+  isolate: (which) => {
+    const panes = document.querySelectorAll('.pane');
+    panes[0].style.display = which === 'webgpu' ? 'none' : '';
+    panes[1].style.display = which === 'webgl2' ? 'none' : '';
+  },
+};
+</script>
+</body>
+</html>
