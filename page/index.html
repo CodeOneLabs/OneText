@@ -874,7 +874,7 @@ label.RestartReveal();</pre>
     'box.li6': '<b>IME에서 살아남는 입력 필드</b> 캐럿 자리에 그려지는 인라인 조합과 일본어 문절 하이라이트, 포커스가 바뀌어도 음절이 사라지거나 겹치지 않습니다. ' +
       'Input Manager, Input System, 모바일 소프트 키보드',
     'box.li7': '<b>허브</b> 폰트, 문자셋, 전후 커버리지를 보여주는 사전 임포트, 아틀라스 점유율과 예산 조언, 로케일별 오버플로를 잡는 문자열 갤러리, 렌더 가능성 린트 ' +
-      '닥터 — 종료 코드 1을 반환해 CI가 머지를 막습니다',
+      '닥터: 종료 코드 1을 반환해 CI가 머지를 막습니다',
     'cap.deco': '외곽선, 그림자, 글로우. 각 행은 머티리얼 하나, 캔버스 하나, 드로우 콜 하나입니다. <b>아랍어 줄이 핵심입니다. 외곽선이 이어진 윤곽을 그대로 따라갑니다. ' +
       '글리프별 외곽선은 이음매마다 자국이 남습니다.</b>',
     'cap.vertical': '세로쓰기(縦書き). 열은 오른쪽에서 왼쪽으로, 같은 줄바꿈·금칙 파이프라인을 90도 돌린 것, UAX #50에 따라 회전한 라틴, 열 옆에 붙는 루비. ' +
@@ -1770,7 +1770,7 @@ function buildDrift() {
   // One break per call: inserting one moves everything after it, so the rest
   // is re-measured rather than predicted. `budget` is the line count the block
   // may not exceed; pass null to ignore cost and go by the threshold alone.
-  // Candidates before `skip` are passed over — that is how the caller walks
+  // Candidates before `skip` are passed over; that is how the caller walks
   // past the ones a trial has already rejected.
   //
   // Returns the ordinal of the sentence end it broke at, -(ordinal + 1) if a

@@ -22,7 +22,7 @@
     background: var(--bg); color: var(--ink); font-family: var(--mono);
     font-size: 14px; line-height: 1.7; overflow-x: hidden;
   }
-  /* faint scanline grid — a report, not a poster */
+  /* faint scanline grid: a report, not a poster */
   body::before {
     content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.5;
     background-image: repeating-linear-gradient(0deg, rgba(126,231,180,0.035) 0 1px, transparent 1px 3px);
@@ -106,7 +106,7 @@
       <h1>Every writing system.<br><span>Every case, counted.</span></h1>
       <p class="lede">
         A free text engine for Unity uGUI. HarfBuzz shaping, the full bidirectional
-        algorithm, SDF rendering. Correctness is not a claim here — it is a number
+        algorithm, SDF rendering. Correctness is not a claim here; it is a number
         that runs in CI on every commit.
       </p>
       <div class="assert">
@@ -154,7 +154,7 @@
 <span class="g">[coverage]</span> shaped 159,631/159,631 codepoints, 177,400 glyphs, 0 threw; 53 s
 <span class="g">[coverage]</span> 155,496 of 159,631 have a glyph in 213 fonts (97.41 %)
 <span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed
-<span class="a">[coverage]</span> 4,135 uncovered (2.59 %) — no free font exists for these blocks yet</pre>
+<span class="a">[coverage]</span> 4,135 uncovered (2.59 %); no free font exists for these blocks yet</pre>
   </section>
 
 </div>

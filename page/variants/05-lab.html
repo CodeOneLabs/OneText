@@ -168,7 +168,7 @@
     <div>
       <h1>Turn the knobs.<br><span>Watch every script answer.</span></h1>
       <p class="lede">
-        A free text engine for Unity uGUI — HarfBuzz shaping, the full bidirectional
+        A free text engine for Unity uGUI. HarfBuzz shaping, the full bidirectional
         algorithm, UAX #29 segmentation, SDF rendering. Below is the parameter space it
         exposes, applied to every writing system at once.
       </p>
@@ -270,11 +270,11 @@
 <span class="g">[coverage]</span> shaped 159,631/159,631 codepoints, 177,400 glyphs, 0 threw; 53 s
 <span class="g">[coverage]</span> 155,496 of 159,631 have a glyph in 213 fonts (97.41 %)
 <span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed
-<span class="a">[coverage]</span> 4,135 uncovered (2.59 %) — no free font exists for these blocks yet</pre>
+<span class="a">[coverage]</span> 4,135 uncovered (2.59 %); no free font exists for these blocks yet</pre>
   </section>
 
   <footer>
-    OneText — free, open source, MIT · Unicode 17.0.0 · Unity 2021.3+<br>
+    OneText · free, open source, MIT · Unicode 17.0.0 · Unity 2021.3+<br>
     The wall above is typeset by your browser to show the parameter space; the numbers come from the
     engine's own test suite, and every one of them is reproducible from the repository.
   </footer>
@@ -282,7 +282,7 @@
 
 <script>
 (function () {
-  // group: rtl | brahmic | sea | cjk | other — the axis the filter cuts on.
+  // group: rtl | brahmic | sea | cjk | other. The axis the filter cuts on.
   // feat: what the engine has to do that a character-to-glyph map cannot.
   var CORPUS = [
     ["ar","Arabic","rtl","joining","العربية لغة جميلة ومعقدة في آن واحد"],
@@ -337,8 +337,8 @@
     ["pl","Polish","other","diacritics","Typografia jest sztuką składania tekstu"],
     ["cs","Czech","other","carons","Typografie je umění sazby písma"],
     ["tr","Turkish","other","dotted i","Tipografi bir yazı düzenleme sanatıdır"],
-    ["ru","Russian","other","cyrillic","Типографика — искусство оформления текста"],
-    ["uk","Ukrainian","other","cyrillic","Типографіка — мистецтво оформлення тексту"],
+    ["ru","Russian","other","cyrillic","Типографика есть искусство оформления текста"],
+    ["uk","Ukrainian","other","cyrillic","Типографіка є мистецтвом оформлення тексту"],
     ["sr","Serbian","other","cyrillic","Типографија је уметност слагања текста"],
     ["el","Greek","other","polytonic","Η τυπογραφία είναι τέχνη της στοιχειοθεσίας"],
     ["hy","Armenian","other","ligatures","Տպագրությունը գեղեցիկ արվեստ է"],
@@ -369,7 +369,7 @@
   }
 
   // Real UAX #29 segmentation, from the browser's own ICU. The engine runs the
-  // same algorithm against the same conformance data — this is the boundary set,
+  // same algorithm against the same conformance data; this is the boundary set,
   // not a stand-in for it.
   function units(text, locale, granularity) {
     var seg = segmenter(locale, granularity);
