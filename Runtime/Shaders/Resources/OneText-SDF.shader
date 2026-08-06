@@ -103,7 +103,7 @@ Shader "OneText/SDF"
                 float4 color : COLOR;
                 float4 uv : TEXCOORD0;    // xy = tile uv, z = layer, w = tile v-min
                 float4 decoA : TEXCOORD1; // outline R|G, outline B|width, shadow R|G, shadow B|A
-                float4 bounds : TEXCOORD2; // x = tile v-max, yz = tile u-min/u-max, w = 1 for colour
+                float4 bounds : TEXCOORD2; // x = tile v-max, yz = tile u-min/u-max, w = which atlas
                 float4 decoB : TEXCOORD3; // glow R|G, glow B|A, shadow dx|dy, shadow soft|glow radius
             };
 
@@ -208,6 +208,15 @@ Shader "OneText/SDF"
                 // per atlas would be a material per atlas, and one material is
                 // what keeps a line of text with an emoji and a precise word in
                 // it inside one draw call.
+                // 3: no atlas at all. The bar under a <u>, through an <s> or
+                // behind a <mark> is flat colour; there is no field to
+                // threshold and no picture to sample, so it is answered before
+                // anything else and never reaches a sampler. A fourth value of
+                // the discriminator rather than a second material, for the same
+                // reason colour and precise are: an underlined word has to
+                // batch with the sentence around it.
+                if (i.bounds.w > 2.5) return i.color;
+
                 float precise = step(1.5, i.bounds.w);
                 if (i.bounds.w > 0.5 && precise < 0.5)
                 {

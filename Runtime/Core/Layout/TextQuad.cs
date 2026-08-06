@@ -78,6 +78,16 @@ namespace OneText
         /// </summary>
         public bool IsPrecise;
 
+        /// <summary>
+        /// True if this tile is flat colour and samples no atlas at all: the
+        /// bar an underline, a strikethrough or a <c>&lt;mark&gt;</c> wash is
+        /// made of. It is a tile like any other so that reveal, effects and the
+        /// quad modifier reach it, and so that it stays in the same draw call
+        /// as the text it belongs to; only the fragment shader treats it
+        /// differently, and only by returning the colour it was handed.
+        /// </summary>
+        public bool IsSolid;
+
         /// <summary>Centre of the tile, the sane pivot for rotation and scaling.</summary>
         public Vector2 Center => Position + Size * 0.5f;
     }

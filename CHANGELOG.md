@@ -4,6 +4,30 @@
 
 ### Added
 
+- **`<u>`, `<s>` and `<mark>` now draw something.** All three parsed, set
+  their flag on the style, and were then read by nothing: the parser tests
+  went green while a reader saw no line and no highlight. They are geometry
+  now — a bar under the run for `<u>`, one through it for `<s>`, and the line
+  box filled behind it for `<mark=#rrggbbaa>`.
+
+  A bar is a tile in the same mesh as the letters, not a second graphic: it
+  takes the fourth value of the atlas discriminator the colour and precise
+  atlases already ride in (`3` means "no atlas, return the vertex colour"), so
+  an underlined word still batches with the sentence around it and costs no
+  extra vertex data. It is cut one glyph at a time rather than drawn as one
+  rectangle over the run, so the typewriter reveals it with the text and a
+  per-character effect moves it with the letter it belongs to. Thickness and
+  offset come from the face's own `post` and `OS/2` metrics through HarfBuzz,
+  with HarfBuzz's fallback for a face that omits them.
+
+  Down a column the face's numbers do not apply — they are measured from a
+  horizontal baseline and an upright glyph has none — so the bars are written
+  against the em box instead: the wash is the column, one em across and the
+  same em for every run in it; the line runs down beside it; the strikethrough
+  runs down the middle. A rotated run keeps the face's numbers, because its
+  frame turned and its baseline turned with it, and the two land close enough
+  together that a column of kana with Latin in it wears one unbroken line.
+
 - **No tofu, where the machine can help it.** A character that no font in the
   label's chain and no font in the project's chain covers is now drawn from a
   font the operating system has, instead of as a box. It is on by default

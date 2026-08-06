@@ -59,6 +59,23 @@ namespace OneText
         public int LineGap { get; private set; }
 
         /// <summary>
+        /// Where the underline stroke's top sits relative to the baseline, and
+        /// how thick it is, both in design units. The offset is negative for
+        /// every sane face: an underline is below the baseline.
+        /// </summary>
+        public int UnderlineOffset { get; private set; }
+
+        public int UnderlineThickness { get; private set; }
+
+        /// <summary>
+        /// The same two numbers for the strikethrough stroke, which sits above
+        /// the baseline and through the x-height.
+        /// </summary>
+        public int StrikeoutOffset { get; private set; }
+
+        public int StrikeoutThickness { get; private set; }
+
+        /// <summary>
         /// Bumped whenever the outlines change (variation settings), so
         /// rasterized-glyph caches can tell one instance of a variable font
         /// from another.
@@ -184,6 +201,30 @@ namespace OneText
                 Descender = -(int)(UnitsPerEm * 0.2f);
                 LineGap = 0;
             }
+
+            UnderlineOffset = Metric(HarfBuzzApi.HB_OT_METRICS_TAG_UNDERLINE_OFFSET);
+            UnderlineThickness = Metric(HarfBuzzApi.HB_OT_METRICS_TAG_UNDERLINE_SIZE);
+            StrikeoutOffset = Metric(HarfBuzzApi.HB_OT_METRICS_TAG_STRIKEOUT_OFFSET);
+            StrikeoutThickness = Metric(HarfBuzzApi.HB_OT_METRICS_TAG_STRIKEOUT_SIZE);
+
+            // HarfBuzz's fallback covers a missing table, not a present one
+            // that says nothing useful; a face carrying an explicit zero
+            // thickness would otherwise draw a line of no height. One
+            // twentieth of an em is the shape of the value real faces report
+            // (Noto Sans says 50/1000).
+            int floor = Math.Max(1, (int)(UnitsPerEm / 20));
+            if (UnderlineThickness <= 0) UnderlineThickness = floor;
+            if (StrikeoutThickness <= 0) StrikeoutThickness = floor;
+            // A strikeout at the baseline is not a strikeout. Roughly half the
+            // x-height is where one belongs, and the ascender is the only
+            // stand-in for an x-height this far down.
+            if (StrikeoutOffset <= 0) StrikeoutOffset = (int)(Ascender * 0.32f);
+        }
+
+        private int Metric(uint tag)
+        {
+            HarfBuzzApi.hb_ot_metrics_get_position_with_fallback(Font, tag, out int position);
+            return position;
         }
 
         /// <summary>True if the font has a glyph for this codepoint.</summary>

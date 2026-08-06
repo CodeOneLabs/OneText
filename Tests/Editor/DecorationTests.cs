@@ -28,6 +28,8 @@ namespace OneText.Tests
     {
         private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
         private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts/ColorGlyphs.ttf";
+        private const string JapaneseFontPath =
+            "Packages/com.onetext.core/Tests/CoverageFonts~/NotoSansCJKjp-Regular.otf";
 
         private readonly List<Object> _created = new List<Object>();
 
@@ -384,6 +386,205 @@ namespace OneText.Tests
                 }
             }
             Assert.IsTrue(sawColour && sawMono, "the run did not exercise both paths");
+        }
+
+        // ------------------------------------------------------ line decorations
+
+        /// <summary>The bars a label drew, in draw order.</summary>
+        private static List<TextQuad> Bars(OneTextLabel label)
+        {
+            var bars = new List<TextQuad>();
+            foreach (var quad in label.DrawnQuads)
+                if (quad.IsSolid) bars.Add(quad);
+            return bars;
+        }
+
+        [Test]
+        public void UnderlineTag_DrawsABarUnderTheBaseline()
+        {
+            var label = NewLabel("<u>under</u>");
+            Draw(label);
+
+            var bars = Bars(label);
+            Assert.Greater(bars.Count, 0,
+                "the parser set the flag and nothing drew it, which is the whole bug");
+            foreach (var bar in bars)
+            {
+                Assert.Less(bar.Position.y + bar.Size.y, bar.Baseline,
+                    "an underline sits below the baseline, in full");
+                Assert.Greater(bar.Size.y, 0f);
+                Assert.Greater(bar.Size.x, 0f);
+            }
+        }
+
+        [Test]
+        public void StrikethroughTag_DrawsABarThroughTheText()
+        {
+            var label = NewLabel("<s>struck</s>");
+            Draw(label);
+
+            var bars = Bars(label);
+            Assert.Greater(bars.Count, 0);
+            foreach (var bar in bars)
+                Assert.Greater(bar.Position.y, bar.Baseline,
+                    "a strikethrough crosses the x-height, not the descender");
+        }
+
+        [Test]
+        public void MarkTag_WashesBehindTheTextInItsOwnColour()
+        {
+            var label = NewLabel("<mark=#ffdd2266>lit</mark>");
+            Draw(label);
+
+            var quads = label.DrawnQuads;
+            var bars = Bars(label);
+            Assert.Greater(bars.Count, 0);
+            foreach (var bar in bars)
+            {
+                Assert.AreEqual(new Color32(0xff, 0xdd, 0x22, 0x66), bar.Color);
+                Assert.Less(bar.Position.y, bar.Baseline);
+                Assert.Greater(bar.Position.y + bar.Size.y, bar.Baseline,
+                    "the wash covers the line box, so the baseline runs through it");
+            }
+
+            // Order is the whole of "behind": the list is the draw order, and
+            // every wash has to be down before the first glyph goes over it.
+            bool glyphSeen = false;
+            foreach (var quad in quads)
+            {
+                if (!quad.IsSolid) { glyphSeen = true; continue; }
+                Assert.IsFalse(glyphSeen, "a wash was drawn on top of the text it highlights");
+            }
+        }
+
+        [Test]
+        public void Bars_AreSolidAndSampleNoAtlas()
+        {
+            var label = NewLabel("<u><mark>both</mark></u>");
+            var mesh = Draw(label);
+
+            var bounds = new List<Vector4>();
+            mesh.GetUVs(2, bounds);
+            var quads = label.DrawnQuads;
+            bool sawBar = false, sawGlyph = false;
+            for (int q = 0; q < quads.Count; q++)
+            {
+                // The fourth value of the discriminator the colour and precise
+                // atlases already ride in; the shader answers it before it
+                // reaches a sampler.
+                if (quads[q].IsSolid)
+                {
+                    sawBar = true;
+                    Assert.AreEqual(3f, bounds[q * 4].w, 1e-6f);
+                }
+                else
+                {
+                    sawGlyph = true;
+                    Assert.AreEqual(0f, bounds[q * 4].w, 1e-6f);
+                }
+            }
+            Assert.IsTrue(sawBar && sawGlyph);
+        }
+
+        [Test]
+        public void UnderlinedAndPlainLabels_ShareOneMaterial()
+        {
+            // The same promise the outline keeps: a bar is a tile in the same
+            // mesh, not a second graphic and not a second material.
+            var canvas = NewCanvas();
+            var plain = NewLabel(canvas, "plain");
+            var underlined = NewLabel(canvas, "<u>under</u>");
+            foreach (var label in new[] { plain, underlined }) Draw(label);
+
+            Assert.AreSame(plain.materialForRendering, underlined.materialForRendering);
+        }
+
+        [Test]
+        public void Bars_AreCutPerGlyph_SoTheTypewriterRevealsThem()
+        {
+            var label = NewLabel("<u>abcdef</u>");
+            Draw(label);
+            int whole = Bars(label).Count;
+            Assert.Greater(whole, 1, "one rectangle over the run cannot be revealed");
+
+            label.MaxVisibleGraphemes = 2;
+            Draw(label);
+            Assert.AreEqual(2, Bars(label).Count,
+                "the bar under a letter that has not had its turn was drawn anyway");
+        }
+
+        [Test]
+        public void Bars_AbutWithoutGapOrOverlap()
+        {
+            var label = NewLabel("<u>iiiimmmm</u>");
+            Draw(label);
+
+            var bars = Bars(label);
+            Assert.Greater(bars.Count, 1);
+            for (int i = 1; i < bars.Count; i++)
+                Assert.AreEqual(bars[i - 1].Position.x + bars[i - 1].Size.x, bars[i].Position.x,
+                    1e-3f, "a seam in an underline is visible at any size");
+        }
+
+        [Test]
+        public void PlainText_DrawsNoBars()
+        {
+            var label = NewLabel("plain");
+            Draw(label);
+            Assert.AreEqual(0, Bars(label).Count);
+        }
+
+        [Test]
+        public void UnderlineThickness_ComesFromTheFace()
+        {
+            // Noto Sans says 50/1000 of an em at an offset of -100; drawn at
+            // 48pt that is 2.4 units of bar with its top 4.8 below the
+            // baseline. A hardcoded fraction would pass a "there is a bar"
+            // test and be wrong on every other face.
+            var label = NewLabel("<u>x</u>");
+            Draw(label);
+
+            var bar = Bars(label)[0];
+            Assert.AreEqual(48f * 0.05f, bar.Size.y, 1e-3f);
+            Assert.AreEqual(bar.Baseline - 48f * 0.1f, bar.Position.y + bar.Size.y, 1e-3f);
+        }
+
+        [Test]
+        public void InAColumn_TheBarsAreWrittenAgainstTheEmBox()
+        {
+            // <post> and <OS/2> measure from a horizontal baseline, and an
+            // upright glyph in a column has none: it is centred on the column.
+            // Taking the face's numbers literally puts the underline a tenth
+            // of an em left of centre, which is through the character rather
+            // than beside it, and the wash off to one side of the text it is
+            // supposed to be behind.
+            var label = NewLabel("<mark><u>あ</u></mark>", JapaneseFontPath);
+            label.WritingMode = TextWritingMode.VerticalRightToLeft;
+            label.Language = "ja";
+            Draw(label);
+
+            var bars = Bars(label);
+            Assert.AreEqual(2, bars.Count, "one wash and one line, both over the single kana");
+            var wash = bars[0];
+            var line = bars[1];
+            float em = label.FontSize;
+
+            // In a column the bar's Baseline is the column's centre line.
+            Assert.AreEqual(wash.Baseline - em * 0.5f, wash.Position.x, 1e-3f);
+            Assert.AreEqual(em, wash.Size.x, 1e-3f, "the wash is the em box, not the line box");
+            Assert.LessOrEqual(line.Position.x + line.Size.x, wash.Position.x + 1e-3f,
+                "the line runs down beside the character, not through it");
+        }
+
+        [Test]
+        public void FaceMetrics_AreReadForUnderlineAndStrikeout()
+        {
+            using var font = FontData.Load(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)));
+            Assert.AreEqual(1000u, font.UnitsPerEm);
+            Assert.AreEqual(-100, font.UnderlineOffset);
+            Assert.AreEqual(50, font.UnderlineThickness);
+            Assert.AreEqual(322, font.StrikeoutOffset);
+            Assert.AreEqual(50, font.StrikeoutThickness);
         }
 
         // Exactly what OneText-SDF.shader does, so a change to one that is not

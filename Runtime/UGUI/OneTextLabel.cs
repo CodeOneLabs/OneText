@@ -1252,6 +1252,217 @@ namespace OneText.UGUI
             }
         }
 
+        /// <summary>
+        /// Where a run's glyphs start and how their frame is turned. Down a
+        /// column the block axis runs leftward from the block's right edge, and
+        /// a rotated run's own baseline sits off the centre line by half its
+        /// line box, both of which are arithmetic on the same two numbers the
+        /// horizontal path already uses.
+        /// </summary>
+        private RunFrame FrameOf(in TextRun run, bool vertical, float scale) => vertical
+            ? new RunFrame(
+                _blockOrigin.x - run.Baseline - run.CrossAxisBaselineOffset + run.BaselineShift,
+                _blockOrigin.y - run.X, scale, true, run.Rotated)
+            : new RunFrame(_blockOrigin.x + run.X,
+                _blockOrigin.y - run.Baseline + run.BaselineShift, scale, false, false);
+
+        /// <summary>
+        /// The bars markup asks for that no glyph carries: the wash behind a
+        /// <c>&lt;mark&gt;</c>, the line under a <c>&lt;u&gt;</c>, the line
+        /// through an <c>&lt;s&gt;</c>.
+        ///
+        /// Two passes around the glyph loop rather than one folded into it,
+        /// because <see cref="_quads"/> is drawn in order and that order is the
+        /// whole of what "behind" means: a wash is only a wash with the text on
+        /// top of it, and a line is only a line drawn over the text. Between
+        /// them nothing else changes; a bar is an ordinary tile, so reveal,
+        /// effects and a custom modifier reach it the way they reach a letter.
+        /// </summary>
+        private void EmitBands(bool vertical, bool behind)
+        {
+            int runIndex = -1;
+            foreach (var run in _layout.Runs)
+            {
+                runIndex++;
+                var style = run.Style;
+                bool wanted = behind
+                    ? style.HasMark
+                    : style.Underline || style.Strikethrough;
+                if (!wanted) continue;
+
+                var font = run.Font;
+                if (font == null || font.UnitsPerEm == 0) continue;
+
+                float runSize = run.FontSize > 0f ? run.FontSize : EffectiveFontSize;
+                var frame = FrameOf(run, vertical, runSize / font.UnitsPerEm);
+
+                // A run set upright in a column is the one case where the face's
+                // own numbers do not apply. post and OS/2 measure from a
+                // horizontal baseline, and an upright glyph has none: it is
+                // centred on the column, so "a tenth of an em below the
+                // baseline" lands a tenth of an em left of centre, which is
+                // through the character rather than beside it. What the three
+                // bars mean in a column is a different sentence in the same
+                // language, and it is written against the em box.
+                //
+                // A rotated run needs none of this. Its whole frame turns with
+                // its glyphs, so its own baseline turned with it and the face's
+                // numbers are about that baseline exactly as they were.
+                bool upright = vertical && !run.Rotated;
+                float halfEm = font.UnitsPerEm * 0.5f;
+
+                if (behind)
+                {
+                    // Across the page the wash covers the run's own line box,
+                    // which is the run's font at the run's size and not the
+                    // line's: a <size=44> word inside a 28pt sentence is
+                    // highlighted to its own height, which is what a reader
+                    // expects to see.
+                    if (!vertical)
+                    {
+                        EmitBand(run, frame, runIndex,
+                            font.Descender, font.Ascender, style.MarkColor);
+                        continue;
+                    }
+                    // Down a column the wash is the column, one em across and
+                    // the same em for every run in it. Line boxes would be
+                    // honest and would look wrong: Latin's is a third of an em
+                    // wider than the kana's beside it, and a highlight that
+                    // steps in and out at every script change reads as a
+                    // rendering fault. A rotated run's em is centred on its
+                    // line box, because that is where the column centred it.
+                    float centre = run.Rotated
+                        ? (font.Ascender + font.Descender) * 0.5f
+                        : 0f;
+                    EmitBand(run, frame, runIndex,
+                        centre - halfEm, centre + halfEm, style.MarkColor);
+                    continue;
+                }
+
+                // The tag's colour, not the label's: the label's is multiplied
+                // in at emit for a bar exactly as it is for a letter, so a
+                // fading label fades its own underline.
+                var color = style.HasColor ? style.Color : new Color32(255, 255, 255, 255);
+                if (style.Underline)
+                {
+                    // Beside the em box, on the left of the column: the side a
+                    // rotated run's own underline turns onto, and within a
+                    // twentieth of an em of where it lands, so a column of kana
+                    // with a stretch of Latin in it wears one unbroken line
+                    // rather than a line that changes sides halfway down. The
+                    // traditional Japanese sideline is on the right, but a line
+                    // that jumps sides mid-column is worse than one on the
+                    // unexpected side.
+                    float thickness = font.UnderlineThickness;
+                    if (upright)
+                        EmitBand(run, frame, runIndex, -halfEm - thickness, -halfEm, color);
+                    else
+                        EmitBand(run, frame, runIndex,
+                            font.UnderlineOffset - thickness, font.UnderlineOffset, color);
+                }
+                if (style.Strikethrough)
+                {
+                    float thickness = font.StrikeoutThickness;
+                    if (upright)
+                        EmitBand(run, frame, runIndex,
+                            thickness * -0.5f, thickness * 0.5f, color);
+                    else
+                        EmitBand(run, frame, runIndex,
+                            font.StrikeoutOffset - thickness, font.StrikeoutOffset, color);
+                }
+            }
+        }
+
+        /// <summary>
+        /// One bar across a run, between two offsets from its baseline in font
+        /// units.
+        ///
+        /// Emitted a glyph at a time rather than as one rectangle over the
+        /// run's whole advance, which is what it looks like on screen: the
+        /// segments abut exactly because each is one glyph's advance and the
+        /// pen is the same pen the glyphs were placed with. Cut per glyph, a
+        /// bar can be revealed with the typewriter, faded by a per-character
+        /// effect and moved by a modifier along with the letter it belongs to,
+        /// none of which one rectangle could do.
+        /// </summary>
+        private void EmitBand(in TextRun run, in RunFrame frame, int runIndex,
+            float acrossMin, float acrossMax, Color32 color)
+        {
+            float thickness = acrossMax - acrossMin;
+            if (thickness <= 0f || color.a == 0) return;
+
+            float pen = 0f;
+            for (int i = run.GlyphStart; i < run.GlyphStart + run.GlyphCount; i++)
+            {
+                float advance = _layout.Glyphs[i].XAdvance;
+                float start = pen;
+                pen += advance;
+                // A combining mark advances nothing; a bar of no width is four
+                // vertices nobody can see.
+                if (advance <= 0f) continue;
+
+                // Horizontal text, and a rotated column whose whole frame turns
+                // with its glyphs, place the bar the way a glyph's ink box is
+                // placed. Upright in a column the along axis runs downward, so
+                // the box has to be hung from the pen rather than raised from
+                // it, and its two extents swap.
+                Vector2 origin, size;
+                if (frame.Vertical && !frame.Rotated)
+                {
+                    origin = new Vector2(0f, -advance);
+                    size = new Vector2(thickness, advance);
+                }
+                else
+                {
+                    origin = Vector2.zero;
+                    size = new Vector2(advance, thickness);
+                }
+
+                frame.Place(start, acrossMin, origin, size,
+                    out var position, out var placed, out float rotation);
+                var graphemes = BandClusterRange(i, run);
+                _quads.Add(new TextQuad
+                {
+                    Position = position,
+                    Size = placed,
+                    Rotation = rotation,
+                    Color = color,
+                    FirstGrapheme = graphemes.First,
+                    LastGrapheme = graphemes.Last,
+                    RunIndex = runIndex,
+                    Baseline = frame.Baseline,
+                    Style = run.Style,
+                    IsSolid = true,
+                });
+            }
+        }
+
+        /// <summary>
+        /// The grapheme clusters one glyph covers, found without leaving the
+        /// run it came from.
+        ///
+        /// Same question <see cref="ClusterRange"/> answers, and the same
+        /// answer for a bar: a run's clusters are inside its own text range, so
+        /// its own glyphs are the only ones that can end this one. The wider
+        /// scan exists for ruby, whose clusters point at the base it annotates;
+        /// paying for it per glyph would make an underlined paragraph
+        /// quadratic in its own length.
+        /// </summary>
+        private (int First, int Last) BandClusterRange(int glyphIndex, in TextRun run)
+        {
+            int start = _layout.Glyphs[glyphIndex].Cluster;
+            int end = run.TextStart + run.TextLength;
+            // Ascending in logical order, descending in a right-to-left run's
+            // visual one, so both neighbours are checked and the nearest one
+            // above wins.
+            for (int i = run.GlyphStart; i < run.GlyphStart + run.GlyphCount; i++)
+            {
+                int other = _layout.Glyphs[i].Cluster;
+                if (other > start && other < end) end = other;
+            }
+            return (_layout.GraphemeAt(start), _layout.GraphemeAt(Mathf.Max(start, end - 1)));
+        }
+
         private void EmitColorRun(in TextRun run, FontData font, float runSize, float scale,
             in RunFrame frame, Color32 runColor, int runIndex, GlyphAtlas sdfAtlas)
         {
@@ -1544,7 +1755,7 @@ namespace OneText.UGUI
                 // before it ever looks at these channels, so packing them would
                 // be arithmetic nobody reads. Zeroed rather than skipped, so
                 // what the mesh says matches what gets drawn.
-                var decoration = quad.IsColor || quad.Decoration <= 0
+                var decoration = quad.IsColor || quad.IsSolid || quad.Decoration <= 0
                         || quad.Decoration >= _packedDecorations.Count
                     ? default
                     : _packedDecorations[quad.Decoration];
@@ -2126,6 +2337,12 @@ namespace OneText.UGUI
             _decorations.Add(TextDecoration.None);
             _packedDecorations.Clear();
             _packedDecorations.Add(default);
+
+            // Every wash first, before any glyph: a <mark> is behind all of the
+            // text and not merely behind its own run, which is the difference
+            // an italic overhanging into the next run would otherwise show.
+            EmitBands(vertical, behind: true);
+
             int runIndex = 0;
             foreach (var run in _layout.Runs)
             {
@@ -2150,18 +2367,7 @@ namespace OneText.UGUI
                 // apart stays its own tile so the cache survives text edits.
                 float mergeGapUnits = GlyphClusters.DefaultMergeGapUnits(font);
 
-                // The run's origin, and how its glyph frame is turned. Down a
-                // column the block axis runs leftward from the block's right
-                // edge, and a rotated run's own baseline sits off the centre
-                // line by half its line box, both of which are arithmetic on
-                // the same two numbers the horizontal path already uses.
-                var frame = vertical
-                    ? new RunFrame(
-                        _blockOrigin.x - run.Baseline - run.CrossAxisBaselineOffset
-                            + run.BaselineShift,
-                        _blockOrigin.y - run.X, scale, true, run.Rotated)
-                    : new RunFrame(_blockOrigin.x + run.X,
-                        _blockOrigin.y - run.Baseline + run.BaselineShift, scale, false, false);
+                var frame = FrameOf(run, vertical, scale);
 
                 // A sprite run has no glyphs to look up: its one synthetic
                 // glyph is an advance, and the picture comes from the sheet.
@@ -2235,6 +2441,11 @@ namespace OneText.UGUI
                 }
                 runIndex++;
             }
+
+            // And the lines last, over everything: an underline is drawn on top
+            // of the descender it crosses, which is what every renderer that
+            // does not carve the glyph out of the stroke does.
+            EmitBands(vertical, behind: false);
 
             // The quads are now current for this layout and these atlases;
             // arming the cache here, at the end of the build, is what lets the
@@ -2395,7 +2606,7 @@ namespace OneText.UGUI
         /// keeps all three in one draw call.
         /// </summary>
         private static float AtlasOf(in TextQuad quad) =>
-            quad.IsColor ? 1f : quad.IsPrecise ? 2f : 0f;
+            quad.IsSolid ? 3f : quad.IsColor ? 1f : quad.IsPrecise ? 2f : 0f;
 
         /// <summary>
         /// The decoration parameters as the two vertex channels carry them.

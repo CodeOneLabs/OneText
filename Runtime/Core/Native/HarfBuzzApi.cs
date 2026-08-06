@@ -236,6 +236,38 @@ namespace OneText.Native
         internal static extern int hb_font_get_glyph_extents(IntPtr font, uint glyph,
             out HBGlyphExtents extents);
 
+        // --- metrics outside the line box ---
+
+        /// <summary>
+        /// One OpenType metric in font units, synthesized when the table that
+        /// should carry it does not. The "_with_fallback" half matters: the
+        /// four metrics read through here live in <c>post</c> and <c>OS/2</c>,
+        /// both of which a subset or a bitmap-only face may omit, and a zero
+        /// underline thickness draws nothing at all. There is no return value
+        /// to check because there is no failure: something always comes back.
+        /// </summary>
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_ot_metrics_get_position_with_fallback",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_ot_metrics_get_position_with_fallback(IntPtr font,
+            uint metricsTag, out int position);
+
+        /// <summary>
+        /// <c>hb_ot_metrics_tag_t</c>, in the same packed-four-character form
+        /// as every other OpenType tag. An offset is measured from the baseline
+        /// and names the top of the stroke; a size is its thickness.
+        /// </summary>
+        internal const uint HB_OT_METRICS_TAG_UNDERLINE_SIZE =
+            ('u' << 24) | ('n' << 16) | ('d' << 8) | 's';
+
+        internal const uint HB_OT_METRICS_TAG_UNDERLINE_OFFSET =
+            ('u' << 24) | ('n' << 16) | ('d' << 8) | 'o';
+
+        internal const uint HB_OT_METRICS_TAG_STRIKEOUT_SIZE =
+            ('s' << 24) | ('t' << 16) | ('r' << 8) | 's';
+
+        internal const uint HB_OT_METRICS_TAG_STRIKEOUT_OFFSET =
+            ('s' << 24) | ('t' << 16) | ('r' << 8) | 'o';
+
         // --- variable fonts ---
 
         [DllImport(Lib, EntryPoint = HbPrefix + "hb_ot_var_has_data",
