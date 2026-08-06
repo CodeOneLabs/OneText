@@ -9,7 +9,7 @@ namespace OneText.Editor
     /// <summary>
     /// Inspector for <see cref="OneTextLabel"/>.
     ///
-    /// The text area stays on top — it is what a label is — and everything
+    /// The text area stays on top (it is what a label is) and everything
     /// else lives in four tabs: Style, Layout, Animation, Interaction. Tabs
     /// rather than one long scroll because most of what this engine can do
     /// was invisible in the flat list: named styles, sprite sheets, kinsoku,
@@ -26,8 +26,10 @@ namespace OneText.Editor
         private SerializedProperty _text, _fontAssetProperty, _fallbackFonts, _fontSize;
         private SerializedProperty _style, _namedStyles, _namedFonts, _sprites;
         private SerializedProperty _alignment, _verticalAlignment, _wrap, _overflow, _lineSpacing;
+        private SerializedProperty _writingMode;
         private SerializedProperty _language, _kinsoku, _cjkLatinSpacing, _punctuationCompression;
-        private SerializedProperty _richText, _linkClicked, _graphemeRevealed;
+        private SerializedProperty _rubyScale;
+        private SerializedProperty _richText, _precise, _linkClicked, _graphemeRevealed;
         private SerializedProperty _animateProperty, _maxVisibleGraphemes;
         private SerializedProperty _revealGranularity, _charactersPerSecond, _punctuationDelays;
         private SerializedProperty _characterRevealed, _revealComplete;
@@ -53,6 +55,7 @@ namespace OneText.Editor
             _namedStyles = serializedObject.FindProperty("_namedStyles");
             _namedFonts = serializedObject.FindProperty("_namedFonts");
             _sprites = serializedObject.FindProperty("_sprites");
+            _writingMode = serializedObject.FindProperty("_writingMode");
             _alignment = serializedObject.FindProperty("_alignment");
             _verticalAlignment = serializedObject.FindProperty("_verticalAlignment");
             _wrap = serializedObject.FindProperty("_wrap");
@@ -62,7 +65,9 @@ namespace OneText.Editor
             _kinsoku = serializedObject.FindProperty("_kinsoku");
             _cjkLatinSpacing = serializedObject.FindProperty("_cjkLatinSpacing");
             _punctuationCompression = serializedObject.FindProperty("_punctuationCompression");
+            _rubyScale = serializedObject.FindProperty("_rubyScale");
             _richText = serializedObject.FindProperty("_richText");
+            _precise = serializedObject.FindProperty("_precise");
             _linkClicked = serializedObject.FindProperty("_linkClicked");
             _graphemeRevealed = serializedObject.FindProperty("_graphemeRevealed");
             _animateProperty = serializedObject.FindProperty("_animate");
@@ -107,7 +112,7 @@ namespace OneText.Editor
             serializedObject.ApplyModifiedProperties();
 
             // Keeps the clock readout live during a preview without asking the
-            // whole editor to repaint — this window only.
+            // whole editor to repaint: this window only.
             if (_previewing) Repaint();
         }
 
@@ -141,17 +146,22 @@ namespace OneText.Editor
             EditorGUILayout.LabelField("Styles", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(_style, new GUIContent("Base style",
                 "A style asset applied to the whole label. Editing the asset updates " +
-                "every label that references it — themes are a style swap."));
+                "every label that references it; themes are a style swap."));
             EditorGUILayout.PropertyField(_namedStyles, new GUIContent("Named styles",
                 "Styles <style=name> can reach from markup."), true);
             EditorGUILayout.PropertyField(_namedFonts, new GUIContent("Named fonts",
                 "Fonts <font=name> can reach from markup."), true);
             EditorGUILayout.PropertyField(_sprites, new GUIContent("Sprite sheet",
                 "Sheet for inline <sprite=name> icons. Drawn through the same " +
-                "atlas and material as text — no extra draw call."));
+                "atlas and material as text: no extra draw call."));
 
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField("Rendering", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(_precise, new GUIContent("Precise (MSDF)",
+                "Multi-channel distance field. Use for large text or sharp corners/curves; " +
+                "costs more atlas memory: four bytes a texel instead of one, in an atlas " +
+                "of its own. Off, the label renders through the ordinary single-channel " +
+                "SDF, which is what body text wants."));
             if (!_richText.boolValue)
                 EditorGUILayout.HelpBox("Decoration tags need Rich text on.", MessageType.Info);
             else if (targets.Length == 1)
@@ -161,8 +171,28 @@ namespace OneText.Editor
 
         private void DrawLayoutTab()
         {
-            EditorGUILayout.PropertyField(_alignment, new GUIContent("Horizontal"));
-            EditorGUILayout.PropertyField(_verticalAlignment, new GUIContent("Vertical"));
+            EditorGUILayout.PropertyField(_writingMode, new GUIContent("Writing mode",
+                "Horizontal, or 縦書き: characters top to bottom, columns right to left. " +
+                "CJK stands upright and Latin turns ninety degrees (UAX #50); the font's " +
+                "vertical forms and vertical advances come from its vert and vmtx tables."));
+            bool vertical = _writingMode.enumValueIndex ==
+                            (int)TextWritingMode.VerticalRightToLeft;
+            // The two alignments turn with the text: one places it along its
+            // line or column, the other places the stack of them across the
+            // box. Relabelled rather than reordered, so the inspector says
+            // which is which instead of leaving the reader to work it out from
+            // a label that now means the other axis.
+            EditorGUILayout.PropertyField(_alignment, new GUIContent(
+                vertical ? "Along column" : "Horizontal",
+                vertical
+                    ? "Where the text sits in its column: Left is the top, Right the bottom."
+                    : null));
+            EditorGUILayout.PropertyField(_verticalAlignment, new GUIContent(
+                vertical ? "Across columns" : "Vertical",
+                vertical
+                    ? "Where the columns sit in the box: Top is the right edge, which is " +
+                      "where a right-to-left column stack starts."
+                    : null));
             EditorGUILayout.PropertyField(_wrap);
             EditorGUILayout.PropertyField(_overflow);
             EditorGUILayout.PropertyField(_lineSpacing, new GUIContent("Line spacing"));
@@ -179,13 +209,26 @@ namespace OneText.Editor
                 "Automatic thin space where CJK and Latin text meet."));
             EditorGUILayout.PropertyField(_punctuationCompression, new GUIContent("Punctuation compression",
                 "Narrows full-width punctuation where it doubles up."));
+            EditorGUILayout.PropertyField(_rubyScale, new GUIContent("Ruby size",
+                "Size of a <ruby=…> annotation as a fraction of the text it annotates. " +
+                "Half is what Japanese typesetting specs ask for. The line grows to make " +
+                "room, and base and annotation never split across a line break."));
+            if (!_richText.boolValue)
+                EditorGUILayout.HelpBox("Ruby needs Rich text on.", MessageType.Info);
+            if (vertical)
+            {
+                EditorGUILayout.HelpBox(
+                    "Vertical text is read-only rendering. Tate-chu-yoko, a vertical caret " +
+                    "and bidi inside a column are not implemented; an input field stays " +
+                    "horizontal.", MessageType.Info);
+            }
         }
 
         private void DrawAnimationTab()
         {
             EditorGUILayout.PropertyField(_animateProperty, new GUIContent("Animate",
                 "Advance the animation clock automatically in play mode. Off, " +
-                "drive AnimationTime yourself — a paused game pauses its text."));
+                "drive AnimationTime yourself; a paused game pauses its text."));
 
             if (!_richText.boolValue)
             {
@@ -202,7 +245,7 @@ namespace OneText.Editor
             EditorGUILayout.LabelField("Typewriter", EditorStyles.boldLabel);
             DrawReveal();
             EditorGUILayout.PropertyField(_characterRevealed, new GUIContent("On character revealed",
-                "Fired once per revealed unit, under the granularity above — one " +
+                "Fired once per revealed unit, under the granularity above: one " +
                 "event for 한, not three."));
             EditorGUILayout.PropertyField(_revealComplete, new GUIContent("On reveal complete",
                 "Fired once when the text is fully revealed, including after SkipToEnd()."));
@@ -229,13 +272,13 @@ namespace OneText.Editor
         /// <summary>
         /// The effect table: one row per built-in effect, one column per tag
         /// parameter. The name toggles the tag around the whole text; the
-        /// cells show the tag's values — defaults greyed in until a cell is
+        /// cells show the tag's values: defaults greyed in until a cell is
         /// edited, dashes where an effect does not read that parameter. The
         /// tag string in the text stays the truth; this is a window onto it.
         /// </summary>
         private void DrawEffectToggles()
         {
-            EditorGUILayout.LabelField("Effects (wrap whole text — or tag a span in the text yourself)",
+            EditorGUILayout.LabelField("Effects (wrap whole text, or tag a span in the text yourself)",
                 EditorStyles.miniBoldLabel);
 
             var wraps = PeelWraps(_text.stringValue, out string core);
@@ -305,7 +348,7 @@ namespace OneText.Editor
         {
             // The text area may still hold keyboard focus, and a focused IMGUI
             // field writes its own buffer back over the property on the next
-            // frame — silently undoing this edit. Commit and release it first.
+            // frame, silently undoing this edit. Commit and release it first.
             GUIUtility.keyboardControl = 0;
             EditorGUIUtility.editingTextField = false;
             for (int i = wraps.Count - 1; i >= 0; i--)
@@ -316,13 +359,13 @@ namespace OneText.Editor
         /// <summary>
         /// One table cell. Unused parameters draw as a dash; unset ones show
         /// the default the tag will run with. Editing a cell back to exactly
-        /// the default un-sets it — the tag stays as short as what it says.
+        /// the default un-sets it; the tag stays as short as what it says.
         /// </summary>
         private static float ParamCell(bool used, float value, float fallback, ref bool changed)
         {
             if (!used)
             {
-                GUILayout.Label("—", EditorStyles.centeredGreyMiniLabel, GUILayout.Width(CellWidth));
+                GUILayout.Label("-", EditorStyles.centeredGreyMiniLabel, GUILayout.Width(CellWidth));
                 return float.NaN;
             }
             float shown = float.IsNaN(value) ? fallback : value;
@@ -334,7 +377,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// The shortest tag argument string meaning these values. Invariant
-        /// culture, because the parser reads invariant — a comma-decimal
+        /// culture, because the parser reads invariant; a comma-decimal
         /// locale must not write tags the runtime cannot read back.
         /// </summary>
         private static string BuildArgs(in TextEffectParameters p)
@@ -356,18 +399,18 @@ namespace OneText.Editor
         /// <summary>
         /// The decoration table, built the same way the effect table is: the
         /// name toggles the tag around the whole text, the cells show what the
-        /// tag will run with — defaults greyed in until a cell is edited, dashes
+        /// tag will run with: defaults greyed in until a cell is edited, dashes
         /// where a decoration does not read that column. The tag string in the
         /// text stays the truth; this is a window onto it.
         ///
         /// Which is the entire point of the feature being data. This table can
         /// exist at all because a decoration is nine numbers in a tag rather
-        /// than a material preset — there is no asset to create, nothing to
+        /// than a material preset; there is no asset to create, nothing to
         /// assign, and turning one on cannot cost a draw call.
         /// </summary>
         private void DrawDecorationTable()
         {
-            EditorGUILayout.LabelField("Decorations (wrap whole text — or tag a span in the text yourself)",
+            EditorGUILayout.LabelField("Decorations (wrap whole text, or tag a span in the text yourself)",
                 EditorStyles.miniBoldLabel);
 
             var wraps = PeelWraps(_text.stringValue, out string core);
@@ -400,8 +443,8 @@ namespace OneText.Editor
                 using (new EditorGUI.DisabledScope(at < 0))
                 {
                     var edited = current;
-                    // The outline's alpha is not carried to the shader — the
-                    // channel budget spends that byte on its width — so it is
+                    // The outline's alpha is not carried to the shader (the
+                    // channel budget spends that byte on its width), so it is
                     // not offered here either. Showing a swatch whose alpha does
                     // nothing is worse than showing none.
                     bool alpha = name != "outline";
@@ -461,7 +504,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// One decoration cell. Unlike the effect table's, a value here is never
-        /// "unset" — a decoration tag's arguments all have real defaults and a
+        /// "unset"; a decoration tag's arguments all have real defaults and a
         /// number typed back to the default simply drops out of the tag when it
         /// is rebuilt, rather than needing a NaN to say so.
         /// </summary>
@@ -469,7 +512,7 @@ namespace OneText.Editor
         {
             if (!used)
             {
-                GUILayout.Label("—", EditorStyles.centeredGreyMiniLabel, GUILayout.Width(CellWidth));
+                GUILayout.Label("-", EditorStyles.centeredGreyMiniLabel, GUILayout.Width(CellWidth));
                 return 0f;
             }
             float now = EditorGUILayout.DelayedFloatField(value, GUILayout.Width(CellWidth));
@@ -553,7 +596,7 @@ namespace OneText.Editor
         /// <summary>
         /// Runs the animation clock outside play mode, so seeing a wave means
         /// clicking a button rather than entering play mode. The clock rides
-        /// <see cref="EditorApplication.update"/> and resets to zero on stop —
+        /// <see cref="EditorApplication.update"/> and resets to zero on stop;
         /// zero is the "show effects finished" state the label already knows.
         /// </summary>
         private void DrawPreviewControls()
@@ -563,7 +606,7 @@ namespace OneText.Editor
                 GUI.skin.button);
             // The clock and the first drawn quad, visible: the clock running
             // proves the tick loop is alive, the quad position moving proves
-            // the mesh is actually being rebuilt with that clock — leaving a
+            // the mesh is actually being rebuilt with that clock, leaving a
             // still screen as purely a repaint problem. Diagnosing a preview
             // needs the same split the preview itself needed.
             if (_previewing && _label != null)
@@ -605,8 +648,8 @@ namespace OneText.Editor
         /// from <see cref="EditorApplication.update"/>. Driving the clock from
         /// outside and then forcing canvas updates and repaints piece by piece
         /// left views showing stale batches until a play-mode session had
-        /// warmed something up; running the real loop — update, canvas pass,
-        /// render, the same frame play mode runs — is the sequence every part
+        /// warmed something up; running the real loop (update, canvas pass,
+        /// render, the same frame play mode runs) is the sequence every part
         /// of the editor already knows how to show. Each iteration queues the
         /// next, so the loop sustains itself until the driver is destroyed.
         /// </summary>
@@ -626,7 +669,7 @@ namespace OneText.Editor
                 _last = now;
                 EditorApplication.QueuePlayerLoopUpdate();
                 // The queued loop repaints game views on its own. Scene views
-                // need asking — and ONLY scene views: repainting every editor
+                // need asking, and ONLY scene views: repainting every editor
                 // window per frame (RepaintAllViews) is what turns a smooth
                 // preview into a slideshow.
                 SceneView.RepaintAll();
@@ -636,7 +679,7 @@ namespace OneText.Editor
         /// <summary>
         /// The typewriter, scrubbable: a slider over grapheme clusters with the
         /// count read from the real layout, so an Arabic ligature or a Hangul
-        /// syllable is one step — exactly what MaxVisibleGraphemes will do at
+        /// syllable is one step, exactly what MaxVisibleGraphemes will do at
         /// runtime.
         /// </summary>
         private void DrawReveal()
@@ -677,7 +720,7 @@ namespace OneText.Editor
 
             bool all = _maxVisibleGraphemes.intValue < 0;
             bool nowAll = EditorGUILayout.Toggle(new GUIContent("Show all",
-                "Off exposes the reveal slider — the typewriter primitive. " +
+                "Off exposes the reveal slider: the typewriter primitive. " +
                 "Drive MaxVisibleGraphemes from a script for the real thing."), all);
             if (nowAll != all)
                 _maxVisibleGraphemes.intValue = nowAll ? -1 : 0;
@@ -692,7 +735,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// Variable fonts get one slider per axis, clamped to the ranges in the
-        /// font's own fvar table — no guessing at valid weights.
+        /// font's own fvar table: no guessing at valid weights.
         /// </summary>
         private void DrawVariationAxes()
         {
@@ -715,7 +758,7 @@ namespace OneText.Editor
                     _axes[i].Tag, _axisValues[i], _axes[i].Minimum, _axes[i].Maximum);
                 // Weight and width snap to steps of 10. Every distinct axis
                 // value is its own font instance and its own set of atlas
-                // tiles, so a raw drag is a bake per tick — an atlas full of
+                // tiles, so a raw drag is a bake per tick, an atlas full of
                 // near-identical glyphs nobody will draw again. Snapping turns
                 // a drag into a handful of instances, and the eye cannot tell
                 // wght 403 from 400 anyway.
@@ -724,7 +767,7 @@ namespace OneText.Editor
                     value = Mathf.Clamp(Mathf.Round(value / step) * step,
                         _axes[i].Minimum, _axes[i].Maximum);
                 // Only a change in the value that will actually be applied
-                // counts — a drag inside one snap bucket must not rebuild.
+                // counts; a drag inside one snap bucket must not rebuild.
                 if (!Mathf.Approximately(value, _axisValues[i]))
                 {
                     _axisValues[i] = value;
@@ -768,6 +811,7 @@ namespace OneText.Editor
             EditorGUILayout.LabelField("<link=id>…</link>", "clickable span (event in Interaction tab)", EditorStyles.miniLabel);
             EditorGUILayout.LabelField("<align=center> <nobr>", "paragraph alignment, no-break span", EditorStyles.miniLabel);
             EditorGUILayout.LabelField("<josa=을>", "Korean particle picked from the previous word", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField("<ruby=ふりがな>漢字</ruby>", "ruby annotation (size in the Layout tab)", EditorStyles.miniLabel);
             EditorGUILayout.LabelField("<wait=0.5>", "pause the typewriter here for half a second", EditorStyles.miniLabel);
             EditorGUILayout.LabelField("<outline> <shadow> <glow>",
                 "decorations (table in the Style tab)", EditorStyles.miniLabel);

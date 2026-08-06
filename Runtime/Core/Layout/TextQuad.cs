@@ -9,8 +9,8 @@ namespace OneText
     ///
     /// This is the seam the engine exposes to anything that wants to move text
     /// without re-laying it out. Animation, reveal and per-character effects
-    /// all want the same thing — the finished geometry, addressable by unit of
-    /// text — and every animation layer built on TMP had to reconstruct it from
+    /// all want the same thing (the finished geometry, addressable by unit of
+    /// text), and every animation layer built on TMP had to reconstruct it from
     /// the outside, which stopped working the moment a ligature appeared.
     /// </summary>
     public struct TextQuad
@@ -50,7 +50,7 @@ namespace OneText
         public TextStyle Style;
 
         /// <summary>
-        /// Index into the frontend's decoration table — see
+        /// Index into the frontend's decoration table; see
         /// <c>OneTextLabel.DecorationOf</c>.
         ///
         /// An index rather than the nine numbers themselves, because a label has
@@ -58,19 +58,27 @@ namespace OneText
         /// thousands of tiles would otherwise carry a copy through every
         /// modifier and every frame. Slot 0 is always
         /// <see cref="TextDecoration.None"/>, so a zero-initialized quad is
-        /// undecorated — a -1 sentinel would need every construction site to
+        /// undecorated; a -1 sentinel would need every construction site to
         /// remember, and one that forgot would draw an outline nobody asked for.
         /// </summary>
         public int Decoration;
 
         /// <summary>
         /// True if this tile lives in the RGBA colour atlas rather than the SDF
-        /// one — a colour emoji or an inline sprite. It picks the sampler, not
+        /// one: a colour emoji or an inline sprite. It picks the sampler, not
         /// a second draw call.
         /// </summary>
         public bool IsColor;
 
-        /// <summary>Centre of the tile — the sane pivot for rotation and scaling.</summary>
+        /// <summary>
+        /// True if this tile is a multi-channel field, from the precise atlas.
+        /// Same story as <see cref="IsColor"/>: a third sampler in the same
+        /// material, not a second draw call. Never set together with it; a
+        /// colour tile is a picture and has no distance to be precise about.
+        /// </summary>
+        public bool IsPrecise;
+
+        /// <summary>Centre of the tile, the sane pivot for rotation and scaling.</summary>
         public Vector2 Center => Position + Size * 0.5f;
     }
 
@@ -89,7 +97,7 @@ namespace OneText
         /// Called once per drawn tile, in draw order.
         ///
         /// <paramref name="quad"/> may be edited in place. Return false to drop
-        /// the tile entirely — which is how a reveal that has not reached this
+        /// the tile entirely, which is how a reveal that has not reached this
         /// cluster yet, or an effect that fades a character out completely,
         /// avoids paying for geometry nobody sees.
         /// </summary>

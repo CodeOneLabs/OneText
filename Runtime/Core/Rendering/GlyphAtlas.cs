@@ -36,10 +36,10 @@ namespace OneText
     [Serializable]
     public struct GlyphAtlasSettings : IEquatable<GlyphAtlasSettings>
     {
-        /// <summary>Edge length of each layer in pixels (power of two, 256–4096).</summary>
+        /// <summary>Edge length of each layer in pixels (power of two, 256 to 4096).</summary>
         public int TextureSize;
 
-        /// <summary>Number of layers in the texture array (1–16).</summary>
+        /// <summary>Number of layers in the texture array (1 to 16).</summary>
         public int LayerCount;
 
         public static GlyphAtlasSettings Default => new GlyphAtlasSettings
@@ -48,7 +48,12 @@ namespace OneText
             LayerCount = 4,
         };
 
-        /// <summary>Texture memory this configuration occupies (R8, no mips).</summary>
+        /// <summary>
+        /// Texture memory this configuration occupies (R8, no mips). A precise
+        /// atlas holds the same texels in four channels and costs four times
+        /// this; <see cref="GlyphAtlasStats.MemoryBytes"/> reports what a given
+        /// atlas actually took.
+        /// </summary>
         public long MemoryBytes => (long)TextureSize * TextureSize * LayerCount;
 
         /// <summary>Clamps to what the atlas can actually allocate.</summary>
@@ -85,7 +90,7 @@ namespace OneText
         public int ShelfCount;
 
         /// <summary>
-        /// Tiles that found no room even after compaction and eviction — one
+        /// Tiles that found no room even after compaction and eviction: one
         /// frame asked for more than the atlas holds. They are not cached as
         /// failures, so they come back on a later frame; a non-zero count means
         /// the budget is too small for the working set, not that glyphs are
@@ -102,7 +107,7 @@ namespace OneText
         /// <summary>Live tiles that were baked by a prewarm rather than by drawing.</summary>
         public int PrewarmedTiles;
 
-        /// <summary>Pixels those tiles occupy — the prewarmed slice of the pie.</summary>
+        /// <summary>Pixels those tiles occupy, the prewarmed slice of the pie.</summary>
         public long PrewarmedPixels;
 
         /// <summary>
@@ -110,8 +115,8 @@ namespace OneText
         /// occupy all at once.
         ///
         /// The question an occupancy gauge cannot answer is the only one worth
-        /// asking of a budget: not "how full is it now" — an atlas under
-        /// pressure recycles and reads 30% full forever — but "how much did this
+        /// asking of a budget: not "how full is it now" (an atlas under
+        /// pressure recycles and reads 30% full forever) but "how much did this
         /// session actually want". Demand counts each key once, whether it was
         /// evicted and re-baked ten times or never left, so a session that
         /// thrashes reports the size that would have stopped it.
@@ -138,7 +143,7 @@ namespace OneText
     /// (quantized pixels-per-em), producing snugly-sized rectangular tiles
     /// that are shelf-packed into a Texture2DArray. Uniform density is what
     /// keeps neighboring glyphs' edges registered to each other at joints
-    /// (connected scripts overlap their joins by design — resolve the
+    /// (connected scripts overlap their joins by design; resolve the
     /// overlap and there is nothing left to seam).
     ///
     /// Under pressure the atlas reclaims <em>tiles</em>, not layers: the
@@ -168,12 +173,22 @@ namespace OneText
 
         private readonly int _textureSize;
         private readonly int _layerCount;
+        private readonly int _bytesPerTexel;
 
         public Texture2DArray Texture { get; }
 
         /// <summary>
+        /// Whether this atlas holds multi-channel fields (RGBA, four bytes a
+        /// texel) rather than single-channel ones (R8). Set once at
+        /// construction: a <c>Texture2DArray</c> has one format for every
+        /// slice, so the two cannot share an atlas, and the shader reconstructs
+        /// them with different maths.
+        /// </summary>
+        public bool Precise { get; }
+
+        /// <summary>
         /// False once the backing texture has been destroyed out from under
-        /// this instance — which only happens when a managed reference outlives
+        /// this instance, which only happens when a managed reference outlives
         /// the engine object, i.e. a play session boundary with Domain Reload
         /// off. Everything else about the atlas still looks healthy at that
         /// point, so this is the only cheap way to notice.
@@ -220,7 +235,7 @@ namespace OneText
         /// <summary>
         /// Largest rasterization bucket NOT exceeding the requested size:
         /// SDFs reconstruct smoothly under magnification, but minification
-        /// aliases (phase-dependent edge wobble — the last seam residue).
+        /// aliases (phase-dependent edge wobble, the last seam residue).
         /// </summary>
         public static int QuantizePixelsPerEm(float pixelsPerEm)
         {
@@ -241,20 +256,32 @@ namespace OneText
             private readonly int _generation; // variable-font instance
             private readonly int _outline;    // flattening tolerance in force when baked
 
-            public Key(FontData font, long id, int ppem)
+            /// <summary>
+            /// Single- or multi-channel field. Redundant while the two live in
+            /// separate atlas instances, and kept regardless: a key that
+            /// identified a tile by glyph and size alone would hand a precise
+            /// label a single-channel tile the day anything lets the two share
+            /// a cache, and that is not a bug anyone would come looking for
+            /// here.
+            /// </summary>
+            private readonly bool _precise;
+
+            public Key(FontData font, long id, int ppem, bool precise)
             {
                 _font = font.Font;
                 _id = id;
                 _ppem = ppem;
                 _generation = font.Generation;
                 _outline = OutlineExtractor.Generation;
+                _precise = precise;
             }
 
             public bool Equals(Key o) => _font == o._font && _id == o._id &&
-                _ppem == o._ppem && _generation == o._generation && _outline == o._outline;
+                _ppem == o._ppem && _generation == o._generation && _outline == o._outline &&
+                _precise == o._precise;
 
             public override int GetHashCode() =>
-                HashCode.Combine(_font, _id, _ppem, _generation, _outline);
+                HashCode.Combine(_font, _id, _ppem, _generation, _outline, _precise);
         }
 
         private sealed class Entry
@@ -300,7 +327,7 @@ namespace OneText
         private int _evictions, _compactions, _drops;
 
         // Every key ever committed, with the pixels it takes. Diagnostic only,
-        // and unbounded by design — see GlyphAtlasStats.DemandTiles for why the
+        // and unbounded by design; see GlyphAtlasStats.DemandTiles for why the
         // set has to survive eviction to mean anything.
         private Dictionary<Key, int> _demand;
         private long _demandPixels;
@@ -311,21 +338,28 @@ namespace OneText
 
         public GlyphAtlas() : this(GlyphAtlasSettings.Default) { }
 
-        public GlyphAtlas(GlyphAtlasSettings settings)
+        /// <param name="precise">
+        /// Hold multi-channel fields instead of single-channel ones. Four bytes
+        /// a texel rather than one, which is why it is the caller's decision and
+        /// not the atlas's.
+        /// </param>
+        public GlyphAtlas(GlyphAtlasSettings settings, bool precise = false)
         {
             settings = settings.Validated();
             _textureSize = settings.TextureSize;
             _layerCount = settings.LayerCount;
             _layers = new LayerState[_layerCount];
+            Precise = precise;
+            _bytesPerTexel = precise ? 4 : 1;
 
             Texture = new Texture2DArray(_textureSize, _textureSize, _layerCount,
-                TextureFormat.R8, mipChain: false, linear: true)
+                precise ? TextureFormat.RGBA32 : TextureFormat.R8, mipChain: false, linear: true)
             {
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,
-                name = "OneText Glyph Atlas",
+                name = precise ? "OneText Glyph Atlas (precise)" : "OneText Glyph Atlas",
                 // Not cosmetic. Without DontSave, a texture created during a
-                // play session is destroyed when that session ends — and with
+                // play session is destroyed when that session ends, and with
                 // Domain Reload disabled the managed GlyphAtlas holding it
                 // survives, so the next session draws every glyph from a
                 // destroyed texture. That is the blank-text-on-second-play bug,
@@ -351,7 +385,7 @@ namespace OneText
                 TileCount = _lru.Count,
                 UsedPixels = _usedPixels,
                 CapacityPixels = (long)_textureSize * _textureSize * _layerCount,
-                MemoryBytes = (long)_textureSize * _textureSize * _layerCount,
+                MemoryBytes = (long)_textureSize * _textureSize * _layerCount * _bytesPerTexel,
                 Evictions = _evictions,
                 Compactions = _compactions,
                 ShelfCount = shelves,
@@ -373,24 +407,24 @@ namespace OneText
         public GlyphLocation GetOrAdd(FontData font, uint glyphId, float pixelsPerEm = 64f)
         {
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
-            var key = new Key(font, glyphId, ppem);
+            var key = new Key(font, glyphId, ppem, Precise);
             if (TryTouch(key, out var hit)) return hit;
 
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
-            var raster = GlyphRasterizer.Rasterize(font, glyphId, pixelsPerUnit);
+            var raster = GlyphRasterizer.Rasterize(font, glyphId, pixelsPerUnit, Precise);
             return Commit(key, raster, ppem);
         }
 
         /// <summary>
         /// Returns the atlas location of a cluster of connected glyphs baked
-        /// as ONE merged SDF (joints live in the field interior — seam-proof).
+        /// as ONE merged SDF (joints live in the field interior: seam-proof).
         /// Offsets inside the tile are relative to the cluster's pen start.
         /// </summary>
         public GlyphLocation GetOrAddCluster(FontData font, float pixelsPerEm,
             List<PositionedGlyph> positioned, int start, int count, long hash)
         {
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
-            var key = new Key(font, hash, ppem);
+            var key = new Key(font, hash, ppem, Precise);
             if (TryTouch(key, out var hit)) return hit;
 
             long outlineStart = AtlasDiagnostics.Now;
@@ -403,13 +437,13 @@ namespace OneText
             AtlasDiagnostics.Add(ref AtlasDiagnostics.OutlineTicks, outlineStart);
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OutlineCount += count;
 
-            var raster = GlyphRasterizer.RasterizeContours(s_merged, s_mergedGroups, pixelsPerUnit);
+            var raster = GlyphRasterizer.RasterizeContours(s_merged, s_mergedGroups, pixelsPerUnit, Precise);
             return Commit(key, raster, ppem);
         }
 
         /// <summary>True if the atlas already holds this glyph at this size.</summary>
         public bool Contains(FontData font, long id, float pixelsPerEm) =>
-            _entries.ContainsKey(new Key(font, id, QuantizePixelsPerEm(pixelsPerEm)));
+            _entries.ContainsKey(new Key(font, id, QuantizePixelsPerEm(pixelsPerEm), Precise));
 
         /// <summary>
         /// Bakes every cluster of a run that is not already cached, in one
@@ -418,8 +452,8 @@ namespace OneText
         /// Rasterizing a glyph at a time spends most of its cost on scheduling
         /// and temporary buffers rather than on the distance field: at 18 ppem a
         /// Hangul tile measured ~132 ns per texel against ~34 ns for a tile five
-        /// times larger. Callers that know a whole run's clusters up front —
-        /// which is every text frontend — should call this before reading the
+        /// times larger. Callers that know a whole run's clusters up front,
+        /// which is every text frontend, should call this before reading the
         /// locations back, and the reads then all hit the cache.
         /// </summary>
         public void PrepareClusters(FontData font, float pixelsPerEm,
@@ -438,7 +472,7 @@ namespace OneText
             int glyphsExtracted = 0;
             foreach (var cluster in clusters)
             {
-                var key = new Key(font, cluster.Hash, ppem);
+                var key = new Key(font, cluster.Hash, ppem, Precise);
                 // Repeated words in one run share a tile; bake it once.
                 if (_entries.ContainsKey(key) || !_batchPending.Add(key)) continue;
 
@@ -447,7 +481,7 @@ namespace OneText
                 // Timed around the extraction alone, not around the loop. A warm
                 // run walks every cluster here and extracts none, and charging
                 // that walk to "outline" reported 24 us a frame of outline work
-                // against three glyphs actually extracted — a number that reads
+                // against three glyphs actually extracted, a number that reads
                 // as a hot rasterizer and is really the cache saying no. The
                 // walk is lookup, and the caller already counts it as lookup.
                 long outlineStart = AtlasDiagnostics.Now;
@@ -467,7 +501,7 @@ namespace OneText
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OutlineCount += glyphsExtracted;
             if (_batchRequests.Count == 0) return;
 
-            GlyphRasterizer.RasterizeBatch(_batchRequests, _batchResults);
+            GlyphRasterizer.RasterizeBatch(_batchRequests, _batchResults, Precise);
             for (int i = 0; i < _batchKeys.Count && i < _batchResults.Count; i++)
                 Commit(_batchKeys[i], _batchResults[i], ppem);
         }
@@ -571,7 +605,7 @@ namespace OneText
             if (!Allocate(raster.Width, raster.Height, out int layer, out int x, out int y, out int shelfIndex))
             {
                 // Deliberately NOT cached. A frame that asks for more tiles than
-                // the atlas holds is a transient condition — the tiles that lost
+                // the atlas holds is a transient condition: the tiles that lost
                 // the race are wanted again next frame, when the ones that beat
                 // them are no longer pinned. Caching the failure would turn
                 // "this frame was too crowded" into "this glyph is blank for the
@@ -663,7 +697,7 @@ namespace OneText
         /// <summary>
         /// Compacts, but only when it can plausibly help: if live tiles already
         /// fill the atlas, repacking them frees nothing and the answer is
-        /// eviction. Once per flush cycle at most — a full atlas would
+        /// eviction. Once per flush cycle at most: a full atlas would
         /// otherwise repack on every single new glyph.
         /// </summary>
         private bool TryCompact(int w, int h)
@@ -756,7 +790,7 @@ namespace OneText
         /// prefer the oldest tile on a shelf of the right height, and when no
         /// such shelf exists, work through the coldest shelf until it empties
         /// and can re-type itself. Tiles touched since the last upload are
-        /// spared while anything colder remains — a single label's rebuild must
+        /// spared while anything colder remains: a single label's rebuild must
         /// not evict the tiles it just placed.
         /// </summary>
         private bool EvictForFit(int w, int h)
@@ -914,7 +948,7 @@ namespace OneText
             // Snapshot first: repacking writes over rows that other tiles are
             // still being read from.
             long total = 0;
-            foreach (var entry in live) total += entry.Width * entry.Height;
+            foreach (var entry in live) total += entry.Width * entry.Height * _bytesPerTexel;
             var pixels = new byte[total];
             long cursor = 0;
             var offsets = new long[live.Count];
@@ -925,10 +959,11 @@ namespace OneText
                 var src = Texture.GetPixelData<byte>(0, entry.Layer);
                 for (int row = 0; row < entry.Height; row++)
                 {
-                    NativeArray<byte>.Copy(src, (entry.Y + row) * _textureSize + entry.X,
-                        pixels, (int)cursor + row * entry.Width, entry.Width);
+                    NativeArray<byte>.Copy(src, ((entry.Y + row) * _textureSize + entry.X) * _bytesPerTexel,
+                        pixels, (int)cursor + row * entry.Width * _bytesPerTexel,
+                        entry.Width * _bytesPerTexel);
                 }
-                cursor += entry.Width * entry.Height;
+                cursor += entry.Width * entry.Height * _bytesPerTexel;
             }
 
             foreach (var layer in _layers)
@@ -939,7 +974,7 @@ namespace OneText
             for (int layer = 0; layer < _layerCount; layer++) ClearLayerPixels(layer);
             // Recounted rather than adjusted, because the loop below may drop a
             // tile it cannot re-place, and a provenance count that drifts is
-            // worse than none — the pie would stop summing to the occupancy.
+            // worse than none: the pie would stop summing to the occupancy.
             _usedPixels = 0;
             _prewarmedPixels = 0;
             _prewarmedTiles = 0;
@@ -971,8 +1006,9 @@ namespace OneText
                 var dst = Texture.GetPixelData<byte>(0, layer);
                 for (int row = 0; row < entry.Height; row++)
                 {
-                    NativeArray<byte>.Copy(pixels, (int)offsets[i] + row * entry.Width,
-                        dst, (y + row) * _textureSize + x, entry.Width);
+                    NativeArray<byte>.Copy(pixels, (int)offsets[i] + row * entry.Width * _bytesPerTexel,
+                        dst, ((y + row) * _textureSize + x) * _bytesPerTexel,
+                        entry.Width * _bytesPerTexel);
                 }
 
                 entry.Layer = layer;
@@ -1014,10 +1050,11 @@ namespace OneText
             var dst = Texture.GetPixelData<byte>(0, layer);
             // Row-wise memcpy: a per-byte loop here costs more than the GPU
             // upload it feeds.
+            int rowBytes = raster.Width * _bytesPerTexel;
             for (int row = 0; row < raster.Height; row++)
             {
-                NativeArray<byte>.Copy(raster.Pixels, raster.PixelStart + row * raster.Width,
-                    dst, (y + row) * _textureSize + x, raster.Width);
+                NativeArray<byte>.Copy(raster.Pixels, raster.PixelStart + row * rowBytes,
+                    dst, ((y + row) * _textureSize + x) * _bytesPerTexel, rowBytes);
             }
             AtlasDiagnostics.Add(ref AtlasDiagnostics.CopyTicks, copyStart);
             MarkTileDirty(layer, x, y, raster.Width, raster.Height);
@@ -1084,7 +1121,7 @@ namespace OneText
         /// Uploads pending tile writes to the GPU. A handful of new tiles goes
         /// up as a handful of small copies; a compaction, a cleared layer, or a
         /// flood of new glyphs goes up as one full <c>Apply</c>. Call this once
-        /// per frame after every rebuild that ran — not once per label.
+        /// per frame after every rebuild that ran, not once per label.
         /// Frontends should go through their own scheduler (see
         /// OneText.UGUI.AtlasFlushScheduler).
         /// </summary>
@@ -1121,8 +1158,8 @@ namespace OneText
         /// Packs every dirty tile into one staging texture, uploads that once,
         /// and blits the tiles into place on the GPU.
         ///
-        /// The obvious version — one staging texture and one <c>Apply</c> per
-        /// tile — measured slower than uploading the whole 4 MB array, because
+        /// The obvious version, one staging texture and one <c>Apply</c> per
+        /// tile, measured slower than uploading the whole 4 MB array, because
         /// the cost of an <c>Apply</c> is dominated by its fixed overhead, not
         /// by its bytes. One upload of the packed tiles plus N GPU-side copies
         /// keeps the byte count small and the overhead paid once.
@@ -1154,8 +1191,9 @@ namespace OneText
                 var src = Texture.GetPixelData<byte>(0, tile.Layer);
                 for (int row = 0; row < tile.Height; row++)
                 {
-                    NativeArray<byte>.Copy(src, (tile.Y + row) * _textureSize + tile.X,
-                        dst, (cursorY + row) * edge + cursorX, tile.Width);
+                    NativeArray<byte>.Copy(src, ((tile.Y + row) * _textureSize + tile.X) * _bytesPerTexel,
+                        dst, ((cursorY + row) * edge + cursorX) * _bytesPerTexel,
+                        tile.Width * _bytesPerTexel);
                 }
 
                 _packedAt.Add(new Vector2Int(cursorX, cursorY));
@@ -1206,7 +1244,11 @@ namespace OneText
             _staging ??= new Texture2D[14];
             if (_staging[index] == null)
             {
-                _staging[index] = new Texture2D(1 << index, 1 << index, TextureFormat.R8, false, true)
+                // Same format as the array it feeds: Graphics.CopyTexture
+                // requires it, and a mismatch is a silent no-op on some devices
+                // rather than an error.
+                _staging[index] = new Texture2D(1 << index, 1 << index,
+                    Precise ? TextureFormat.RGBA32 : TextureFormat.R8, false, true)
                 {
                     name = $"OneText Atlas Staging {1 << index}",
                     hideFlags = HideFlags.HideAndDontSave,

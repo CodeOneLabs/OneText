@@ -8,7 +8,7 @@ namespace OneText.UGUI
     /// Rebuilds text meshes when the atlas moves tiles under them.
     ///
     /// A mesh bakes the UV rect of every tile it draws, so a tile that is
-    /// evicted or relocated by a compaction leaves stale UVs behind — the
+    /// evicted or relocated by a compaction leaves stale UVs behind: the
     /// wrong glyph, or none. The atlas reports this as a version change, and
     /// graphics registered here rebuild once per change.
     ///
@@ -28,6 +28,7 @@ namespace OneText.UGUI
         private static GlyphAtlas s_atlas;
         private static int s_version;
         private static int s_colorVersion;
+        private static int s_preciseVersion;
         private static int s_consecutive;
         private static int s_backoff;
         private static bool s_warned;
@@ -48,12 +49,13 @@ namespace OneText.UGUI
             s_atlas = null;
             s_version = 0;
             s_colorVersion = 0;
+            s_preciseVersion = 0;
             s_consecutive = 0;
             s_backoff = 0;
             s_warned = false;
             // The watcher was a scene object; leaving play mode destroyed it.
             // Holding the stale reference would suppress the next one, and the
-            // symptom is text that never rebuilds after a compaction — blank
+            // symptom is text that never rebuilds after a compaction: blank
             // labels and ghost quads, in the second play session only.
             s_watcher = null;
         }
@@ -76,13 +78,19 @@ namespace OneText.UGUI
             // The colour atlas evicts too, and a mesh drawing an emoji has that
             // tile's uv rect baked into it exactly as a text mesh does. Watching
             // only the SDF atlas leaves an evicted emoji sampling whatever was
-            // written over it — the very failure this class exists to prevent,
+            // written over it: the very failure this class exists to prevent,
             // on the other atlas.
             int colorVersion = SharedGlyphAtlas.ColorAtlasExists
                 ? SharedGlyphAtlas.ColorAtlas.Version
                 : 0;
+            // And the precise atlas, for the same reason again: a label with
+            // `precise` on bakes its uv rects from that one.
+            int preciseVersion = SharedGlyphAtlas.PreciseAtlasExists
+                ? SharedGlyphAtlas.PreciseAtlas.Version
+                : 0;
 
-            if (atlas == s_atlas && atlas.Version == s_version && colorVersion == s_colorVersion)
+            if (atlas == s_atlas && atlas.Version == s_version && colorVersion == s_colorVersion &&
+                preciseVersion == s_preciseVersion)
             {
                 s_consecutive = 0;
                 return;
@@ -91,6 +99,7 @@ namespace OneText.UGUI
             s_atlas = atlas;
             s_version = atlas.Version;
             s_colorVersion = colorVersion;
+            s_preciseVersion = preciseVersion;
 
             if (s_backoff > 0)
             {

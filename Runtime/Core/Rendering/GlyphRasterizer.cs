@@ -14,8 +14,9 @@ namespace OneText
     public struct RasterizedGlyph
     {
         /// <summary>
-        /// R8 SDF texels, <see cref="Width"/> * <see cref="Height"/> of them
-        /// starting at <see cref="PixelStart"/>.
+        /// The tile's texels: <see cref="Width"/> * <see cref="Height"/> *
+        /// <see cref="Channels"/> bytes starting at <see cref="PixelStart"/>,
+        /// row 0 first, channels interleaved.
         ///
         /// The array belongs to the rasterizer and holds the whole batch; it
         /// stays valid only until the next call. Anything that needs to keep
@@ -28,10 +29,21 @@ namespace OneText
         public float UnitsPerPixel;
         public bool IsEmpty;         // no contours (space etc.)
 
+        /// <summary>
+        /// Bytes per texel: 1 for the single-channel field (R8), 4 for the
+        /// multi-channel one (RGBA, distance per channel plus the true distance
+        /// in alpha). Zero only on a default-constructed value, which is why
+        /// every read goes through <see cref="BytesPerTexel"/>.
+        /// </summary>
+        public int Channels;
+
+        /// <inheritdoc cref="Channels"/>
+        public int BytesPerTexel => Channels <= 0 ? 1 : Channels;
+
         /// <summary>This tile's texels in an array of their own.</summary>
         public byte[] CopyPixels()
         {
-            var copy = new byte[Width * Height];
+            var copy = new byte[Width * Height * BytesPerTexel];
             if (Pixels != null) System.Array.Copy(Pixels, PixelStart, copy, 0, copy.Length);
             return copy;
         }
@@ -58,25 +70,28 @@ namespace OneText
 
         private static readonly GlyphOutline s_outline = new GlyphOutline();
 
-        public static RasterizedGlyph Rasterize(FontData font, uint glyphId, float pixelsPerUnit)
+        public static RasterizedGlyph Rasterize(FontData font, uint glyphId, float pixelsPerUnit,
+            bool precise = false)
         {
             s_outline.Clear();
             OutlineExtractor.Extract(font, glyphId, s_outline, pixelsPerUnit);
-            return RasterizeContours(s_outline.Contours, null, pixelsPerUnit);
+            return RasterizeContours(s_outline.Contours, null, pixelsPerUnit, precise);
         }
 
         /// <summary>
         /// Rasterizes a set of already-positioned contours (glyph units) into
         /// one SDF tile. Used both for single glyphs and for merged clusters
-        /// of connected glyphs — a cluster baked as one field has its joints
+        /// of connected glyphs: a cluster baked as one field has its joints
         /// in the SDF interior, which is what makes them seam-proof.
         /// <paramref name="groups"/> assigns each contour to its source glyph
         /// (ascending; null = all one group): signed distance is resolved per
         /// group and unioned, so edges buried inside another glyph's ink
         /// cannot dent the field.
+        /// <paramref name="precise"/> bakes a multi-channel field instead:
+        /// four bytes a texel, corners that survive the sampler.
         /// </summary>
         public static RasterizedGlyph RasterizeContours(List<List<Vector2>> contours,
-            List<int> groups, float pixelsPerUnit)
+            List<int> groups, float pixelsPerUnit, bool precise = false)
         {
             // One request through the batch path: a single implementation to
             // keep correct, and a single tile is just a batch of one.
@@ -87,7 +102,7 @@ namespace OneText
                 Groups = groups,
                 PixelsPerUnit = pixelsPerUnit,
             });
-            RasterizeBatch(s_singleRequest, s_singleResult);
+            RasterizeBatch(s_singleRequest, s_singleResult, precise);
             return s_singleResult.Count > 0 ? s_singleResult[0] : new RasterizedGlyph { IsEmpty = true };
         }
 

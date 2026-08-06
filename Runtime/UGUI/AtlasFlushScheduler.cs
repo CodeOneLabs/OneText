@@ -6,7 +6,7 @@ namespace OneText.UGUI
     /// <summary>
     /// Batches atlas uploads to one per frame.
     ///
-    /// Uploading the atlas costs a full <c>Texture2DArray.Apply</c> — megabytes,
+    /// Uploading the atlas costs a full <c>Texture2DArray.Apply</c>: megabytes,
     /// however small the glyph was. Doing that inside every label's mesh rebuild
     /// meant a screenful of changing labels paid it dozens of times per frame.
     /// Instead each label asks for an upload, and the scheduler performs exactly
@@ -38,13 +38,15 @@ namespace OneText.UGUI
         /// <summary>Asks for the shared atlas to be uploaded before the next draw.</summary>
         public static void Request()
         {
-            if (!SharedGlyphAtlas.Atlas.HasPendingUpload) return;
+            bool precise = SharedGlyphAtlas.PreciseAtlasExists &&
+                           SharedGlyphAtlas.PreciseAtlas.HasPendingUpload;
+            if (!SharedGlyphAtlas.Atlas.HasPendingUpload && !precise) return;
 
             // Outside play mode there is no reliable canvas pass to hook (editor
             // previews and batch-mode captures render on demand), so upload now.
             if (!Application.isPlaying && !DeferOutsidePlayMode)
             {
-                SharedGlyphAtlas.Atlas.Flush();
+                FlushNow();
                 return;
             }
 
@@ -56,7 +58,7 @@ namespace OneText.UGUI
         ///
         /// Registering from here is the whole point: tiles are baked inside
         /// <c>OnPopulateMesh</c>, which runs inside uGUI's graphic rebuild loop,
-        /// and uGUI refuses — with an error, every rebuild — to accept a new
+        /// and uGUI refuses (with an error, every rebuild) to accept a new
         /// canvas element while that loop is running. <c>willRenderCanvases</c>
         /// fires just before the loop, so the element is already queued when
         /// the bakes happen and its <see cref="CanvasUpdate.LatePreRender"/>
@@ -81,6 +83,10 @@ namespace OneText.UGUI
         {
             s_queued = false;
             SharedGlyphAtlas.Atlas.Flush();
+            // Asked for by existence, never created here: a project with no
+            // precise label must not allocate the multi-channel atlas from the
+            // upload path of a frame that never wanted it.
+            if (SharedGlyphAtlas.PreciseAtlasExists) SharedGlyphAtlas.PreciseAtlas.Flush();
         }
 
         void ICanvasElement.Rebuild(CanvasUpdate executing)

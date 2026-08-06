@@ -21,7 +21,7 @@ namespace OneText
         /// <see cref="RasterizedGlyph"/> per request.
         ///
         /// This is the path that matters for cost. A single glyph pays the job
-        /// scheduling and temporary allocations in full — measured at 18 ppem, a
+        /// scheduling and temporary allocations in full: measured at 18 ppem, a
         /// Hangul tile spent about 132 ns per texel against 34 ns for a tile
         /// five times larger, and the difference is all fixed overhead. Every
         /// tile a frame needs therefore goes up together.
@@ -31,8 +31,13 @@ namespace OneText
         /// player a collection pause eventually, and the tile pixels are read
         /// by the atlas immediately and never held.
         /// </summary>
+        /// <param name="precise">
+        /// Bake multi-channel fields (4 bytes a texel) instead of single-channel
+        /// ones. One mode for the whole batch: the two fields live in different
+        /// atlases, so a dispatch never mixes them.
+        /// </param>
         public static void RasterizeBatch(IReadOnlyList<RasterizeRequest> requests,
-            List<RasterizedGlyph> results)
+            List<RasterizedGlyph> results, bool precise = false)
         {
             results.Clear();
             if (requests == null || requests.Count == 0) return;
@@ -90,6 +95,7 @@ namespace OneText
                     Height = height,
                     OriginUnits = origin,
                     UnitsPerPixel = unitsPerPixel,
+                    Channels = precise ? 4 : 1,
                 });
 
                 totalPoints += points;
@@ -103,59 +109,74 @@ namespace OneText
                 return;
             }
 
+            int bytesPerTexel = precise ? 4 : 1;
             Grow(ref s_points, totalPoints);
             Grow(ref s_ranges, totalContours);
             Grow(ref s_groups, totalContours);
             Grow(ref s_bounds, totalContours);
             Grow(ref s_tiles, s_descs.Count);
             Grow(ref s_tileEnds, s_descs.Count);
-            Grow(ref s_output, totalTexels);
+            Grow(ref s_output, totalTexels * bytesPerTexel);
+            if (precise)
+            {
+                Grow(ref s_flags, totalPoints);
+                Grow(ref s_orientation, totalContours);
+                if (s_flagBytes.Length < totalPoints)
+                    s_flagBytes = new byte[Mathf.NextPowerOfTwo(totalPoints)];
+            }
 
             int pi = 0, ci = 0, texelEnd = 0;
             for (int r = 0; r < requests.Count; r++)
             {
                 var request = requests[r];
                 var desc = s_descs[r];
+                // Contour winding decides the sign of a pseudo-distance, and it
+                // is a property of the source glyph, not of one of its contours:
+                // a counter is wound against its outline on purpose. Summed over
+                // the group, where the outline dominates.
+                int groupStart = ci, currentGroup = int.MinValue;
+                float groupArea = 0f;
+
                 for (int k = 0; k < request.Contours.Count; k++)
                 {
                     var contour = request.Contours[k];
                     if (contour.Count < 2) continue;
-                    s_groups[ci] = request.Groups?[k] ?? 0;
+                    int group = request.Groups?[k] ?? 0;
+                    if (precise && ci > groupStart && group != currentGroup)
+                    {
+                        WriteOrientation(groupStart, ci, groupArea);
+                        groupStart = ci;
+                        groupArea = 0f;
+                    }
+                    currentGroup = group;
+                    s_groups[ci] = group;
                     s_ranges[ci] = new int2(pi, contour.Count);
+                    if (precise) MsdfEdgeColoring.Assign(contour, s_flagBytes, pi);
 
                     var lo = new Vector2(float.MaxValue, float.MaxValue);
                     var hi = new Vector2(float.MinValue, float.MinValue);
+                    var previous = contour[contour.Count - 1];
                     foreach (var p in contour)
                     {
                         lo = Vector2.Min(lo, p);
                         hi = Vector2.Max(hi, p);
+                        groupArea += previous.x * p.y - p.x * previous.y;
+                        previous = p;
                         s_points[pi++] = new float2(p.x, p.y);
                     }
                     s_bounds[ci++] = new float4(lo.x, lo.y, hi.x, hi.y);
                 }
+                if (precise && ci > groupStart) WriteOrientation(groupStart, ci, groupArea);
 
                 s_tiles[r] = desc;
                 texelEnd += desc.Width * desc.Height;
                 s_tileEnds[r] = texelEnd;
             }
 
-            var job = new SdfBatchJob
-            {
-                Points = s_points,
-                ContourRanges = s_ranges,
-                ContourGroups = s_groups,
-                ContourBounds = s_bounds,
-                Tiles = s_tiles,
-                TileEnds = s_tileEnds,
-                TileCount = s_descs.Count,
-                SpreadPixels = SpreadPixels,
-                Cull = Cull,
-                Output = s_output,
-            };
             long jobStart = AtlasDiagnostics.Now;
             // Scheduled, not Run(), even for the two or three tiles a single
             // label contributes. Running small batches inline was tried and
-            // measured twice as slow on the workload it was aimed at — a scene
+            // measured twice as slow on the workload it was aimed at: a scene
             // retexting fifty labels a frame with unseen glyphs went from 11.1
             // to 23.0 ms a frame, and five labels a frame from 1.0 to 2.3.
             //
@@ -164,21 +185,56 @@ namespace OneText
             // nearly all of that time is the work, spread across cores. Taking
             // the scheduler away does not remove a cost, it removes the
             // parallelism that was paying for it.
-            job.Schedule(totalTexels, 128).Complete();
+            if (precise)
+            {
+                NativeArray<byte>.Copy(s_flagBytes, 0, s_flags, 0, totalPoints);
+                new MsdfBatchJob
+                {
+                    Points = s_points,
+                    SegmentFlags = s_flags,
+                    ContourRanges = s_ranges,
+                    ContourGroups = s_groups,
+                    ContourBounds = s_bounds,
+                    ContourOrientation = s_orientation,
+                    Tiles = s_tiles,
+                    TileEnds = s_tileEnds,
+                    TileCount = s_descs.Count,
+                    SpreadPixels = SpreadPixels,
+                    Cull = Cull,
+                    Output = s_output,
+                }.Schedule(totalTexels, 128).Complete();
+            }
+            else
+            {
+                new SdfBatchJob
+                {
+                    Points = s_points,
+                    ContourRanges = s_ranges,
+                    ContourGroups = s_groups,
+                    ContourBounds = s_bounds,
+                    Tiles = s_tiles,
+                    TileEnds = s_tileEnds,
+                    TileCount = s_descs.Count,
+                    SpreadPixels = SpreadPixels,
+                    Cull = Cull,
+                    Output = s_output,
+                }.Schedule(totalTexels, 128).Complete();
+            }
             AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
 
             // One copy for the whole batch into one reused buffer; the results
             // index into it rather than owning an array each.
-            if (s_pixels.Length < totalTexels)
-                s_pixels = new byte[Mathf.NextPowerOfTwo(totalTexels)];
-            NativeArray<byte>.Copy(s_output, 0, s_pixels, 0, totalTexels);
+            int totalBytes = totalTexels * bytesPerTexel;
+            if (s_pixels.Length < totalBytes)
+                s_pixels = new byte[Mathf.NextPowerOfTwo(totalBytes)];
+            NativeArray<byte>.Copy(s_output, 0, s_pixels, 0, totalBytes);
 
             for (int r = 0; r < results.Count; r++)
             {
                 var result = results[r];
                 if (result.IsEmpty) continue;
                 result.Pixels = s_pixels;
-                result.PixelStart = s_descs[r].OutputStart;
+                result.PixelStart = s_descs[r].OutputStart * bytesPerTexel;
                 results[r] = result;
             }
 
@@ -196,6 +252,10 @@ namespace OneText
         private static readonly List<SdfTileDesc> s_descs = new List<SdfTileDesc>();
         private static byte[] s_pixels = System.Array.Empty<byte>();
 
+        // Edge colours are decided in managed code (the corner test wants the
+        // contour as a list) and go over to the job in one copy per batch.
+        private static byte[] s_flagBytes = System.Array.Empty<byte>();
+
         private static NativeArray<float2> s_points;
         private static NativeArray<int2> s_ranges;
         private static NativeArray<int> s_groups;
@@ -203,6 +263,14 @@ namespace OneText
         private static NativeArray<SdfTileDesc> s_tiles;
         private static NativeArray<int> s_tileEnds;
         private static NativeArray<byte> s_output;
+        private static NativeArray<byte> s_flags;
+        private static NativeArray<float> s_orientation;
+
+        private static void WriteOrientation(int first, int last, float area)
+        {
+            float orientation = area >= 0f ? 1f : -1f;
+            for (int c = first; c < last; c++) s_orientation[c] = orientation;
+        }
 
         /// <summary>
         /// Grows a persistent buffer to at least <paramref name="needed"/>,
@@ -231,7 +299,10 @@ namespace OneText
             Release(ref s_tiles);
             Release(ref s_tileEnds);
             Release(ref s_output);
+            Release(ref s_flags);
+            Release(ref s_orientation);
             s_pixels = System.Array.Empty<byte>();
+            s_flagBytes = System.Array.Empty<byte>();
         }
 
         private static void Release<T>(ref NativeArray<T> array) where T : struct
@@ -248,7 +319,7 @@ namespace OneText
 
         // With Domain Reload disabled this method runs once per play session
         // while the statics survive between them, so the subscription would
-        // stack up — and so would anything else done here unconditionally.
+        // stack up, and so would anything else done here unconditionally.
         // Releasing first is not merely tidy: buffers left over from the last
         // session are sized for its high-water mark and belong to no one.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]

@@ -19,7 +19,7 @@ namespace OneText.UGUI
     public sealed class OneTextLabel : MaskableGraphic, ILayoutElement, IPointerClickHandler,
         StyleInvalidation.IStyleUser
     {
-        [Tooltip("Base style asset. The label stores the reference, not a copy — editing the " +
+        [Tooltip("Base style asset. The label stores the reference, not a copy; editing the " +
                  "style updates every label using it, in the editor and at runtime.")]
         [SerializeField] private OneTextStyle _style;
 
@@ -32,7 +32,7 @@ namespace OneText.UGUI
         [Tooltip("Sprites <sprite=index> draws, in the same atlas and draw call as the text.")]
         [SerializeField] private OneTextSpriteSheet _sprites;
 
-        [Tooltip("BCP 47 language tag — ja, ko, zh-Hans. Drives OpenType locl, keys font " +
+        [Tooltip("BCP 47 language tag: ja, ko, zh-Hans. Drives OpenType locl, keys font " +
                  "fallback so Han unification is not a lottery, and selects line-breaking " +
                  "tailorings. Empty means the project default.")]
         [SerializeField] private string _language = "";
@@ -47,6 +47,11 @@ namespace OneText.UGUI
         [Tooltip("Compress full-width punctuation (約物詰め).")]
         [SerializeField] private bool _punctuationCompression;
 
+        [Tooltip("Ruby (furigana) size, as a fraction of the text it annotates. Half is what " +
+                 "Japanese typesetting specs ask for and what this defaults to.")]
+        [Range(0.1f, 1f)]
+        [SerializeField] private float _rubyScale = RubyPlacement.DefaultScale;
+
         [Tooltip("Font asset to render with. Create one from any .ttf/.otf: " +
                  "right-click the font file, OneText > Create Font Asset.")]
         [SerializeField] private OneFontAsset _font;
@@ -60,13 +65,25 @@ namespace OneText.UGUI
         [SerializeField] private float _fontSize = 64f;
         [SerializeField] private TextAlignment _alignment = TextAlignment.Start;
         [SerializeField] private VerticalAlignment _verticalAlignment = VerticalAlignment.Middle;
+
+        [Tooltip("Horizontal, or 縦書き: characters top to bottom, columns right to left. " +
+                 "In a vertical label the two alignments swap axes: Horizontal places text " +
+                 "along its column, Vertical places the columns across the box.")]
+        [SerializeField] private TextWritingMode _writingMode = TextWritingMode.Horizontal;
         [SerializeField] private TextWrap _wrap = TextWrap.Wrap;
         [SerializeField] private TextOverflow _overflow = TextOverflow.Overflow;
         [SerializeField] private float _lineSpacing = 1f;
 
         [Tooltip("Parse rich-text markup: <b> <i> <u> <s> <color> <size> <mark> <nobr> " +
-                 "<align> <voffset> <cspace> <link> <wait>. Malformed tags stay as literal text.")]
+                 "<align> <voffset> <cspace> <link> <wait> <ruby>. Malformed tags stay as " +
+                 "literal text.")]
         [SerializeField] private bool _richText = true;
+
+        [Tooltip("Precise (MSDF): multi-channel distance field. Use for large text or " +
+                 "sharp corners/curves; costs more atlas memory (four bytes a texel instead " +
+                 "of one, in an atlas of its own). Off, the label renders through the " +
+                 "ordinary single-channel SDF, which is right for body text.")]
+        [SerializeField] private bool _precise;
 
         [SerializeField] private UnityEvent<string> _linkClicked = new UnityEvent<string>();
 
@@ -151,7 +168,7 @@ namespace OneText.UGUI
 
         private int _layoutRuns;
 
-        /// <summary>Same, for the quad build — the other half of a rebuild.</summary>
+        /// <summary>Same, for the quad build: the other half of a rebuild.</summary>
         public int QuadBuilds => _quadBuilds;
 
         private int _quadBuilds;
@@ -182,6 +199,29 @@ namespace OneText.UGUI
         {
             get => _verticalAlignment;
             set { _verticalAlignment = value; SetVerticesDirty(); }
+        }
+
+        /// <summary>
+        /// Horizontal (the default) or 縦書き.
+        ///
+        /// Turning it on rotates the frame the whole label is laid out in, and
+        /// the two alignments rotate with it: <see cref="Alignment"/> places
+        /// text along its column (Left is the top of the column, Right the
+        /// bottom) and <see cref="VerticalAlignment"/> places the stack of
+        /// columns across the box, Top against the right edge, because that is
+        /// where a right-to-left column starts.
+        /// </summary>
+        public TextWritingMode WritingMode
+        {
+            get => _writingMode;
+            set
+            {
+                if (_writingMode == value) return;
+                _writingMode = value;
+                _layoutGeneration++;
+                SetVerticesDirty();
+                SetLayoutDirty();
+            }
         }
 
         public TextWrap Wrap
@@ -218,6 +258,37 @@ namespace OneText.UGUI
             }
         }
 
+        /// <summary>
+        /// Render this label through a multi-channel distance field (MSDF)
+        /// rather than the single-channel one.
+        ///
+        /// Off by default, and meant to stay off for most text. What it buys is
+        /// corners: a single channel stores a cone at every corner and the
+        /// bilinear sampler rounds it, which is invisible on body text and
+        /// obvious on a display line or a logotype. What it costs is a second
+        /// atlas at four bytes a texel instead of one, and a rasterization that
+        /// resolves three fields instead of one, so it is a per-label opt-in,
+        /// not a project setting.
+        ///
+        /// The tiles are cached separately from the ordinary ones, so a glyph
+        /// drawn both ways is baked both ways; two labels sharing this setting
+        /// share their tiles as usual.
+        /// </summary>
+        public bool Precise
+        {
+            get => _precise;
+            set
+            {
+                if (_precise == value) return;
+                _precise = value;
+                // The cached quads hold uv rects from the other atlas, and
+                // nothing about the layout changed, so this is a quad rebuild
+                // and not a re-layout.
+                _quadsValid = false;
+                SetVerticesDirty();
+            }
+        }
+
         /// <summary>Shifts the drawn text inside the box (used for scrolling an input field).</summary>
         public Vector2 ScrollOffset
         {
@@ -248,13 +319,13 @@ namespace OneText.UGUI
         /// <summary>Raised when a <c>&lt;link=id&gt;</c> range is clicked.</summary>
         public UnityEvent<string> LinkClicked => _linkClicked;
 
-        /// <summary>The most recent layout — lines, runs and glyph positions.</summary>
+        /// <summary>The most recent layout: lines, runs and glyph positions.</summary>
         public TextLayoutResult LayoutResult => _layout;
 
         /// <summary>
         /// The fallback chain this label resolved, once it has laid anything
         /// out. For the development-build overlay, which exists to answer "why
-        /// is this label drawing boxes on the device and not in the editor" —
+        /// is this label drawing boxes on the device and not in the editor",
         /// a question about which font actually got used.
         /// </summary>
         internal FontStack ResolvedFonts => _fonts;
@@ -355,7 +426,7 @@ namespace OneText.UGUI
             return false;
         }
 
-        // A style that extends the changed one is affected too — that is what
+        // A style that extends the changed one is affected too; that is what
         // one level of inheritance is for.
         private static bool References(OneTextStyle held, OneTextStyle changed) =>
             held != null && (held == changed || held.Extends == changed);
@@ -449,6 +520,16 @@ namespace OneText.UGUI
             set { _punctuationCompression = value; InvalidateText(); }
         }
 
+        /// <summary>
+        /// Size of a <c>&lt;ruby=…&gt;</c> annotation, as a fraction of the
+        /// text it annotates.
+        /// </summary>
+        public float RubyScale
+        {
+            get => _rubyScale;
+            set { _rubyScale = RubyPlacement.ResolveScale(value); InvalidateText(); }
+        }
+
         // A subtag boundary, not a prefix: "kok" is Konkani, and giving it
         // Korean word wrap would be a silent wrong answer in a language even
         // further from anyone's notice than Korean.
@@ -493,7 +574,7 @@ namespace OneText.UGUI
             base.OnValidate();
             _parsedFrom = null;
             // The inspector writes serialized fields directly, never through
-            // the properties that invalidate — so any of them may just have
+            // the properties that invalidate, so any of them may just have
             // been the font or the fallback list. Rebuilding the stack here is
             // what makes "add an Arabic fallback" take effect on the label you
             // are looking at, instead of on the next domain reload.
@@ -510,7 +591,7 @@ namespace OneText.UGUI
             _revealCompleteFired = false;
             // Only a running typewriter rewinds on an edit. A label nobody asked
             // to type must not be blanked by one, and a label in the Scene view
-            // must not be blanked at all — there is no clock out there to
+            // must not be blanked at all; there is no clock out there to
             // un-blank it with.
             if (_charactersPerSecond > 0f && Application.isPlaying) RestartReveal();
             SetVerticesDirty();
@@ -590,7 +671,7 @@ namespace OneText.UGUI
         /// always yes: a <c>&lt;pop for=0.3&gt;</c> damage number keeps its span
         /// until the text is rebuilt, so it would go on paying a full mesh
         /// re-emit every frame, for ever, to redraw exactly the pixels already
-        /// on screen. What matters is whether any effect is still moving —
+        /// on screen. What matters is whether any effect is still moving,
         /// which for a <c>for=</c> span is its envelope, and for an appearance
         /// effect with no <c>for=</c> is the last reveal stamp plus the settle
         /// the effect declares. Only the ambient effects are genuinely endless.
@@ -610,7 +691,7 @@ namespace OneText.UGUI
             // Everything the animator knows about has elapsed, but a typewriter
             // mid-reveal is still work: appearance effects are keyed off each
             // cluster's own reveal stamp, and those stamps are read off this
-            // clock as the reveal passes them — a cluster whose turn has not
+            // clock as the reveal passes them; a cluster whose turn has not
             // come has not played. The animator says the same thing from the
             // stamps it has been given; this says it from the reveal the label
             // is about to draw, and so covers the frames before that draw.
@@ -681,8 +762,8 @@ namespace OneText.UGUI
         /// vertex channels the SDF shader reads.
         ///
         /// Assigning a material marks the graphic dirty, and uGUI logs an error
-        /// for anything that asks to be rebuilt while it is already rebuilding
-        /// — so this runs when the label enables or changes canvas, and the
+        /// for anything that asks to be rebuilt while it is already rebuilding,
+        /// so this runs when the label enables or changes canvas, and the
         /// call from inside mesh generation only covers the case where the
         /// material is still missing (it cannot dirty what has not drawn yet).
         /// </summary>
@@ -731,7 +812,7 @@ namespace OneText.UGUI
 
             // Length check, not just null: a domain reload serializes private
             // fields too, and Unity's serializer resurrects a null array as an
-            // empty one — so after the first script recompile every label that
+            // empty one, so after the first script recompile every label that
             // never called SetFont holds byte[0] here, which must mean "no
             // override", not "load this".
             if (_fontBytesOverride != null && _fontBytesOverride.Length > 0)
@@ -770,7 +851,7 @@ namespace OneText.UGUI
                     // everything it sets, and the label's own fields are the
                     // fallback for what it does not. The label cannot tell a
                     // deliberate 32 from a default 32, so "the label is more
-                    // specific" is not a rule it can actually implement — and
+                    // specific" is not a rule it can actually implement, and
                     // having font follow one rule while axes followed the
                     // opposite was the worst of both.
                     var axes = _variations;
@@ -804,6 +885,7 @@ namespace OneText.UGUI
                 Alignment = _alignment,
                 Wrap = _wrap,
                 Overflow = _overflow,
+                WritingMode = _writingMode,
                 LineSpacing = EffectiveLineSpacing,
                 BaseDirection = BidiAlgorithm.AutoDirection,
                 ResolveFontOverride = NamedFont,
@@ -822,6 +904,8 @@ namespace OneText.UGUI
                 Alignments = _markup.HasMarkup && _markup.Alignments.Count > 0
                     ? _markup.Alignments
                     : null,
+                Rubies = _markup.HasMarkup && _markup.Rubies.Count > 0 ? _markup.Rubies : null,
+                RubyScale = _rubyScale,
             };
 
         /// <summary>
@@ -835,52 +919,99 @@ namespace OneText.UGUI
             EnsureDisplayText();
 
             var rect = GetPixelAdjustedRect();
-            // The width is passed even when wrapping is off: the engine only
-            // wraps when asked to, but alignment needs to know the box — an
+            // The box side the text wraps on is always passed: the engine only
+            // wraps when asked to, but alignment needs to know the box; an
             // RTL single-line label still has to sit against the right edge.
-            float maxHeight = _overflow == TextOverflow.Overflow ? 0f : rect.height;
+            // The other side is the overflow budget, and only overflow spends
+            // it. Which side is which is what the writing mode decides, and
+            // this is the one place in the frontend that has to know.
+            bool vertical = _writingMode == TextWritingMode.VerticalRightToLeft;
+            bool budgeted = _overflow != TextOverflow.Overflow;
+            float maxWidth = vertical && !budgeted ? 0f : rect.width;
+            float maxHeight = vertical ? rect.height : (budgeted ? rect.height : 0f);
 
             // Laying out is the expensive half: line-break analysis, grapheme
             // segmentation, bidi and shaping, all of which depend on the text
             // and the box and on nothing else. Revealing one more cluster,
             // ticking an animation or running a quad modifier changes neither,
             // and re-running it every frame for them is exactly the cost the
-            // post-layout hook exists to avoid — so the result is kept until
+            // post-layout hook exists to avoid, so the result is kept until
             // something it actually depends on moves.
-            var key = new LayoutKey(_displayText, rect.width, maxHeight, EffectiveFontSize,
+            var key = new LayoutKey(_displayText, maxWidth, maxHeight, EffectiveFontSize,
                 EffectiveLineSpacing, _alignment, _wrap, _overflow, _layoutGeneration);
             if (!_layoutValid || !key.Equals(_layoutKey))
             {
-                _engine.Layout(_displayText, BuildSettings(rect.width, maxHeight), _layout);
+                _engine.Layout(_displayText, BuildSettings(maxWidth, maxHeight), _layout);
                 _layoutKey = key;
                 _layoutValid = true;
                 _quadsValid = false;
                 _layoutRuns++;
             }
 
-            float top = rect.yMax - _verticalAlignment switch
+            // Where the block's start corner sits, which is the corner both
+            // axes are measured from: the top left across the page, the top
+            // *right* down a column, because a right-to-left column stack
+            // starts at the right edge and grows leftward.
+            //
+            // The vertical alignment is the block axis either way (it places
+            // the stack of lines, or the stack of columns), so Top means "at
+            // the start edge" in both, and in a vertical label that edge is the
+            // right one.
+            float slack = (vertical ? rect.width : rect.height) - _layout.BlockExtent;
+            float inset = _verticalAlignment switch
             {
                 VerticalAlignment.Top => 0f,
-                VerticalAlignment.Middle => (rect.height - _layout.Height) * 0.5f,
-                _ => rect.height - _layout.Height,
+                VerticalAlignment.Middle => slack * 0.5f,
+                _ => slack,
             };
-            _blockOrigin = new Vector2(rect.xMin - _scrollOffset.x, top + _scrollOffset.y);
+            _blockOrigin = vertical
+                ? new Vector2(rect.xMax - inset - _scrollOffset.x, rect.yMax + _scrollOffset.y)
+                : new Vector2(rect.xMin - _scrollOffset.x, rect.yMax - inset + _scrollOffset.y);
             return _layout;
         }
 
+        /// <summary>True if this label is laid out down columns.</summary>
+        private bool IsVertical => _writingMode == TextWritingMode.VerticalRightToLeft;
+
         // ---------------------------------------------------------- hit testing
 
-        /// <summary>Layout-space point (x right, y down) to this graphic's local space.</summary>
+        /// <summary>
+        /// Layout-space point to this graphic's local space.
+        ///
+        /// Layout space is the engine's two axes and not the screen's: x along
+        /// the inline axis, y along the block axis, both growing away from the
+        /// block's start corner. Horizontally that is the familiar x-right,
+        /// y-down. Down a column it is x-down, y-*left*, which is the whole of
+        /// what the frontend has to know about 縦書き geometry; everything that
+        /// hit-tests, carets or selects goes through here and needs no vertical
+        /// case of its own.
+        /// </summary>
         public Vector2 LayoutToLocal(Vector2 layoutPoint) =>
-            new Vector2(_blockOrigin.x + layoutPoint.x, _blockOrigin.y - layoutPoint.y);
+            IsVertical
+                ? new Vector2(_blockOrigin.x - layoutPoint.y, _blockOrigin.y - layoutPoint.x)
+                : new Vector2(_blockOrigin.x + layoutPoint.x, _blockOrigin.y - layoutPoint.y);
 
         /// <summary>Local-space point to layout space.</summary>
         public Vector2 LocalToLayout(Vector2 localPoint) =>
-            new Vector2(localPoint.x - _blockOrigin.x, _blockOrigin.y - localPoint.y);
+            IsVertical
+                ? new Vector2(_blockOrigin.y - localPoint.y, _blockOrigin.x - localPoint.x)
+                : new Vector2(localPoint.x - _blockOrigin.x, _blockOrigin.y - localPoint.y);
 
-        /// <summary>Layout-space rect to a local-space rect (y flips).</summary>
+        /// <summary>
+        /// Layout-space rect to a local-space rect. The rectangle turns with
+        /// the axes: a caret bar spanning a line's height across the page spans
+        /// a column's width down it, which is what a caret in vertical text is.
+        /// </summary>
         public Rect LayoutToLocal(Rect layoutRect)
         {
+            if (IsVertical)
+            {
+                // (xMin, yMin) is the corner nearest the block start (top
+                // right), so the local rect hangs left and down from it.
+                var start = LayoutToLocal(new Vector2(layoutRect.xMin, layoutRect.yMin));
+                return new Rect(start.x - layoutRect.height, start.y - layoutRect.width,
+                    layoutRect.height, layoutRect.width);
+            }
             var topLeft = LayoutToLocal(new Vector2(layoutRect.xMin, layoutRect.yMin));
             return new Rect(topLeft.x, topLeft.y - layoutRect.height, layoutRect.width, layoutRect.height);
         }
@@ -961,14 +1092,14 @@ namespace OneText.UGUI
 
         /// <summary>
         /// The tiles this label last drew, in draw order. Read-only, and only
-        /// valid after a rebuild — but it is the finished geometry, addressed by
+        /// valid after a rebuild, but it is the finished geometry, addressed by
         /// grapheme cluster, which is what an animator wants and what no
         /// TMP-based one could get.
         /// </summary>
         public IReadOnlyList<TextQuad> Quads => _quads;
 
         /// <summary>
-        /// The tiles as they were actually drawn — after reveal and after every
+        /// The tiles as they were actually drawn, after reveal and after every
         /// effect and modifier had its say. <see cref="Quads"/> is the geometry
         /// layout produced; this is what reached the mesh.
         ///
@@ -991,14 +1122,14 @@ namespace OneText.UGUI
 
         /// <summary>
         /// The same table already packed for the mesh. Packed once when a
-        /// decoration is interned rather than once per tile per frame — an
+        /// decoration is interned rather than once per tile per frame; an
         /// animated label re-emits its vertices sixty times a second and the
         /// decoration on them has not changed since the text did.
         /// </summary>
         private readonly List<DecorationChannels> _packedDecorations =
             new List<DecorationChannels> { default };
 
-        /// <summary>What a tile is drawn with — outline, shadow, glow.</summary>
+        /// <summary>What a tile is drawn with: outline, shadow, glow.</summary>
         public TextDecoration DecorationOf(in TextQuad quad) =>
             quad.Decoration > 0 && quad.Decoration < _decorations.Count
                 ? _decorations[quad.Decoration]
@@ -1007,7 +1138,7 @@ namespace OneText.UGUI
         /// <summary>
         /// The decoration in force at a position in the display text: the
         /// label's own style underneath, a <c>&lt;style=…&gt;</c> over it, and
-        /// the decoration tags on top — each winning only the parts it sets, so
+        /// the decoration tags on top, each winning only the parts it sets, so
         /// a theme's shadow survives a span asking for an outline.
         ///
         /// Returns an index into <see cref="_decorations"/> rather than the
@@ -1035,7 +1166,7 @@ namespace OneText.UGUI
         }
 
         /// <summary>
-        /// Emits one run of a colour font — emoji, mostly.
+        /// Emits one run of a colour font: emoji, mostly.
         ///
         /// The shaping half of emoji was already done: a ZWJ family is one
         /// grapheme cluster under UAX #29 and one glyph once the font's
@@ -1044,8 +1175,85 @@ namespace OneText.UGUI
         /// out of the font and into an RGBA tile, which is what makes this the
         /// thing TextMesh Pro cannot do at all.
         /// </summary>
+
+        /// <summary>
+        /// Where one run's glyphs land in local space, and turned how far.
+        ///
+        /// Every tile the label draws is placed by two numbers in the font's
+        /// units (how far along the run it sits, and how far across it) plus
+        /// the tile's own ink box. Horizontally those are x and y and the
+        /// arithmetic is two adds. In a column the along axis runs downward and
+        /// the across axis runs rightward, and a rotated run turns its tiles
+        /// ninety degrees on top of that. Three cases, one signature, resolved
+        /// once per run rather than once per tile, so the horizontal path pays
+        /// a predictable branch and nothing else.
+        /// </summary>
+        private readonly struct RunFrame
+        {
+            /// <summary>Local-space origin: the run's start on its own baseline.</summary>
+            public readonly float BaseX, BaseY;
+
+            /// <summary>Render units per font design unit.</summary>
+            public readonly float Scale;
+
+            public readonly bool Vertical, Rotated;
+
+            public RunFrame(float baseX, float baseY, float scale, bool vertical, bool rotated)
+            {
+                BaseX = baseX;
+                BaseY = baseY;
+                Scale = scale;
+                Vertical = vertical;
+                Rotated = rotated;
+            }
+
+            /// <summary>The run's baseline on the axis across it, in local space.</summary>
+            public float Baseline => Vertical ? BaseX : BaseY;
+
+            /// <summary>
+            /// Places one tile. <paramref name="along"/> and
+            /// <paramref name="across"/> are the glyph's pen position in font
+            /// units; <paramref name="originUnits"/> and
+            /// <paramref name="sizeUnits"/> are its ink box, in the glyph's own
+            /// upright frame.
+            /// </summary>
+            public void Place(float along, float across, Vector2 originUnits, Vector2 sizeUnits,
+                out Vector2 position, out Vector2 size, out float rotation)
+            {
+                size = sizeUnits * Scale;
+                if (!Vertical)
+                {
+                    position = new Vector2(BaseX + (along + originUnits.x) * Scale,
+                        BaseY + (across + originUnits.y) * Scale);
+                    rotation = 0f;
+                    return;
+                }
+                if (!Rotated)
+                {
+                    // Upright: the pen runs down the column and the glyph's own
+                    // frame is still the screen's, so the ink box is added the
+                    // way it always was.
+                    position = new Vector2(BaseX + (across + originUnits.x) * Scale,
+                        BaseY - along * Scale + originUnits.y * Scale);
+                    rotation = 0f;
+                    return;
+                }
+                // Rotated: the whole glyph frame turns clockwise about the run
+                // origin, so a point (gx, gy) of it lands at (gy, -gx). The mesh
+                // rotates a tile about its own centre, so what it is given is
+                // the tile where it would be unturned, centred where the turned
+                // one belongs.
+                float gx = (along + originUnits.x) * Scale;
+                float gy = (across + originUnits.y) * Scale;
+                position = new Vector2(
+                    BaseX + gy + (size.y - size.x) * 0.5f,
+                    BaseY - gx - (size.x + size.y) * 0.5f);
+                rotation = -90f;
+            }
+        }
+
         private void EmitColorRun(in TextRun run, FontData font, float runSize, float scale,
-            float penX, float baseline, Color32 runColor, int runIndex, GlyphAtlas sdfAtlas)
+            in RunFrame frame, Color32 runColor, int runIndex, GlyphAtlas sdfAtlas)
         {
             var colorAtlas = SharedGlyphAtlas.ColorAtlas;
             int ppem = GlyphAtlas.QuantizePixelsPerEm(runSize);
@@ -1056,12 +1264,12 @@ namespace OneText.UGUI
             for (int i = run.GlyphStart; i < run.GlyphStart + run.GlyphCount; i++)
             {
                 var glyph = _layout.Glyphs[i];
-                float x = penX + (pen + glyph.XOffset) * scale;
+                float along = pen + glyph.XOffset;
 
                 // A colour font is not a font in which every glyph has colour.
                 // Noto Color Emoji carries monochrome glyphs, digits and
                 // .notdef, and the earlier version of this dropped every one of
-                // them on the floor — a whole run went down the colour path and
+                // them on the floor; a whole run went down the colour path and
                 // anything that failed to decode simply advanced the pen. So
                 // the decision is per glyph, and the fallback is the ordinary
                 // SDF tile rather than nothing.
@@ -1071,7 +1279,7 @@ namespace OneText.UGUI
                 // apply to.
                 int decoration = ResolveDecoration(glyph.Cluster, run.Style);
                 if (TryEmitColorGlyph(font, glyph, ppem, pixelsPerUnit, runColor, colorAtlas,
-                        x, baseline, scale, run, runIndex, runTextEnd, i, decoration))
+                        frame, along, glyph.YOffset, run, runIndex, runTextEnd, i, decoration))
                 {
                     pen += glyph.XAdvance;
                     continue;
@@ -1081,7 +1289,7 @@ namespace OneText.UGUI
                 if (sdf.HasPixels)
                 {
                     AddQuad(sdf.OriginUnits, sdf.SizeUnits, sdf.UvRect, sdf.Layer,
-                        x, baseline + glyph.YOffset * scale, scale, runColor,
+                        frame, along, glyph.YOffset, runColor,
                         run, runIndex, ClusterRange(i, runTextEnd), isColor: false, decoration);
                 }
                 pen += glyph.XAdvance;
@@ -1090,11 +1298,11 @@ namespace OneText.UGUI
 
         /// <summary>
         /// Draws an inline sprite from the sheet, through the same RGBA atlas
-        /// and the same quad path as colour emoji — so a line of dialogue with
+        /// and the same quad path as colour emoji, so a line of dialogue with
         /// icons in it is still one draw call.
         /// </summary>
         private void EmitSprite(in TextRun run, float runSize, float scale,
-            float penX, float baseline, Color32 runColor, int runIndex)
+            in RunFrame frame, Color32 runColor, int runIndex)
         {
             if (_sprites == null) return;
 
@@ -1114,22 +1322,45 @@ namespace OneText.UGUI
             if (!location.HasPixels) return;
 
             // A sprite sits on the baseline and rises to the line's em, which
-            // is what lines an icon up with the text beside it.
+            // is what lines an icon up with the text beside it. Down a column
+            // it sits on the centre line and takes its em there too, so the ink
+            // box is the same box shifted half its width across; an icon in a
+            // column is centred in it, not hung off one side.
             float height = runSize;
             float width = height * _sprites.AspectOf(run.Style.Sprite);
             int grapheme = _layout.GraphemeAt(run.TextStart);
 
+            // The icon has no font behind it, so the cell is placed by hand:
+            // resting on the baseline across the page, hanging from the pen and
+            // centred on the column down one. A rotated run needs neither:
+            // its whole frame turns and the cell turns with it.
+            float alongUnits = 0f, acrossUnits = 0f;
+            if (frame.Vertical && !frame.Rotated && frame.Scale > 0f)
+            {
+                alongUnits = height / frame.Scale;
+                acrossUnits = -width * 0.5f / frame.Scale;
+            }
+            var cellUnits = frame.Scale > 0f
+                ? new Vector2(width / frame.Scale, height / frame.Scale)
+                : Vector2.zero;
+
+            frame.Place(alongUnits, acrossUnits, Vector2.zero, cellUnits,
+                out var position, out var size, out float rotation);
             _quads.Add(new TextQuad
             {
-                Position = new Vector2(penX, baseline),
-                Size = new Vector2(width, height),
+                Position = position,
+                Size = size,
+                // A picture has no upright form to preserve: a rotated column
+                // turns its icons with its letters, which is what an inline
+                // arrow or a face in a line of Latin means.
+                Rotation = rotation,
                 UvRect = location.UvRect,
                 Layer = location.Layer,
                 Color = runColor,
                 FirstGrapheme = grapheme,
                 LastGrapheme = grapheme,
                 RunIndex = runIndex,
-                Baseline = baseline,
+                Baseline = frame.Baseline,
                 Style = run.Style,
                 IsColor = true,
             });
@@ -1151,7 +1382,7 @@ namespace OneText.UGUI
 
         private bool TryEmitColorGlyph(FontData font, in ShapedGlyph glyph, int ppem,
             float pixelsPerUnit, Color32 runColor, ColorGlyphAtlas colorAtlas,
-            float x, float baseline, float scale, in TextRun run, int runIndex,
+            in RunFrame frame, float along, float across, in TextRun run, int runIndex,
             int runTextEnd, int glyphIndex, int decoration)
         {
             bool followsText = ColorGlyphs.UsesTextColor(font, glyph.GlyphId);
@@ -1166,29 +1397,35 @@ namespace OneText.UGUI
             if (!location.HasPixels) return false;
 
             AddQuad(location.OriginUnits, location.SizeUnits, location.UvRect, location.Layer,
-                x, baseline + glyph.YOffset * scale, scale, runColor,
+                frame, along, across, runColor,
                 run, runIndex, ClusterRange(glyphIndex, runTextEnd), isColor: true, decoration);
             return true;
         }
 
         private void AddQuad(Vector2 originUnits, Vector2 sizeUnits, Rect uv, int layer,
-            float x, float baseline, float scale, Color32 color,
+            in RunFrame frame, float along, float across, Color32 color,
             in TextRun run, int runIndex, (int First, int Last) graphemes, bool isColor,
             int decoration)
         {
+            frame.Place(along, across, originUnits, sizeUnits,
+                out var position, out var size, out float rotation);
             _quads.Add(new TextQuad
             {
-                Position = new Vector2(x + originUnits.x * scale, baseline + originUnits.y * scale),
-                Size = new Vector2(sizeUnits.x * scale, sizeUnits.y * scale),
+                Position = position,
+                Size = size,
+                Rotation = rotation,
                 UvRect = uv,
                 Layer = layer,
                 Color = color,
                 FirstGrapheme = graphemes.First,
                 LastGrapheme = graphemes.Last,
                 RunIndex = runIndex,
-                Baseline = baseline,
+                Baseline = frame.Baseline,
                 Style = run.Style,
                 IsColor = isColor,
+                // A colour tile is a picture in the colour atlas whatever the
+                // label asked for; only the SDF fallback follows the option.
+                IsPrecise = !isColor && _precise,
                 Decoration = decoration,
             });
         }
@@ -1197,7 +1434,7 @@ namespace OneText.UGUI
         /// The grapheme clusters one glyph covers.
         ///
         /// A ligature is one glyph with one cluster value spanning several
-        /// characters — "fi" is two, lam-alef is two, and the shaper reports
+        /// characters: "fi" is two, lam-alef is two, and the shaper reports
         /// only where it starts. Its end is where the *next* glyph starts, so
         /// that is what this looks for. Getting it wrong shows a ligature one
         /// reveal step early, with its second letter appearing before its turn.
@@ -1224,12 +1461,12 @@ namespace OneText.UGUI
         {
             long key = ((long)font.CacheId << 40) ^ ((long)glyphId << 12) ^ ppem;
             // The tint is part of the key only for glyphs that actually bake it
-            // in — a COLR layer using the "use the text colour" sentinel. Every
+            // in: a COLR layer using the "use the text colour" sentinel. Every
             // other tile is colour-independent, and keying them by colour would
             // cost a cache miss per tint for nothing. Leaving it out for the
             // ones that do bake it in is worse: the first label to draw wins
             // and every other colour is silently wrong. The tint that arrives
-            // here is the tag's colour, never the label's — the label colour is
+            // here is the tag's colour, never the label's; the label colour is
             // a vertex multiply at emit, so a fading label reuses one tile
             // instead of baking one per alpha step.
             if (tint.a != 0 || tint.r != 0 || tint.g != 0 || tint.b != 0)
@@ -1248,7 +1485,7 @@ namespace OneText.UGUI
         {
             long emitStartedAt = AtlasDiagnostics.Now;
             EnsureAnimator();
-            // A frozen clock would leave every appearance effect at t=0 — which
+            // A frozen clock would leave every appearance effect at t=0, which
             // is alpha 0, which is text that has vanished. In the editor, and
             // for anyone who left AnimationTime alone, effects are shown
             // finished rather than never-started: a designer typing <fade> into
@@ -1267,7 +1504,7 @@ namespace OneText.UGUI
             var context = new TextQuadContext(_layout, _layout.GraphemeCount, _animationTime);
 
             // The label's colour joins here, on the way to the mesh, not in the
-            // cached quads — which is what lets a colour tween (the damage-text
+            // cached quads, which is what lets a colour tween (the damage-text
             // fade) redraw without rebuilding a thing. Applied after the
             // animator and the modifier so both keep seeing the tag colours
             // they were written against, and a fading label fades their output
@@ -1315,7 +1552,7 @@ namespace OneText.UGUI
                     EmitRotatedQuad(vh, quad, decoration);
                 else
                     EmitQuad(vh, quad.Position.x, quad.Position.y, quad.Size.x, quad.Size.y,
-                        quad.UvRect, quad.Layer, quad.Color, quad.IsColor, decoration);
+                        quad.UvRect, quad.Layer, quad.Color, AtlasOf(quad), decoration);
             }
             AtlasDiagnostics.Add(ref AtlasDiagnostics.EmitTicks, emitStartedAt);
         }
@@ -1330,14 +1567,14 @@ namespace OneText.UGUI
         /// The reveal to actually draw.
         ///
         /// A label whose typewriter is driving has no clock outside play mode,
-        /// so its serialized reveal is wherever the last play session left it —
+        /// so its serialized reveal is wherever the last play session left it,
         /// and a designer shown a blank label in the Scene view cannot tell that
         /// from a broken font. Same care, and the same reason, as the
         /// frozen-stamp rule in EmitQuads.
         ///
         /// Only a STALE reveal is overridden. Once something in this session has
-        /// moved it — the inspector slider, a script, an editor preview calling
-        /// <see cref="RestartReveal"/> — it is a deliberate statement about what
+        /// moved it (the inspector slider, a script, an editor preview calling
+        /// <see cref="RestartReveal"/>), it is a deliberate statement about what
         /// should be on screen and is drawn as written.
         /// </summary>
         private int EffectiveMaxVisibleGraphemes =>
@@ -1350,8 +1587,8 @@ namespace OneText.UGUI
         private ITextQuadModifier _modifier;
         private float _animationTime;
 
-        [Tooltip("Advance AnimationTime automatically each frame. Turn off to drive it yourself " +
-                 "— a paused game should pause its text without the text knowing what paused means.")]
+        [Tooltip("Advance AnimationTime automatically each frame. Turn off to drive it yourself: " +
+                 "a paused game should pause its text without the text knowing what paused means.")]
         [SerializeField] private bool _animate = true;
 
         private readonly TextAnimator _animator = new TextAnimator();
@@ -1363,7 +1600,7 @@ namespace OneText.UGUI
         /// Grapheme clusters, not characters, because "one character at a time"
         /// is not a thing in shaped text: an Arabic ligature is two characters
         /// in one glyph, a Hangul syllable is three, a flag is four. Setting
-        /// this does not re-lay the text out — only the mesh is rebuilt.
+        /// this does not re-lay the text out; only the mesh is rebuilt.
         /// </summary>
         public int MaxVisibleGraphemes
         {
@@ -1385,8 +1622,8 @@ namespace OneText.UGUI
         /// <paramref name="current"/> grapheme clusters.
         ///
         /// A step to or from -1 ("all") is a jump and not a walk, so no
-        /// per-unit event is reported for what it crossed: that burst — two
-        /// hundred typing sounds in one frame — is exactly what
+        /// per-unit event is reported for what it crossed: that burst, two
+        /// hundred typing sounds in one frame, is exactly what
         /// <see cref="SkipToEnd"/> exists to avoid. Completion is not a walk
         /// either, so it is decided first and reported however the reveal
         /// arrived.
@@ -1399,7 +1636,7 @@ namespace OneText.UGUI
 
             if (current < 0 || previous < 0) return;
 
-            // One event per cluster that just became visible, in order — not
+            // One event per cluster that just became visible, in order, not
             // one per assignment. A typewriter that jumps forward several
             // clusters in a frame (a fast-forward, a low frame rate) still has
             // to fire the sound effect for each, which is what a dialogue
@@ -1434,7 +1671,7 @@ namespace OneText.UGUI
         /// </summary>
         public UnityEvent<int> GraphemeRevealed => _graphemeRevealed;
 
-        /// <summary>Grapheme clusters in the laid-out text — the reveal's end.</summary>
+        /// <summary>Grapheme clusters in the laid-out text: the reveal's end.</summary>
         public int GraphemeCount => EnsureLayout().GraphemeCount;
 
         // ---------------------------------------------------------- typewriter
@@ -1445,7 +1682,7 @@ namespace OneText.UGUI
                  "of their own. Korean is one step per syllable block under all three.")]
         [SerializeField] private RevealGranularity _revealGranularity = RevealGranularity.Grapheme;
 
-        [Tooltip("Reveal speed, in units per second. 0 — the default — leaves the reveal alone " +
+        [Tooltip("Reveal speed, in units per second. 0 (the default) leaves the reveal alone " +
                  "for whoever was driving MaxVisibleGraphemes by hand.")]
         [SerializeField] private float _charactersPerSecond;
 
@@ -1525,7 +1762,7 @@ namespace OneText.UGUI
 
         /// <summary>
         /// Raised once per revealed unit, with that unit's index under the
-        /// current <see cref="RevealGranularity"/> — the hook for typing sounds.
+        /// current <see cref="RevealGranularity"/>: the hook for typing sounds.
         ///
         /// Per UNIT, which is the whole reason it exists next to
         /// <see cref="GraphemeRevealed"/>: 한 is three code points, a ZWJ family
@@ -1562,7 +1799,7 @@ namespace OneText.UGUI
         }
 
         /// <summary>
-        /// The grapheme cluster a reveal unit starts at — assign it to
+        /// The grapheme cluster a reveal unit starts at; assign it to
         /// <see cref="MaxVisibleGraphemes"/> to show exactly that many units.
         /// </summary>
         public int GraphemeOfRevealUnit(int unit)
@@ -1574,7 +1811,7 @@ namespace OneText.UGUI
         /// <summary>
         /// Jumps to fully revealed.
         ///
-        /// Fires <see cref="RevealComplete"/> once and fires NOTHING per unit —
+        /// Fires <see cref="RevealComplete"/> once and fires NOTHING per unit:
         /// not <see cref="CharacterRevealed"/> and not
         /// <see cref="GraphemeRevealed"/>. This is the button a player mashes to
         /// stop the typing, and replaying two hundred clicks in a single frame
@@ -1582,8 +1819,8 @@ namespace OneText.UGUI
         /// to know has RevealComplete, which is one event and says so.
         ///
         /// Leaves the reveal at -1 rather than at the grapheme count, because -1
-        /// is "nothing is holding text back" — the state an untyped label is in
-        /// and the state the Scene view draws — so a skipped label and a label
+        /// is "nothing is holding text back" (the state an untyped label is in
+        /// and the state the Scene view draws), so a skipped label and a label
         /// that never typed are the same label.
         /// </summary>
         public void SkipToEnd()
@@ -1603,7 +1840,7 @@ namespace OneText.UGUI
         /// clock can drive it, and so this is testable without a running game.
         ///
         /// Does nothing while <see cref="CharactersPerSecond"/> is 0, and
-        /// returns immediately once the reveal is finished — which is what lets
+        /// returns immediately once the reveal is finished, which is what lets
         /// the label's clock stop rather than dirtying a mesh for ever.
         /// </summary>
         public void AdvanceReveal(float deltaSeconds)
@@ -1628,7 +1865,7 @@ namespace OneText.UGUI
             {
                 _revealFresh = false;
                 _revealBudget = 0f;
-                // A <wait> standing in front of this unit still holds — written
+                // A <wait> standing in front of this unit still holds; written
                 // before the first character, it holds the whole line back,
                 // which is what a writer means by putting it there.
                 _revealPause = WaitBefore(revealed);
@@ -1654,7 +1891,7 @@ namespace OneText.UGUI
                 revealed++;
                 // What is owed before the next one: the pause the punctuation
                 // just revealed asks for, plus any <wait> written at this exact
-                // point. They add — a beat after a full stop and an explicit
+                // point. They add: a beat after a full stop and an explicit
                 // pause after it are two pauses, not the louder of two.
                 _revealPause = PunctuationDelayAfter(revealed - 1) + WaitBefore(revealed);
             }
@@ -1669,7 +1906,7 @@ namespace OneText.UGUI
         /// New text does this by itself in play mode; this is for retyping the
         /// same line, and for driving the reveal from an editor tool or a test,
         /// where there is no play clock to opt in with. Does nothing to the
-        /// reveal while <see cref="CharactersPerSecond"/> is 0 — with no
+        /// reveal while <see cref="CharactersPerSecond"/> is 0: with no
         /// typewriter to rewind, blanking the label would leave it blank.
         /// </summary>
         public void RestartReveal()
@@ -1758,7 +1995,7 @@ namespace OneText.UGUI
         /// The delay a just-revealed unit asks for: the longest row matching any
         /// character in it.
         ///
-        /// The whole unit, not its first character — under Syllable granularity
+        /// The whole unit, not its first character: under Syllable granularity
         /// 。 arrives attached to the character before it, and a table that only
         /// looked at where a unit starts would never see a full stop at all.
         /// Longest rather than sum, because "！？" is one beat and not two.
@@ -1804,7 +2041,7 @@ namespace OneText.UGUI
         }
 
         /// <summary>
-        /// Time handed to the quad modifier. The frontend does not advance it —
+        /// Time handed to the quad modifier. The frontend does not advance it;
         /// whatever drives the animation does, so a paused game pauses the text
         /// without the text having to know what "paused" means.
         /// </summary>
@@ -1852,14 +2089,16 @@ namespace OneText.UGUI
             }
 
             // Fetched per rebuild, not cached: changing the atlas budget in
-            // Project Settings replaces the atlas underneath us.
-            var atlas = SharedGlyphAtlas.Atlas;
+            // Project Settings replaces the atlas underneath us. A precise
+            // label draws from the multi-channel atlas, which is created the
+            // first time one asks for it and never otherwise.
+            var atlas = _precise ? SharedGlyphAtlas.PreciseAtlas : SharedGlyphAtlas.Atlas;
             CharsetRecorder.Record(DisplayText, EffectiveFontSize);
 
             // Quad generation depends on the layout and on the atlas, and on
-            // nothing an animation frame touches. Regenerating it per frame —
-            // clustering every run, hashing every tile, walking the grapheme
-            // table per quad — is precisely the "rebuild time" this design
+            // nothing an animation frame touches. Regenerating it per frame
+            // (clustering every run, hashing every tile, walking the grapheme
+            // table per quad) is precisely the "rebuild time" this design
             // promises animated text does not pay. The label's colour is one of
             // those live things: it is multiplied in at emit, never baked into
             // the cached quads, so a colour tween redraws at animation cost.
@@ -1879,6 +2118,7 @@ namespace OneText.UGUI
             }
 
             _quads.Clear();
+            bool vertical = IsVertical;
             // Rebuilt with the quads that index into it, never separately: a
             // table left over from the previous text would have its slots
             // pointing at decorations from a string that is no longer on screen.
@@ -1899,7 +2139,7 @@ namespace OneText.UGUI
                 float scale = runSize / font.UnitsPerEm;
                 // Only the tag's colour is baked. The label's own colour is
                 // multiplied in at emit time, so tinting or fading a label
-                // never invalidates these quads — and never re-bakes a colour
+                // never invalidates these quads, and never re-bakes a colour
                 // tile, which would otherwise put one tile per fade step into
                 // the atlas.
                 var runColor = run.Style.HasColor ? run.Style.Color : new Color32(255, 255, 255, 255);
@@ -1910,14 +2150,24 @@ namespace OneText.UGUI
                 // apart stays its own tile so the cache survives text edits.
                 float mergeGapUnits = GlyphClusters.DefaultMergeGapUnits(font);
 
-                float penX = _blockOrigin.x + run.X;
-                float baseline = _blockOrigin.y - run.Baseline + run.BaselineShift;
+                // The run's origin, and how its glyph frame is turned. Down a
+                // column the block axis runs leftward from the block's right
+                // edge, and a rotated run's own baseline sits off the centre
+                // line by half its line box, both of which are arithmetic on
+                // the same two numbers the horizontal path already uses.
+                var frame = vertical
+                    ? new RunFrame(
+                        _blockOrigin.x - run.Baseline - run.CrossAxisBaselineOffset
+                            + run.BaselineShift,
+                        _blockOrigin.y - run.X, scale, true, run.Rotated)
+                    : new RunFrame(_blockOrigin.x + run.X,
+                        _blockOrigin.y - run.Baseline + run.BaselineShift, scale, false, false);
 
-                // A sprite run has no glyphs to look up — its one synthetic
+                // A sprite run has no glyphs to look up: its one synthetic
                 // glyph is an advance, and the picture comes from the sheet.
                 if (run.Style.IsSprite)
                 {
-                    EmitSprite(run, runSize, scale, penX, baseline, runColor, runIndex);
+                    EmitSprite(run, runSize, scale, frame, runColor, runIndex);
                     runIndex++;
                     continue;
                 }
@@ -1927,17 +2177,27 @@ namespace OneText.UGUI
                 // the clustering entirely and go one glyph to one tile.
                 if (ColorGlyphs.IsColorFont(font))
                 {
-                    EmitColorRun(run, font, runSize, scale, penX, baseline, runColor, runIndex, atlas);
+                    EmitColorRun(run, font, runSize, scale, frame, runColor, runIndex, atlas);
                     runIndex++;
                     continue;
                 }
 
                 // Each cluster of ink-overlapping glyphs bakes as ONE merged SDF,
-                // so joints between connected glyphs live in the field's interior —
-                // there is no boundary left to seam.
+                // so joints between connected glyphs live in the field's interior;
+                // there is no boundary left to seam. Upright text in a column is
+                // the exception and takes a tile per glyph; the comment on
+                // SplitUpright says why merging has nothing to find there.
                 long splitStartedAt = AtlasDiagnostics.Now;
-                GlyphClusters.Split(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
-                    _clusters, _positioned, maxClusterUnits, mergeGapUnits);
+                if (frame.Vertical && !frame.Rotated)
+                {
+                    GlyphClusters.SplitUpright(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
+                        _clusters, _positioned);
+                }
+                else
+                {
+                    GlyphClusters.Split(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
+                        _clusters, _positioned, maxClusterUnits, mergeGapUnits);
+                }
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.SplitTicks, splitStartedAt);
 
                 // Bake everything this run is missing in one dispatch: a job per
@@ -1954,21 +2214,23 @@ namespace OneText.UGUI
                     AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
                     if (!loc.HasPixels) continue;
 
+                    frame.Place(cluster.PenX, cluster.PenY, loc.OriginUnits, loc.SizeUnits,
+                        out var position, out var size, out float rotation);
                     _quads.Add(new TextQuad
                     {
-                        Position = new Vector2(
-                            penX + (cluster.PenX + loc.OriginUnits.x) * scale,
-                            baseline + loc.OriginUnits.y * scale),
-                        Size = new Vector2(loc.SizeUnits.x * scale, loc.SizeUnits.y * scale),
+                        Position = position,
+                        Size = size,
+                        Rotation = rotation,
                         UvRect = loc.UvRect,
                         Layer = loc.Layer,
                         Color = runColor,
                         FirstGrapheme = _layout.GraphemeAt(cluster.TextStart),
                         LastGrapheme = _layout.GraphemeAt(Mathf.Max(cluster.TextStart, cluster.TextEnd - 1)),
                         RunIndex = runIndex,
-                        Baseline = baseline,
+                        Baseline = frame.Baseline,
                         Style = run.Style,
                         Decoration = ResolveDecoration(cluster.TextStart, run.Style),
+                        IsPrecise = _precise,
                     });
                 }
                 runIndex++;
@@ -2009,11 +2271,25 @@ namespace OneText.UGUI
 
         public float minHeight => 0f;
 
+        // The two preferred sizes are one question asked twice: how long is
+        // the text when nothing constrains it, and how far does it stack when
+        // the other side is held to the box? Which of width and height is
+        // which swaps with the writing mode, because it is the inline axis
+        // that runs unconstrained and the block axis that stacks.
+
         public float preferredWidth
         {
             get
             {
                 if (!EnsureNativeState()) return 0f;
+                if (IsVertical)
+                {
+                    // Down a column, width is the stack: how far the columns
+                    // reach once each has been cut to the box's height.
+                    float height = _wrap == TextWrap.Wrap ? rectTransform.rect.height : 0f;
+                    _engine.Layout(DisplayText, BuildSettings(0f, height), _measure);
+                    return _measure.Width;
+                }
                 var settings = BuildSettings(0f, 0f);
                 settings.Wrap = TextWrap.NoWrap;
                 _engine.Layout(DisplayText, settings, _measure);
@@ -2026,6 +2302,14 @@ namespace OneText.UGUI
             get
             {
                 if (!EnsureNativeState()) return 0f;
+                if (IsVertical)
+                {
+                    // And height is the run: one unwrapped column, end to end.
+                    var vertical = BuildSettings(0f, 0f);
+                    vertical.Wrap = TextWrap.NoWrap;
+                    _engine.Layout(DisplayText, vertical, _measure);
+                    return _measure.Height;
+                }
                 float width = _wrap == TextWrap.Wrap ? rectTransform.rect.width : 0f;
                 _engine.Layout(DisplayText, BuildSettings(width, 0f), _measure);
                 return _measure.Height;
@@ -2041,7 +2325,7 @@ namespace OneText.UGUI
 #if ONETEXT_UGUI_HAS_MAX_SIZE
         // uGUI 2.6 added max-size members to ILayoutElement. Implementing them
         // unconditionally would not compile against older uGUI, and not
-        // implementing them stops the package compiling against newer uGUI —
+        // implementing them stops the package compiling against newer uGUI;
         // hence the version define (see OneText.UGUI.asmdef). A label imposes
         // no maximum of its own; negative means "not set", as it does for
         // flexible size.
@@ -2053,20 +2337,20 @@ namespace OneText.UGUI
         /// <summary>
         /// The label's colour tinted by a <c>&lt;color&gt;</c> tag. Multiplying
         /// rather than replacing is what makes fading a label out still fade
-        /// its coloured words — the tag says "red", not "opaque red".
+        /// its coloured words: the tag says "red", not "opaque red".
         /// </summary>
         private static Color32 Multiply(Color32 a, Color32 b) => new Color32(
             (byte)(a.r * b.r / 255), (byte)(a.g * b.g / 255),
             (byte)(a.b * b.b / 255), (byte)(a.a * b.a / 255));
 
         private static void EmitQuad(VertexHelper vh, float x, float y, float w, float h,
-            Rect uv, int layer, Color32 c, bool color, in DecorationChannels decoration)
+            Rect uv, int layer, Color32 c, float atlas, in DecorationChannels decoration)
         {
             int start = vh.currentVertCount;
-            AddVert(vh, x, y, uv.xMin, uv.yMin, layer, uv, c, color, decoration);
-            AddVert(vh, x, y + h, uv.xMin, uv.yMax, layer, uv, c, color, decoration);
-            AddVert(vh, x + w, y + h, uv.xMax, uv.yMax, layer, uv, c, color, decoration);
-            AddVert(vh, x + w, y, uv.xMax, uv.yMin, layer, uv, c, color, decoration);
+            AddVert(vh, x, y, uv.xMin, uv.yMin, layer, uv, c, atlas, decoration);
+            AddVert(vh, x, y + h, uv.xMin, uv.yMax, layer, uv, c, atlas, decoration);
+            AddVert(vh, x + w, y + h, uv.xMax, uv.yMax, layer, uv, c, atlas, decoration);
+            AddVert(vh, x + w, y, uv.xMax, uv.yMin, layer, uv, c, atlas, decoration);
             vh.AddTriangle(start, start + 1, start + 2);
             vh.AddTriangle(start, start + 2, start + 3);
         }
@@ -2102,7 +2386,16 @@ namespace OneText.UGUI
 
         private static void AddVertAt(VertexHelper vh, Vector2 at, float u, float v,
             in TextQuad quad, in DecorationChannels decoration) =>
-            AddVert(vh, at.x, at.y, u, v, quad.Layer, quad.UvRect, quad.Color, quad.IsColor, decoration);
+            AddVert(vh, at.x, at.y, u, v, quad.Layer, quad.UvRect, quad.Color, AtlasOf(quad), decoration);
+
+        /// <summary>
+        /// Which atlas a tile samples, as the shader's discriminator: 0 the
+        /// single-channel field, 1 the colour picture, 2 the multi-channel
+        /// field. One number rather than a material per atlas, which is what
+        /// keeps all three in one draw call.
+        /// </summary>
+        private static float AtlasOf(in TextQuad quad) =>
+            quad.IsColor ? 1f : quad.IsPrecise ? 2f : 0f;
 
         /// <summary>
         /// The decoration parameters as the two vertex channels carry them.
@@ -2122,7 +2415,7 @@ namespace OneText.UGUI
         }
 
         /// <summary>
-        /// Packs a decoration into the two channels — see the budget above
+        /// Packs a decoration into the two channels; see the budget above
         /// <see cref="AddVert"/>. A part that is not set is written with a zero
         /// in the byte the shader tests, which is what makes "undecorated" a
         /// value rather than a branch.
@@ -2157,13 +2450,13 @@ namespace OneText.UGUI
         ///
         /// TEXCOORD0  xy tile uv · z atlas layer · w tile v-min
         /// TEXCOORD1  outline R|G · outline B|width · shadow R|G · shadow B|A
-        /// TEXCOORD2  x tile v-max · y tile u-min · z tile u-max · w colour-atlas flag
+        /// TEXCOORD2  x tile v-max · y tile u-min · z tile u-max · w which atlas
         /// TEXCOORD3  glow R|G · glow B|A · shadow dx|dy · shadow soft|glow radius
         ///
         /// <b>Nothing here is new.</b> The canvas is already asked for
         /// TexCoord1/2/3 (see EnsureMaterial), and TEXCOORD1, TEXCOORD3 and
         /// TEXCOORD2.yz were the second and third sweep-line samples and their
-        /// v-maxes — dead since joints moved into the field's interior with
+        /// v-maxes, dead since joints moved into the field's interior with
         /// cluster-union rasterization, and written as an unused-slot sentinel
         /// ever since. So decorations cost <em>zero</em> extra bytes per vertex,
         /// and a decorated label still batches with an undecorated one because
@@ -2171,7 +2464,7 @@ namespace OneText.UGUI
         ///
         /// Normal and Tangent stay off the canvas deliberately. Turning them on
         /// costs seven floats per vertex on <em>every</em> graphic in that
-        /// canvas — Images, other people's components, not just ours — which is
+        /// canvas (Images, other people's components, not just ours), which is
         /// a bill we would be handing to the whole project for a drop shadow.
         ///
         /// Two bytes per float, never three: an interpolator that hands back the
@@ -2182,23 +2475,24 @@ namespace OneText.UGUI
         /// The tile's u bounds are here for the shadow, and only for it: the
         /// face samples inside its own quad by construction, but an offset
         /// sample walks sideways out of the tile and into whatever glyph the
-        /// atlas shelf packed next to it — a ghost of an unrelated letter, drawn
+        /// atlas shelf packed next to it: a ghost of an unrelated letter, drawn
         /// as this one's shadow.
         ///
-        /// Where MSDF slots in when it lands: nowhere here. A multi-channel
+        /// MSDF landed where this said it would: nowhere here. A multi-channel
         /// field changes the atlas format and the coverage maths, not the
-        /// per-vertex data; it needs one more value of the TEXCOORD2.w
-        /// discriminator that already tells the colour atlas from the SDF one.
+        /// per-vertex data; it took the third value of the TEXCOORD2.w
+        /// discriminator that already told the colour atlas from the SDF one.
         /// </summary>
         private static void AddVert(VertexHelper vh, float x, float y, float u, float v,
-            int layer, Rect uvRect, Color32 c, bool color, in DecorationChannels decoration)
+            int layer, Rect uvRect, Color32 c, float atlas, in DecorationChannels decoration)
         {
             var uvA = new Vector4(u, v, layer, uvRect.yMin);
-            // vmax.w picks the atlas: the SDF array or the colour one. It fits
-            // in a channel the mesh already carries, so emoji cost no extra
-            // vertex data and no second draw call — which is the whole reason
-            // the colour path is a flag rather than a submesh.
-            var vmax = new Vector4(uvRect.yMax, uvRect.xMin, uvRect.xMax, color ? 1f : 0f);
+            // vmax.w picks the atlas: single-channel field, colour picture or
+            // multi-channel field. It fits in a channel the mesh already
+            // carries, so emoji and precise text cost no extra vertex data and
+            // no second draw call, which is the whole reason both are flags
+            // rather than submeshes.
+            var vmax = new Vector4(uvRect.yMax, uvRect.xMin, uvRect.xMax, atlas);
             vh.AddVert(new Vector3(x, y), c, uvA, decoration.Colors, vmax, decoration.Shape,
                 s_Normal, s_Tangent);
         }

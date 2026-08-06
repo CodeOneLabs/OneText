@@ -7,23 +7,40 @@ namespace OneText
     ///
     /// One atlas is the point: rasterized glyphs are keyed by font, size bucket
     /// and variation instance, so every label in the project shares the same
-    /// cache — a second label showing the same text costs nothing to rasterize.
+    /// cache: a second label showing the same text costs nothing to rasterize.
     /// Sharing the material matters just as much: uGUI can only batch draws
     /// that use the same material, so a per-label material instance would put
     /// every label in its own draw call.
     /// </summary>
     public static class SharedGlyphAtlas
     {
-        private const string ShaderName = "OneText/SDF";
+        /// <summary>The shader every label draws through.</summary>
+        public const string ShaderName = "OneText/SDF";
+
+        /// <summary>
+        /// Where the shader is loaded from, relative to the package's
+        /// <c>Runtime/Shaders/Resources</c> folder.
+        ///
+        /// The folder is the whole point. Nothing in a scene references the SDF
+        /// shader (every label shares one material this class builds at
+        /// runtime), so a build has no reason to believe the shader is used and
+        /// strips it, which is a player where every label draws nothing.
+        /// Anything under a <c>Resources</c> folder ships whether or not the
+        /// dependency analyser can see who wants it, so the folder name is what
+        /// carries the dependency, and it does so without asking the project to
+        /// add a line to Always Included Shaders.
+        /// </summary>
+        public const string ShaderResourcePath = "OneText-SDF";
 
         private static GlyphAtlas s_atlas;
+        private static GlyphAtlas s_preciseAtlas;
         private static ColorGlyphAtlas s_colorAtlas;
         private static Material s_material;
         private static int s_references;
 
         /// <summary>
         /// The shared RGBA atlas for colour emoji and inline sprites, created on
-        /// first use — a project with no colour glyphs never pays for it.
+        /// first use: a project with no colour glyphs never pays for it.
         /// </summary>
         public static ColorGlyphAtlas ColorAtlas
         {
@@ -38,8 +55,37 @@ namespace OneText
             }
         }
 
-        /// <summary>True when a colour atlas exists — asking does not create one.</summary>
+        /// <summary>True when a colour atlas exists; asking does not create one.</summary>
         public static bool ColorAtlasExists => s_colorAtlas != null && s_colorAtlas.IsUsable;
+
+        /// <summary>
+        /// The shared multi-channel atlas, for labels with <c>precise</c> on.
+        /// Created on first use like the colour one: a project that never asks
+        /// for MSDF never allocates four bytes a texel for it.
+        ///
+        /// Same size and layer count as the ordinary atlas, from the same
+        /// project setting: it holds the same kind of tiles for the same
+        /// glyphs, just wider ones, and a second budget nobody would find in
+        /// the inspector is worse than a predictable multiple of the first.
+        /// </summary>
+        public static GlyphAtlas PreciseAtlas
+        {
+            get
+            {
+                if (s_preciseAtlas != null && !s_preciseAtlas.IsUsable) s_preciseAtlas = null;
+                if (s_preciseAtlas != null) return s_preciseAtlas;
+
+                var settings = OneTextSettings.Instance;
+                s_preciseAtlas = new GlyphAtlas(
+                    settings != null ? settings.AtlasSettings : GlyphAtlasSettings.Default,
+                    precise: true);
+                if (s_material != null) BindPreciseTexture(s_preciseAtlas);
+                return s_preciseAtlas;
+            }
+        }
+
+        /// <summary>True when a precise atlas exists; asking does not create one.</summary>
+        public static bool PreciseAtlasExists => s_preciseAtlas != null && s_preciseAtlas.IsUsable;
 
         /// <summary>The shared atlas, creating it on first use.</summary>
         public static GlyphAtlas Atlas
@@ -51,7 +97,7 @@ namespace OneText
             }
         }
 
-        /// <summary>True when an atlas exists — asking does not create one.</summary>
+        /// <summary>True when an atlas exists; asking does not create one.</summary>
         public static bool Exists => s_atlas != null && s_atlas.IsUsable;
 
         /// <summary>
@@ -67,8 +113,8 @@ namespace OneText
         /// Lets go of an atlas whose texture has been destroyed underneath it.
         ///
         /// The material is the subtle half. It is <c>HideAndDontSave</c>, so it
-        /// outlives whatever killed the texture, and it holds <c>_GlyphTex</c>
-        /// — meaning a replacement atlas alone would leave every label batching
+        /// outlives whatever killed the texture, and it holds <c>_GlyphTex</c>,
+        /// meaning a replacement atlas alone would leave every label batching
         /// against the dead texture, which is the blank text this check exists
         /// to prevent. Repointing it is deferred to <see cref="Create"/>'s
         /// caller through <see cref="Rebind"/>: the material getter builds a
@@ -96,7 +142,7 @@ namespace OneText
         /// The atlas texture and its texel size, which always travel together.
         /// The shadow half of a text decoration turns an offset in texels into
         /// one in uv, and Unity documents the automatic <c>_TexelSize</c>
-        /// companion for 2D textures rather than for arrays — so it is set here
+        /// companion for 2D textures rather than for arrays, so it is set here
         /// rather than assumed, where forgetting it would be a shadow sitting on
         /// top of its own glyph.
         /// </summary>
@@ -105,6 +151,20 @@ namespace OneText
             s_material.SetTexture("_GlyphTex", atlas.Texture);
             float size = atlas.Texture.width;
             s_material.SetVector("_GlyphTexelSize",
+                new Vector4(1f / size, 1f / atlas.Texture.height, size, atlas.Texture.height));
+        }
+
+        /// <summary>
+        /// Same pairing for the multi-channel atlas. Its own texel size, not the
+        /// ordinary atlas's: the two are configured alike today and a shadow
+        /// offset computed from the wrong one would only be visible on the day
+        /// they stop being.
+        /// </summary>
+        private static void BindPreciseTexture(GlyphAtlas atlas)
+        {
+            s_material.SetTexture("_MsdfTex", atlas.Texture);
+            float size = atlas.Texture.width;
+            s_material.SetVector("_MsdfTexelSize",
                 new Vector4(1f / size, 1f / atlas.Texture.height, size, atlas.Texture.height));
         }
 
@@ -128,13 +188,13 @@ namespace OneText
         /// <summary>
         /// Rebuilds the atlas against the current project settings, throwing
         /// away every cached tile. Only worth calling when the budget itself
-        /// changes — the editor does it when the setting is edited.
+        /// changes; the editor does it when the setting is edited.
         /// </summary>
         public static void Reconfigure() => Reconfigure(force: false);
 
         /// <summary>
         /// Same, but <paramref name="force"/> rebuilds even when the budget is
-        /// unchanged — benchmarks need every run to start from an empty atlas.
+        /// unchanged: benchmarks need every run to start from an empty atlas.
         /// </summary>
         public static void Reconfigure(bool force)
         {
@@ -144,6 +204,10 @@ namespace OneText
 
             s_atlas?.Dispose();
             s_atlas = null;
+            // The precise atlas takes its size from the same setting, so it is
+            // as stale as the other one and is rebuilt on demand.
+            s_preciseAtlas?.Dispose();
+            s_preciseAtlas = null;
             if (s_references == 0) return;
 
             Rebind(Create());
@@ -159,10 +223,12 @@ namespace OneText
             {
                 if (s_material != null) return s_material;
 
-                var shader = Shader.Find(ShaderName);
+                var shader = LoadShader();
                 if (shader == null)
                 {
-                    Debug.LogError($"{ShaderName} shader not found — add it to Always Included Shaders.");
+                    Debug.LogError($"{ShaderName} shader not found: it should have shipped from " +
+                        "the package's Runtime/Shaders/Resources folder. Reimport OneText, or add " +
+                        "the shader to Always Included Shaders.");
                     return null;
                 }
                 s_material = new Material(shader)
@@ -172,11 +238,32 @@ namespace OneText
                 };
                 BindGlyphTexture(Atlas);
                 // Only if one exists: creating the colour atlas here would cost
-                // 4 MB to every project that never draws an emoji.
+                // 4 MB to every project that never draws an emoji, and the
+                // precise one four times that to every project that never asks
+                // for MSDF.
                 if (s_colorAtlas != null && s_colorAtlas.IsUsable)
                     s_material.SetTexture("_ColorTex", s_colorAtlas.Texture);
+                if (s_preciseAtlas != null && s_preciseAtlas.IsUsable)
+                    BindPreciseTexture(s_preciseAtlas);
                 return s_material;
             }
+        }
+
+        /// <summary>
+        /// The SDF shader every label draws through, or null when it did not
+        /// make it into the build.
+        ///
+        /// The load, not the find, is what a player depends on:
+        /// <c>Resources.Load</c> both names the asset and is the reason it is
+        /// there to be named. <see cref="Shader.Find"/> stays behind it for the
+        /// project that has already put the shader in Always Included Shaders
+        /// (the instruction this package used to give) and for one that
+        /// vendors the source somewhere else in its Assets folder.
+        /// </summary>
+        public static Shader LoadShader()
+        {
+            var shader = Resources.Load<Shader>(ShaderResourcePath);
+            return shader != null ? shader : Shader.Find(ShaderName);
         }
 
         /// <summary>Takes a reference to the shared atlas; pair with <see cref="Release"/>.</summary>
@@ -197,6 +284,8 @@ namespace OneText
 
             s_atlas?.Dispose();
             s_atlas = null;
+            s_preciseAtlas?.Dispose();
+            s_preciseAtlas = null;
             s_colorAtlas?.Dispose();
             s_colorAtlas = null;
             if (s_material == null) return;
