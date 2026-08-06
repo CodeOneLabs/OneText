@@ -13,7 +13,7 @@ namespace OneText
     /// </summary>
     public sealed class RichTextResult
     {
-        /// <summary>The text with markup removed — what indices refer to.</summary>
+        /// <summary>The text with markup removed: what indices refer to.</summary>
         public string Text = string.Empty;
 
         /// <summary>Contiguous, non-overlapping, covering the whole of <see cref="Text"/>.</summary>
@@ -60,12 +60,22 @@ namespace OneText
         /// seconds), in the order they were written.
         ///
         /// A point, not a range, which is why it is the one typewriter control
-        /// that has to be markup: everything else about a reveal — how fast,
-        /// what a step is, how long to hold after a full stop — is project
+        /// that has to be markup: everything else about a reveal (how fast,
+        /// what a step is, how long to hold after a full stop) is project
         /// policy that belongs on the label, but "pause HERE, in this
         /// sentence" has nowhere else it can be said.
         /// </summary>
         public readonly List<(int Index, float Seconds)> Waits = new List<(int, float)>();
+
+        /// <summary>
+        /// <c>&lt;ruby=ふりがな&gt;漢字&lt;/ruby&gt;</c> annotations, in
+        /// <see cref="Text"/> indices.
+        ///
+        /// Out of <see cref="Text"/> and out of <see cref="TextStyle"/> both:
+        /// the annotation is a second string the layout engine shapes on its
+        /// own, and the base is ordinary text that keeps its ordinary indices.
+        /// </summary>
+        public readonly List<TextRubySpan> Rubies = new List<TextRubySpan>();
 
         public void Clear()
         {
@@ -76,6 +86,7 @@ namespace OneText
             Effects.Clear();
             Decorations.Clear();
             Waits.Clear();
+            Rubies.Clear();
             HasMarkup = false;
         }
 
@@ -134,7 +145,7 @@ namespace OneText
     /// well-formed stays in the text, verbatim</b>. A stray '&lt;' is far more
     /// often a less-than sign than a broken tag, and text that silently
     /// disappears is the worst failure a text engine has. So parsing a tag is
-    /// all-or-nothing — name, argument and closing '&gt;' all have to be there
+    /// all-or-nothing: name, argument and closing '&gt;' all have to be there
     /// and make sense, or nothing is consumed and the '&lt;' is just a
     /// character.
     ///
@@ -162,6 +173,8 @@ namespace OneText
             public TextEffectParameters EffectParameters; // effect only
             public int EffectStart;
             public int DecorationIndex;       // decoration tags only
+            public int RubyStart;             // ruby only
+            public string RubyText;
         }
 
         public static void Parse(string source, RichTextResult result) =>
@@ -173,7 +186,7 @@ namespace OneText
         /// <paramref name="styleNames"/> and <paramref name="fontNames"/> map
         /// the arguments of <c>&lt;style=…&gt;</c> and <c>&lt;font=…&gt;</c> to
         /// indices; either may be null, in which case those tags do not parse
-        /// and stay literal — which is the honest outcome, because a style the
+        /// and stay literal, which is the honest outcome, because a style the
         /// label cannot resolve is not a style.
         /// </summary>
         public static void Parse(string source, RichTextResult result,
@@ -287,6 +300,8 @@ namespace OneText
                 if (stack[i].Name == "link")
                     result.Links.Add(new TextLink(stack[i].LinkId, stack[i].LinkStart,
                         output.Length - stack[i].LinkStart));
+                else if (stack[i].Name == "ruby")
+                    CloseRuby(result, stack[i], output.Length);
                 else if (IsDecoration(stack[i].Name))
                     CloseDecoration(result, stack[i].DecorationIndex, output.Length);
                 else if (BuiltInEffects.Has(stack[i].Name))
@@ -307,8 +322,8 @@ namespace OneText
         // --------------------------------------------------------------- tags
 
         /// <summary>
-        /// Reads a tag at <paramref name="at"/>. Returns false — consuming
-        /// nothing — unless the whole thing is well formed.
+        /// Reads a tag at <paramref name="at"/>. Returns false (consuming
+        /// nothing) unless the whole thing is well formed.
         /// </summary>
         private static bool TryReadTag(string s, int at, out string name, out string argument,
             out bool closing, out int after)
@@ -351,7 +366,7 @@ namespace OneText
                 i++;
                 int argStart = i;
                 // A quoted argument may contain anything but its quote; an
-                // unquoted one runs to '>'. Newlines end a tag either way — an
+                // unquoted one runs to '>'. Newlines end a tag either way; an
                 // unterminated '<' should not swallow a paragraph.
                 if (i < s.Length && (s[i] == '"' || s[i] == '\''))
                 {
@@ -383,7 +398,7 @@ namespace OneText
             var previous = current;
             switch (name)
             {
-                // These take no argument, so one makes the tag malformed —
+                // These take no argument, so one makes the tag malformed:
                 // the same all-or-nothing rule the rest of the parser follows.
                 // <b=7> is more likely a typo than a bold.
                 case "b": if (argument != null) return false; style.Flags |= TextStyle.Flag.Bold; break;
@@ -463,7 +478,7 @@ namespace OneText
                     if (!TryParseDecoration(name, argument, out var decoration)) return false;
                     // Recorded at OPEN, not at close, so the list stays in the
                     // order the author wrote: DecorationAt lays later spans over
-                    // earlier ones, and closing order is the reverse of that —
+                    // earlier ones, and closing order is the reverse of that;
                     // resolving from it would give the outer tag the last word.
                     stack.Add(new Open
                     {
@@ -472,6 +487,27 @@ namespace OneText
                         DecorationIndex = result.Decorations.Count,
                     });
                     result.Decorations.Add(new TextDecorationSpan(decoration, position, int.MaxValue));
+                    return true;
+                }
+
+                case "ruby":
+                {
+                    if (string.IsNullOrEmpty(argument)) return false;
+                    // Ruby inside ruby is refused rather than guessed at. Two
+                    // annotations over one base is double-sided ruby (両側ルビ),
+                    // which is a placement problem of its own and not what
+                    // someone who nested the tag by accident meant; the house
+                    // rule for a tag this parser will not honour is that it
+                    // stays visible.
+                    for (int i = 0; i < stack.Count; i++)
+                        if (stack[i].Name == "ruby") return false;
+                    stack.Add(new Open
+                    {
+                        Name = "ruby",
+                        Previous = previous,
+                        RubyStart = position,
+                        RubyText = argument,
+                    });
                     return true;
                 }
 
@@ -489,7 +525,7 @@ namespace OneText
                 case "josa":
                 {
                     // Resolved here, at parse time, against the text already
-                    // written — which is what makes it work on a string that
+                    // written, which is what makes it work on a string that
                     // was interpolated at runtime, with no C# call anywhere.
                     // A formatter cannot help a string that arrives from a
                     // localisation table already assembled.
@@ -503,7 +539,7 @@ namespace OneText
                     // Recorded and nothing else: a pause writes no text, styles
                     // nothing and closes nothing, so it never reaches the stack
                     // and </wait> is not a thing. Seconds must parse and must be
-                    // finite and non-negative — <wait=soon> is a typo, and the
+                    // finite and non-negative; <wait=soon> is a typo, and the
                     // house rule for a typo is that it stays visible rather than
                     // silently doing nothing.
                     if (!float.TryParse(argument, NumberStyles.Float,
@@ -521,7 +557,7 @@ namespace OneText
                     if (!int.TryParse(argument, NumberStyles.Integer,
                             CultureInfo.InvariantCulture, out int index))
                     {
-                        // A name, then — which is what survives someone
+                        // A name, then, which is what survives someone
                         // reordering the sheet, and is why IndexOf exists.
                         index = spriteNames?.Invoke(argument) ?? -1;
                     }
@@ -571,8 +607,8 @@ namespace OneText
 
             // Everything above the match is being closed too, implicitly. Their
             // ranges still have to be reported: a link popped this way and not
-            // emitted here never gets another chance — it is off the stack
-            // before the end-of-input flush — and a link that silently vanishes
+            // emitted here never gets another chance (it is off the stack
+            // before the end-of-input flush), and a link that silently vanishes
             // is the failure this parser exists to avoid.
             for (int i = stack.Count - 1; i >= index; i--)
             {
@@ -583,6 +619,8 @@ namespace OneText
                     result.Alignments.Add((position, stack[i].HadAlignment
                         ? stack[i].PreviousAlignment
                         : DefaultAlignmentMarker));
+                if (stack[i].Name == "ruby")
+                    CloseRuby(result, stack[i], position);
                 if (IsDecoration(stack[i].Name))
                     CloseDecoration(result, stack[i].DecorationIndex, position);
                 if (BuiltInEffects.Has(stack[i].Name))
@@ -613,7 +651,7 @@ namespace OneText
             if (argument[0] == '+' || argument[0] == '-')
             {
                 // Relative to the inherited size, which the parser does not
-                // know — so it is recorded as an absolute delta the label
+                // know, so it is recorded as an absolute delta the label
                 // resolves. Only meaningful against an absolute base.
                 if (!float.TryParse(argument, NumberStyles.Float,
                         CultureInfo.InvariantCulture, out float delta)) return false;
@@ -658,12 +696,12 @@ namespace OneText
         /// Reads an effect tag's arguments: <c>&lt;wave amp=2 freq=1.5&gt;</c>.
         ///
         /// Unset values come back as NaN rather than zero, so an effect can
-        /// tell "the author did not say" from "the author said none" — an
+        /// tell "the author did not say" from "the author said none"; an
         /// amplitude of 0 is a legitimate request for a still effect, and a
         /// default of 0 would make every unparameterised tag do nothing.
         ///
         /// Public because the inspector's effect table reads a tag's arguments
-        /// through the same rules the runtime does — two parsers is one bug.
+        /// through the same rules the runtime does; two parsers is one bug.
         /// </summary>
         public static TextEffectParameters ParseEffectParameters(string argument)
         {
@@ -700,6 +738,18 @@ namespace OneText
             return new TextEffectParameters(amplitude, frequency, speed, extra, duration);
         }
 
+        /// <summary>
+        /// Records a finished ruby annotation.
+        ///
+        /// An empty base is dropped: <c>&lt;ruby=かん&gt;&lt;/ruby&gt;</c> is an
+        /// annotation of nothing, and there is no advance to centre it over.
+        /// </summary>
+        private static void CloseRuby(RichTextResult result, in Open open, int end)
+        {
+            if (end > open.RubyStart)
+                result.Rubies.Add(new TextRubySpan(open.RubyText, open.RubyStart, end - open.RubyStart));
+        }
+
         /// <summary>True for the three tags that carry a <see cref="TextDecoration"/>.</summary>
         public static bool IsDecoration(string name) =>
             name == "outline" || name == "shadow" || name == "glow";
@@ -718,7 +768,7 @@ namespace OneText
         /// Three spellings, all of which people write:
         /// <c>&lt;shadow&gt;</c> takes the defaults, <c>&lt;shadow=red&gt;</c>
         /// names the colour, and <c>&lt;shadow x=0.4 soft=0.6&gt;</c> names
-        /// parameters. They mix — <c>&lt;outline=black w=0.6&gt;</c> is one
+        /// parameters. They mix: <c>&lt;outline=black w=0.6&gt;</c> is one
         /// unquoted argument that happens to contain both.
         ///
         /// A token that is neither a colour nor a parameter this tag reads
@@ -727,7 +777,7 @@ namespace OneText
         /// visible instead of silently drawing the default.
         ///
         /// Public because the inspector's decoration table reads a tag's
-        /// arguments through the same rules the runtime does — two parsers is
+        /// arguments through the same rules the runtime does; two parsers is
         /// one bug.
         /// </summary>
         public static bool TryParseDecoration(string name, string argument, out TextDecoration decoration)

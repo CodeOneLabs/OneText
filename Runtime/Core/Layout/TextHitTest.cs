@@ -7,7 +7,7 @@ namespace OneText
     /// <summary>
     /// Geometry queries over a finished layout: which character is under a
     /// point, where the caret sits for a character, and which rectangles a
-    /// selection covers. Everything is in layout space — x from the block's
+    /// selection covers. Everything is in layout space: x from the block's
     /// left edge, y downward from its top edge.
     ///
     /// Caret positions are grapheme cluster boundaries: a caret never lands
@@ -29,7 +29,7 @@ namespace OneText
         }
 
         /// <summary>
-        /// The text index closest to <paramref name="point"/> — the caret
+        /// The text index closest to <paramref name="point"/>: the caret
         /// position a click there should produce.
         /// </summary>
         public static int GetIndexAtPoint(TextLayoutResult layout, Vector2 point)
@@ -40,14 +40,24 @@ namespace OneText
             var line = layout.Lines[lineIndex];
             if (line.RunCount == 0) return line.TextStart;
 
-            var firstRun = layout.Runs[line.RunStart];
-            var lastRun = layout.Runs[line.RunStart + line.RunCount - 1];
+            // Ruby is drawn on this line and is not on it: a click over a
+            // reading belongs to the character it annotates, and the base run
+            // under it answers that correctly. Letting the annotation answer
+            // would put the caret inside a string that has no indices.
+            int first = line.RunStart, last = line.RunStart + line.RunCount - 1;
+            while (first <= last && layout.Runs[first].IsRuby) first++;
+            while (last > first && layout.Runs[last].IsRuby) last--;
+            if (first > last) return line.TextStart;
+
+            var firstRun = layout.Runs[first];
+            var lastRun = layout.Runs[last];
             if (point.x <= firstRun.X) return EdgeIndex(firstRun, leading: true);
             if (point.x >= lastRun.X + lastRun.Width) return EdgeIndex(lastRun, leading: false);
 
-            for (int r = line.RunStart; r < line.RunStart + line.RunCount; r++)
+            for (int r = first; r <= last; r++)
             {
                 var run = layout.Runs[r];
+                if (run.IsRuby) continue;
                 if (point.x < run.X || point.x > run.X + run.Width) continue;
                 return IndexInRun(layout, run, point.x);
             }
@@ -102,6 +112,10 @@ namespace OneText
                 for (int r = line.RunStart; r < line.RunStart + line.RunCount; r++)
                 {
                     var run = layout.Runs[r];
+                    // A selection covers text, and a ruby run is not text; its
+                    // extent may also overhang its base, which would widen the
+                    // highlight past the characters actually selected.
+                    if (run.IsRuby) continue;
                     int runEnd = run.TextStart + run.TextLength;
                     int s = Mathf.Max(from, run.TextStart);
                     int e = Mathf.Min(to, runEnd);
@@ -120,7 +134,7 @@ namespace OneText
 
         /// <summary>
         /// Moves the caret one line up (<paramref name="direction"/> = -1) or
-        /// down (+1), keeping <paramref name="desiredX"/> — the x the caret had
+        /// down (+1), keeping <paramref name="desiredX"/>, the x the caret had
         /// when vertical movement started, so a run of up/down keys does not
         /// drift toward short lines.
         /// </summary>
@@ -239,6 +253,7 @@ namespace OneText
             for (int r = line.RunStart; r < line.RunStart + line.RunCount; r++)
             {
                 var run = layout.Runs[r];
+                if (run.IsRuby) continue;
                 if (index >= run.TextStart && index < run.TextStart + run.TextLength)
                     return GetCaretXInRun(layout, run, index);
             }
@@ -246,7 +261,8 @@ namespace OneText
             // At (or past) the end of the line: use the logically last run's end.
             var lastLogical = layout.Runs[line.RunStart];
             for (int r = line.RunStart + 1; r < line.RunStart + line.RunCount; r++)
-                if (layout.Runs[r].TextStart > lastLogical.TextStart) lastLogical = layout.Runs[r];
+                if (!layout.Runs[r].IsRuby && layout.Runs[r].TextStart > lastLogical.TextStart)
+                    lastLogical = layout.Runs[r];
             int clamped = Mathf.Clamp(index, lastLogical.TextStart,
                 lastLogical.TextStart + lastLogical.TextLength);
             return GetCaretXInRun(layout, lastLogical, clamped);

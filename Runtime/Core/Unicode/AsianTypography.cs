@@ -10,9 +10,9 @@ namespace OneText.Unicode
     ///
     /// These are the loudest unserved complaints from the Korean, Japanese and
     /// Chinese communities. In TextMesh Pro kinsoku is two editable text files
-    /// and buggy at the edges — a Japanese exclamation mark can break wrapping
-    /// entirely — punctuation compression exists nowhere in the ecosystem, and
-    /// the CJK–Latin gap is something people insert by hand.
+    /// and buggy at the edges (a Japanese exclamation mark can break wrapping
+    /// entirely); punctuation compression exists nowhere in the ecosystem, and
+    /// the CJK-Latin gap is something people insert by hand.
     ///
     /// Everything here is spec-driven (JLREQ, KLREQ, CLREQ, and the UAX #14
     /// tailoring section), which is the ground this project is strongest on:
@@ -32,7 +32,7 @@ namespace OneText.Unicode
             /// <summary>No tailoring; plain UAX #14.</summary>
             Off,
 
-            /// <summary>Punctuation only — the rule nobody disputes.</summary>
+            /// <summary>Punctuation only: the rule nobody disputes.</summary>
             Loose,
 
             /// <summary>Punctuation plus small kana and the prolonged sound mark.</summary>
@@ -49,7 +49,7 @@ namespace OneText.Unicode
         // honest way to hold a published list.
 
         /// <summary>
-        /// Characters forbidden at the start of a line — 行頭禁則. Closing
+        /// Characters forbidden at the start of a line, 行頭禁則. Closing
         /// brackets, the punctuation that follows a word, and the marks that
         /// belong to whatever came before them.
         /// </summary>
@@ -62,7 +62,7 @@ namespace OneText.Unicode
         };
 
         /// <summary>
-        /// Characters forbidden at the end of a line — 行末禁則. Opening
+        /// Characters forbidden at the end of a line, 行末禁則. Opening
         /// brackets and anything that introduces what follows it.
         /// </summary>
         private static readonly char[] NeverEndsLine =
@@ -127,15 +127,15 @@ namespace OneText.Unicode
         /// Applies kinsoku to a break-opportunity table, in place.
         ///
         /// Editing the table is the right shape for this: UAX #14 defines
-        /// tailoring as exactly that, and it keeps the wrapper — which has
-        /// enough to think about — from needing to know what a small kana is.
+        /// tailoring as exactly that, and it keeps the wrapper, which has
+        /// enough to think about, from needing to know what a small kana is.
         ///
         /// This only ever <em>removes</em> opportunities, which is what makes
-        /// the degenerate case safe. A run of "！！！！" in a chat message — the
-        /// one from the bug tracker — has no legal break anywhere inside it, so
+        /// the degenerate case safe. A run of "！！！！" in a chat message, the
+        /// one from the bug tracker, has no legal break anywhere inside it, so
         /// every opportunity goes; the wrapper then falls through to its
         /// emergency grapheme-cluster break and the line is overfull rather
-        /// than lost. That is the right trade — bad typography beats missing
+        /// than lost. That is the right trade: bad typography beats missing
         /// text. The emergency path does consult kinsoku, but only as a
         /// preference: given two cluster boundaries that both fit it takes the
         /// legal one, and given none it breaks at a forbidden character anyway,
@@ -165,7 +165,7 @@ namespace OneText.Unicode
         /// The UAX #14 Korean tailoring: spaces break, syllables do not.
         ///
         /// Korean is written with spaces between words, and Korean readers
-        /// expect wrapping at those spaces — but UAX #14 gives Hangul syllables
+        /// expect wrapping at those spaces, but UAX #14 gives Hangul syllables
         /// class ID, which breaks between any two of them. That is correct for
         /// Japanese and wrong for Korean, and it is a per-locale decision, not
         /// a global toggle: a Korean line in a Japanese UI still wants Korean
@@ -203,7 +203,7 @@ namespace OneText.Unicode
         /// full-width opening bracket is a glyph in the left half of a square
         /// box; a closing bracket or a comma is a glyph in the right half. Set
         /// solid, two of them in a row leave a full em of white space in the
-        /// middle of a sentence — which is what makes CJK text look merely
+        /// middle of a sentence, which is what makes CJK text look merely
         /// rendered rather than typeset.
         ///
         /// This is the adjacency half of the rule, which is all that can be
@@ -216,7 +216,7 @@ namespace OneText.Unicode
         public static float CompressionFor(char previous, char current, char next)
         {
             // A pair of adjacent marks has one em of blank between them, not
-            // two — so exactly one of the pair gives up its half. The rule is
+            // two, so exactly one of the pair gives up its half. The rule is
             // that the *second* one does, which keeps the decision local: a
             // mark looks only at what came before it, and no two marks can both
             // decide to shrink the same gap.
@@ -233,7 +233,7 @@ namespace OneText.Unicode
 
         /// <summary>
         /// How much a mark gives up because it is the first character of a
-        /// line — 行頭の約物.
+        /// line, 行頭の約物.
         ///
         /// An opening bracket at a line start puts its blank left half against
         /// the margin, where it reads as an indent nobody asked for: the line
@@ -244,10 +244,10 @@ namespace OneText.Unicode
         public static float CompressionAtLineStart(char c) => In(OpeningPunctuation, c) ? 0.5f : 0f;
 
         /// <summary>
-        /// How much a mark gives up because it is the last character of a line
-        /// — 行末の約物. A 。 or a closing bracket has its blank on the right,
+        /// How much a mark gives up because it is the last character of a line,
+        /// 行末の約物. A 。 or a closing bracket has its blank on the right,
         /// which at a line end is invisible white space between the text and
-        /// the margin — and, worse, half an em of width the wrapper counted, so
+        /// the margin, and, worse, half an em of width the wrapper counted, so
         /// it can push the next word to the following line for nothing.
         /// </summary>
         public static float CompressionAtLineEnd(char c) => In(ClosingPunctuation, c) ? 0.5f : 0f;
@@ -259,7 +259,7 @@ namespace OneText.Unicode
         ///
         /// Three comparisons instead of two binary searches, and it is the
         /// difference between the compression rules costing something and
-        /// costing nothing on the characters they have no opinion about —
+        /// costing nothing on the characters they have no opinion about,
         /// which, in Japanese body text, is nineteen characters in twenty. Kana
         /// and Han sit in the gaps between these ranges and are rejected by the
         /// first test they meet. A test asserts this never rejects a character
@@ -273,13 +273,49 @@ namespace OneText.Unicode
         /// <summary>True for full-width marks whose ink sits in the right half.</summary>
         public static bool IsOpeningPunctuation(char c) => In(OpeningPunctuation, c);
 
+        // --------------------------------------------------------- ruby overhang
+
+        /// <summary>
+        /// 中点類: the marks whose ink is centred in the em, with a quarter of
+        /// blank on each side rather than a half on one.
+        /// </summary>
+        private static bool IsMiddleDot(char c) => c == '・' || c == '：' || c == '；';
+
+        /// <summary>
+        /// How much of the character <em>before</em> an annotated base a wider
+        /// ruby may hang over, as a fraction of that character's em.
+        ///
+        /// W3C "Rules for Simple Placement of Japanese Ruby": ruby must not
+        /// overhang the characters around its base, with one exception:
+        /// it may hang over their <em>blank</em>, and only the marks that have
+        /// blank on the side facing the base have any. Going before the base
+        /// that is a closing bracket, a full stop or a comma (blank on the
+        /// right), the ideographic space, or a middle dot at a quarter.
+        /// </summary>
+        public static float RubyOverhangBefore(char c)
+        {
+            if (IsMiddleDot(c)) return 0.25f;
+            return c == '　' || In(ClosingPunctuation, c) ? 0.5f : 0f;
+        }
+
+        /// <summary>
+        /// The same rule on the other side: after the base, the marks with
+        /// blank on their left (opening brackets, the ideographic space, and
+        /// middle dots).
+        /// </summary>
+        public static float RubyOverhangAfter(char c)
+        {
+            if (IsMiddleDot(c)) return 0.25f;
+            return c == '　' || In(OpeningPunctuation, c) ? 0.5f : 0f;
+        }
+
         /// <summary>True if the character is full-width punctuation this can compress.</summary>
         public static bool IsCompressible(char c) =>
             MayCompress(c) && (In(OpeningPunctuation, c) || In(ClosingPunctuation, c));
 
         /// <summary>
         /// The quarter-em gap every East Asian layout spec calls for between a
-        /// Han or Kana run and a Latin one — 和欧文間のアキ.
+        /// Han or Kana run and a Latin one, 和欧文間のアキ.
         ///
         /// Without it, "日本語とEnglishの混在" reads as if the Latin word were
         /// jammed against its neighbours, because CJK glyphs fill their box
@@ -289,7 +325,7 @@ namespace OneText.Unicode
             (IsIdeographic(left) && IsLatinish(right)) ||
             (IsLatinish(left) && IsIdeographic(right));
 
-        /// <summary>Han, Kana and Hangul — everything set on a full-width em grid.</summary>
+        /// <summary>Han, Kana and Hangul: everything set on a full-width em grid.</summary>
         public static bool IsIdeographic(char c) =>
             (c >= '぀' && c <= 'ヿ') ||   // kana
             (c >= '㐀' && c <= '䶿') ||   // CJK extension A
