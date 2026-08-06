@@ -156,3 +156,130 @@ jobs:
         with:
           name: playmode-results-${{ matrix.unityVersion }}
           path: playmode-results
+
+  # The Windows player smoke, in two halves. There is no Windows simulator on
+  # a Mac the way there is an iOS simulator or an Android emulator, so the
+  # runner itself is the Windows machine: the player is cross-built on Linux
+  # (game-ci's windows-mono image, the well-trodden path) and then executed on
+  # a real windows-2022 runner, where D3D11 falls back to WARP because the
+  # runner has no GPU. The player prints the same ONETEXT-SMOKE marker the
+  # mobile smoke scripts grep for, and the run half needs no Unity install and
+  # no license at all.
+  #
+  # These two jobs FAIL LOUDLY, unlike the never-seen-green jobs above: the
+  # Windows path is being actively brought up right now, and a red X on every
+  # push is the feedback loop. Once it has gone green and stayed green, demote
+  # it to continue-on-error only if it turns out to flake.
+  windows-smoke-build:
+    name: Windows smoke (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Create host project with the smoke scene sources
+        run: |
+          mkdir -p CI/Assets/Smoke/Resources/SmokeFonts CI/Assets/Editor CI/Packages CI/ProjectSettings
+          cat > CI/Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.unity.burst": "1.8.4",
+              "com.unity.collections": "1.4.0",
+              "com.unity.mathematics": "1.2.6",
+              "com.unity.ugui": "1.0.0",
+              "com.onetext.core": "file:../.."
+            }
+          }
+          JSON
+          cp "Tools/Smoke~/SmokeSelfTest.cs" CI/Assets/Smoke/
+          cp "Tools/Smoke~/SmokeBuildCI.cs"  CI/Assets/Editor/
+          # The two fonts the repository ships; .bytes so Unity keeps them whole.
+          cp Tests/Fonts/NotoSans.ttf       CI/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes
+          cp Tests/Fonts/NotoSansArabic.ttf CI/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes
+
+      - name: Cache the downloaded smoke fonts
+        uses: actions/cache@v4
+        with:
+          path: smoke-fonts
+          key: smoke-fonts-v1
+
+      - name: Fetch the four fonts the repository does not ship
+        # Same sources Tools/fetch_coverage_fonts.py uses; about 30 MB, cached.
+        run: |
+          mkdir -p smoke-fonts
+          fetch () { [ -s "smoke-fonts/$1" ] || curl -fsSL --retry 3 -o "smoke-fonts/$1" "$2"; }
+          fetch NotoSansDevanagari.bytes "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf"
+          fetch NotoSansThai.bytes       "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansThai/hinted/ttf/NotoSansThai-Regular.ttf"
+          fetch NotoSansKorean.bytes     "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf"
+          fetch NotoColorEmoji.bytes     "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
+          cp smoke-fonts/*.bytes CI/Assets/Smoke/Resources/SmokeFonts/
+
+      - uses: actions/cache@v4
+        with:
+          path: CI/Library
+          key: Library-smoke-windows-${{ hashFiles('**/*.cs') }}
+          restore-keys: Library-smoke-windows-
+
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: CI
+          unityVersion: 6000.0.77f1
+          targetPlatform: StandaloneWindows64
+          buildMethod: SmokeBuildCI.Windows
+          customParameters: -smokeOut build/windows/OneTextSmoke.exe
+          allowDirtyBuild: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-player
+          path: CI/build/windows
+          retention-days: 3
+
+  windows-smoke-run:
+    name: Windows smoke (run)
+    runs-on: windows-2022
+    needs: windows-smoke-build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-smoke-player
+          path: player
+
+      - name: Run the player and wait for the smoke verdict
+        shell: pwsh
+        run: |
+          $exe = "player\OneTextSmoke.exe"
+          if (-not (Test-Path $exe)) { throw "No player executable in the artifact." }
+          Start-Process -FilePath $exe -ArgumentList @(
+            "-logFile", "$PWD\player.log",
+            "-screen-fullscreen", "0", "-screen-width", "800", "-screen-height", "600")
+          $marker = $null
+          foreach ($i in 1..120) {
+            Start-Sleep -Seconds 2
+            if (Test-Path player.log) {
+              $marker = Select-String -Path player.log -Pattern "ONETEXT-SMOKE:" | Select-Object -First 1
+              if ($marker) { break }
+            }
+          }
+          Get-Process OneTextSmoke -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $marker) {
+            Write-Host "::error::No ONETEXT-SMOKE marker within 240s."
+            if (Test-Path player.log) { Get-Content player.log -Tail 60 }
+            exit 1
+          }
+          Write-Host $marker.Line
+          if ($marker.Line -notmatch "PASS") {
+            Get-Content player.log -Tail 60
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke-log
+          path: player.log
