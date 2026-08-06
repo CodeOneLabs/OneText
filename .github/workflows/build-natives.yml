@@ -51,6 +51,9 @@ jobs:
               https://github.com/harfbuzz/harfbuzz.git "$RUNNER_TEMP/harfbuzz"
           git -C "$RUNNER_TEMP/harfbuzz" rev-parse HEAD
 
+      - name: Keep the binary being replaced
+        run: cp Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so "$RUNNER_TEMP/vendored.so"
+
       - name: Build, check and smoke it
         run: |
           docker run --rm \
@@ -65,20 +68,32 @@ jobs:
                      gcc --version | head -1
                      /repo/Tools/build_linux_natives.sh'
 
-      - name: Load it once more on a modern glibc
-        # The container proves the floor. The runner is a different distribution
-        # with a much newer loader, and the Unity images are somewhere between
-        # the two, so loading it here as well is the cheap half of the range.
+      - name: Load both of them on a modern glibc
+        # The container proves the floor; the runner is a newer distribution and
+        # the Unity images sit between the two, so this is the other half of the
+        # range. It also runs the old binary through the same harness, which is
+        # the only thing in this workflow that says the harness measures
+        # anything: the old one is expected to answer a stranger's HarfBuzz, and
+        # a run where it does not means the check has stopped working.
         run: |
           B=$(echo "$RUNNER_TEMP"/work/build-*)
           sudo chown -R "$USER" "$RUNNER_TEMP/work" Runtime/Plugins/Linux/x86_64
           cc -shared -fPIC "$B/fakehb.c" -o "$RUNNER_TEMP/libfakehb.so"
           cc "$B/smoke.c" -o "$RUNNER_TEMP/smoke" -ldl
+
+          echo "== the vendored binary, which is what crashes the editor"
+          "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/vendored.so" Tests/Fonts/NotoSans.ttf \
+                               "$RUNNER_TEMP/libfakehb.so" && vendored=0 || vendored=$?
+          echo "   exit $vendored"
+          [ "$vendored" = 0 ] && { echo "::error::the harness no longer detects the bug"; exit 1; }
+
+          echo
+          echo "== the one built here"
           "$RUNNER_TEMP/smoke" Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so \
                                Tests/Fonts/NotoSans.ttf "$RUNNER_TEMP/libfakehb.so"
           echo
           ldd Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so
-          readelf -d Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so | head -20
+          readelf -d Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so | grep -E 'SYMBOLIC|FLAGS|NEEDED|SONAME'
 
       - uses: actions/upload-artifact@v4
         with:

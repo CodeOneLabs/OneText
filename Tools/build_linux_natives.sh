@@ -150,11 +150,15 @@ fail=0
 say () { printf '    %s\n' "$*"; }
 
 echo
-echo "==> DT_FLAGS"
-readelf -d "$SO" | sed -n '/FLAGS/p'
-readelf -d "$SO" | grep -qE 'FLAGS.*SYMBOLIC' || {
-  echo "no DF_SYMBOLIC in DT_FLAGS: -Bsymbolic did not take, and this binary will" >&2
-  echo "call Unity's HarfBuzz the moment the editor loads it" >&2; fail=1; }
+echo "==> the symbolic bit"
+# Two spellings, because binutils changed its mind. The old one is a dynamic
+# tag of its own, DT_SYMBOLIC, which readelf prints as `(SYMBOLIC)`; the
+# current one is DF_SYMBOLIC inside DT_FLAGS. manylinux2014's ld writes the
+# first, ubuntu's the second, and either answers the question.
+readelf -d "$SO" | grep -E 'SYMBOLIC|FLAGS|NEEDED|SONAME'
+readelf -d "$SO" | grep -qE '\(SYMBOLIC\)|FLAGS\).*SYMBOLIC' || {
+  echo "neither DT_SYMBOLIC nor DF_SYMBOLIC is set: -Bsymbolic did not take, and this" >&2
+  echo "binary will call Unity's HarfBuzz the moment the editor loads it" >&2; fail=1; }
 
 echo
 echo "==> NEEDED"
@@ -162,6 +166,7 @@ readelf -d "$SO" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p' | tee "$BUILD/needed.txt
 while read -r n; do
   case "$n" in
     libc.so.6|libm.so.6|libpthread.so.0|libdl.so.2|libgcc_s.so.1) ;;
+    ld-linux-x86-64.so.2) ;;   # the loader naming itself; -static-libstdc++ adds it
     *) echo "unexpected NEEDED entry: $n" >&2; fail=1 ;;
   esac
 done < "$BUILD/needed.txt"
@@ -276,7 +281,7 @@ int main(int argc, char **argv) {
   void (*buf_utf16)(void *, const unsigned short *, int, unsigned, int) = sym("hb_buffer_add_utf16");
   void (*buf_guess)(void *) = sym("hb_buffer_guess_segment_properties");
   void (*shape)(void *, void *, void *, unsigned) = sym("hb_shape");
-  void *(*infos)(void *, unsigned *) = sym("hb_buffer_get_glyph_infos");
+  unsigned *(*infos)(void *, unsigned *) = sym("hb_buffer_get_glyph_infos");
   void (*buf_destroy)(void *) = sym("hb_buffer_destroy");
   void (*font_destroy)(void *) = sym("hb_font_destroy");
   void (*face_destroy)(void *) = sym("hb_face_destroy");
@@ -289,15 +294,19 @@ int main(int argc, char **argv) {
   /* hb_font_create is the call that crashed the editor. */
   void *font = font_create(face);
   unsigned gid = 0;
-  printf("    hb_font_get_nominal_glyph 'A' -> %d gid %u\n", nominal(font, 'A', &gid), gid);
+  int found = nominal(font, 'A', &gid);   /* not inside printf: C does not say which */
+  printf("    hb_font_get_nominal_glyph 'A' -> %d gid %u\n", found, gid);
+  if (!found || !gid) { fprintf(stderr, "no glyph for 'A'\n"); return 1; }
 
   static const unsigned short text[] = { 'A','V','A','T','a','r',' ','W','a','v','e' };
   void *buf = buf_create();
   buf_utf16(buf, text, 11, 0, 11);
   buf_guess(buf);
   shape(font, buf, NULL, 0);
-  unsigned count = 0; infos(buf, &count);
-  printf("    hb_shape           %u glyphs\n", count);
+  unsigned count = 0;
+  unsigned *first = infos(buf, &count);   /* hb_glyph_info_t opens with the glyph id */
+  printf("    hb_shape           %u glyphs, first gid %u\n", count, count ? first[0] : 0);
+  if (count != 11 || !first[0]) { fprintf(stderr, "that is not a shaped line\n"); return 1; }
 
   buf_destroy(buf);
   font_destroy(font);
@@ -323,16 +332,9 @@ else
   fail=1
 fi
 
-# The same harness against the binary being replaced, so the run log says
-# whether it is measuring anything. Informational: the old one is allowed to
-# crash here, and crashing is the point.
-if [ -f "$OUT/libHarfBuzzSharp.so" ]; then
-  echo
-  echo "==> the same, against the binary this replaces"
-  "$BUILD/smoke" "$OUT/libHarfBuzzSharp.so" "$REPO/Tests/Fonts/NotoSans.ttf" "$BUILD/libfakehb.so" \
-    && say "(it survived, but see the interposed count above)" \
-    || say "(exit $? -- expected, and is the bug)"
-fi
+# The same harness, pointed at the binary being replaced, is what says whether
+# any of this measures anything; it runs where a modern libstdc++ is, which is
+# not in here. See the workflow.
 
 [ "$fail" = 0 ] || exit 1
 
