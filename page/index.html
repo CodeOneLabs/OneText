@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OneText · Every language. One draw call.</title>
-<meta name="description" content="Thai stacks. Arabic joins. Emoji stay whole. OneText is the free, MIT-licensed text engine for Unity uGUI — shaping, bidi, SDF rendering, rich text, colour emoji, animation and IME input. All in the box.">
+<meta name="description" content="Thai stacks. Arabic joins. Emoji stay whole. OneText is the free, MIT-licensed text engine for Unity uGUI: shaping, bidi, SDF rendering, rich text, colour emoji, animation and IME input. All in the box.">
 <style>
   :root {
     --bg: #07090b;
@@ -19,18 +19,24 @@
     --amber: #ffcc66;
     --violet: #b39dff;
     --red: #ff7b72;
-    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    /* The Korean faces sit at the end of both stacks rather than in a stack
+       of their own: the Latin faces in front carry no Hangul, so a Korean
+       run falls through to them on its own, and a mixed line keeps the same
+       Latin it had in English. */
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas,
+            "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", monospace;
     --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
-            Inter, system-ui, sans-serif;
+            Inter, system-ui, "Apple SD Gothic Neo", Pretendard, "Noto Sans KR",
+            "Malgun Gothic", sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   /* Display and body type are the sans; the mono is demoted to what it is
-     actually for — code, data, labels. A whole page of 13.5 px monospace
+     actually for: code, data, labels. A whole page of 13.5 px monospace
      reads as a README, and this page stopped being one. */
   /* clip, not hidden: overflow-x hidden quietly turns the body into a
      scroll container, and on iOS that is the ancestor position:sticky
-     attaches to — the body does not scroll, so nothing ever stuck and the
+     attaches to: the body does not scroll, so nothing ever stuck and the
      interlude sentences rode past their corridors. clip clips without
      creating a scroller. The hidden line stays as the old-browser fallback. */
   body { background: var(--bg); color: var(--ink); font-family: var(--sans);
@@ -52,9 +58,32 @@
   nav .spacer { flex: 1; }
   nav .badge { color: var(--ink-faint); }
 
+  /* Two languages, one pill, top right. Not a <select>: with two options a
+     menu is a click to find out what the options are. */
+  .langsw { display: inline-flex; margin-left: 14px; border: 1px solid var(--line-hi);
+            border-radius: 999px; overflow: hidden; }
+  .langsw button { font: inherit; font-family: var(--mono); font-size: 11px;
+                   letter-spacing: 0.09em; background: transparent; color: var(--ink-faint);
+                   border: 0; padding: 4px 11px; cursor: pointer; line-height: 1.6; }
+  .langsw button:hover { color: var(--green); }
+  .langsw button[aria-pressed="true"] { background: var(--green); color: #062018; }
+
+  /* Korean sets denser and wider per character: the two headlines that are
+     pinned to one line get a lower ceiling so they still hold it. */
+  html[lang="ko"] h1 { font-size: clamp(32px, 4vw, 54px); letter-spacing: -0.03em; }
+  html[lang="ko"] .statement p { font-size: clamp(20px, 3.6vw, 46px); }
+  html[lang="ko"] .spec-label,
+  html[lang="ko"] .eyebrow,
+  html[lang="ko"] .step { letter-spacing: 0.08em; }
+  /* Hangul has no spaces to break inside a word; keep the break at word
+     boundaries rather than mid-어절. */
+  html[lang="ko"] .lede, html[lang="ko"] .sub, html[lang="ko"] .shots-cap,
+  html[lang="ko"] .checks li, html[lang="ko"] .note, html[lang="ko"] .footnotes p,
+  html[lang="ko"] figcaption, html[lang="ko"] .ratio div { word-break: keep-all; }
+
   /* ==== hero: the sentence, then the proof ==== */
   header { padding: 96px 0 20px; }
-  /* Sized so "Every language," holds one line in its grid column — the <br>
+  /* Sized so "Every language," holds one line in its grid column; the <br>
      is the only break this headline is allowed. */
   h1 { font-size: clamp(40px, 4.8vw, 66px); line-height: 1.05; letter-spacing: -0.02em;
        font-weight: 700; white-space: nowrap; }
@@ -87,7 +116,7 @@
              text-transform: uppercase; color: var(--green); margin-bottom: 16px; }
   h2 { font-size: clamp(28px, 3.4vw, 44px); margin-bottom: 18px;
        letter-spacing: -0.02em; font-weight: 700; line-height: 1.15; }
-  /* Once the wordmark has been cast in glass the text itself steps aside —
+  /* Once the wordmark has been cast in glass the text itself steps aside,
      kept in the DOM for readers and search, out of the picture. Until then,
      and forever without WebGL, it is simply the word. */
   .lede { color: var(--ink-dim); font-size: clamp(16px, 1.5vw, 19px); line-height: 1.6;
@@ -104,7 +133,7 @@
      item's automatic minimum is its content's min-content, a <pre> keeps
      its min-content even when it scrolls, and the GitHub URL in the first
      snippet is one unbreakable 548px token. On a phone that inflated the
-     layout viewport to 572px — the whole page rendered zoomed out, and
+     layout viewport to 572px: the whole page rendered zoomed out, and
      every vh-based alignment split from innerHeight. */
   .two > div { min-width: 0; }
   @media (max-width: 820px) { .two { grid-template-columns: 1fr; } }
@@ -137,13 +166,13 @@
             letter-spacing: -0.02em; font-weight: 700; margin-bottom: 14px; }
 
   /* A specular sweep across the wordmark. The gradient is mostly the green the
-     word already is, so the type never changes value — only a band of it
+     word already is, so the type never changes value, only a band of it
      brightens as the highlight crosses, which is a light moving over a surface
      rather than the whole word blinking. It rests for half the cycle, because
      a highlight that never stops reads as a loading state.
 
      This replaces a version that rendered the wordmark as extruded glass. That
-     worked — refracting a streaked lightbox and masking to the letterforms —
+     worked, refracting a streaked lightbox and masking to the letterforms,
      and it was rejected on looks, which is the right reason. If it comes back,
      the technique is in the history, not in dead code here. */
   .kicker i { font-style: normal; display: inline-block;
@@ -174,7 +203,7 @@
     #globe { width: min(420px, 82vw); transform: translate(-50%, calc(-50% - 20px)); }
   }
   /* Held upright, the ball takes the whole first screen before a word of
-     copy appears — portrait phones and tablets skip it and lead with the
+     copy appears; portrait phones and tablets skip it and lead with the
      sentence. Turn the device and it comes back. */
   @media (max-width: 860px) and (orientation: portrait) {
     .specimen { display: none; }
@@ -194,9 +223,9 @@
   .checks b { color: var(--ink); font-weight: 700; display: block; }
 
   /* The multiplier, said the way Apple says a number: enormous, centred,
-     gradient ink, no box around it — the border was the README talking. */
+     gradient ink, no box around it; the border was the README talking. */
   .ratio { text-align: center; margin: 90px 0 100px; }
-  /* The number never breaks: nowrap, and a floor low enough that "11–51×"
+  /* The number never breaks: nowrap, and a floor low enough that "11 to 51x"
      still holds one line on a phone. */
   .ratio b { display: block; font-size: clamp(56px, 17vw, 210px); line-height: 0.95;
              white-space: nowrap;
@@ -205,7 +234,7 @@
              -webkit-background-clip: text; background-clip: text; color: transparent; }
   .ratio div { font-size: 15px; color: var(--ink-dim); line-height: 1.65;
                max-width: 640px; margin: 14px auto 0; }
-  /* Sized so the caption's title holds one line — a headline that wraps two
+  /* Sized so the caption's title holds one line: a headline that wraps two
      words onto a second line looks cut, not composed. */
   .ratio div em { font-style: normal; color: var(--ink); display: block;
                   font-size: clamp(17px, 1.7vw, 21px); font-weight: 600;
@@ -214,7 +243,7 @@
 
   /* The performance chapter flips the room. While the number is on stage the
      page trades its green-black for a violet-black and holds it, the way an
-     Apple page changes key for one section — then gives it back. Only the
+     Apple page changes key for one section, then gives it back. Only the
      background eases; the lines and panels are allowed to just switch. */
   body { transition: background-color 0.9s ease; }
   body.flip { --bg: #110a1f; --panel: #19102e; --panel-2: #20153a;
@@ -223,10 +252,10 @@
               --ink-faint: rgba(228,222,244,0.35); }
 
   /* Apple's fine print: the caveats live at the bottom in small grey type,
-     and the claims above carry only a number. The argument stays honest —
+     and the claims above carry only a number. The argument stays honest;
      it just stops standing in front of the tables. */
   sup { font-size: 0.6em; color: var(--ink-faint); }
-  /* Full width, like the tables above it — a rule that stops mid-page reads
+  /* Full width, like the tables above it: a rule that stops mid-page reads
      as a layout accident, not a footer. */
   .footnotes { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
                font-size: 11.5px; line-height: 1.65; color: var(--ink-faint); }
@@ -254,15 +283,15 @@
   /* Each statement is a tall corridor with a sticky, viewport-high room in
      it; the scroll position through the corridor decides how many words are
      lit. Without JavaScript the words are never wrapped and the sentence is
-     simply there, at full ink — the honest fallback again. */
+     simply there, at full ink; the honest fallback again. */
   .statement { padding: 0; border-top: none; height: 220vh; }
   /* svh, not vh: under a phone's URL bar 100vh is taller than the screen,
-     which parked the sentence above centre while the glyph canvas — fixed
-     to the *visible* viewport — stayed put. Same box for both, or they
+     which parked the sentence above centre while the glyph canvas, fixed
+     to the *visible* viewport, stayed put. Same box for both, or they
      drift apart. The vh line is the fallback for browsers without svh. */
   .statement .pin { position: sticky; top: 0; height: 100vh; height: 100svh;
                     display: flex; align-items: center; justify-content: center; }
-  /* Two short lines, broken by hand with a <br> — never by the layout. The
+  /* Two short lines, broken by hand with a <br>, never by the layout. The
      copy is written to fit; the nowrap is there to make a regression visible
      (an overflowing line) rather than silent (an ugly third line). */
   .statement p { font-size: clamp(22px, 4.2vw, 54px); line-height: 1.35;
@@ -275,7 +304,7 @@
   /* The drift: one fixed canvas of glass glyphs behind the statements. It
      sits under .wrap (z-index 1), so the sentence reads over it and the
      neighbouring sections scroll across it while it fades. Opacity is set
-     per frame by the script — no transition to fight with. */
+     per frame by the script; no transition to fight with. */
   canvas.drift { position: fixed; inset: 0; width: 100%; height: 100%;
                  z-index: 0; pointer-events: none; opacity: 0; }
 
@@ -316,6 +345,42 @@
     .ratio div em { font-size: 17px; }
     section { padding: 90px 0; }
   }
+
+  /* ------------------------------------------------------- shot carousels
+     Screenshot groups are swiped through one at a time, neighbours peeking
+     in from the edges, dots below, instead of stacking down the page. One
+     fixed stage letterboxes the mismatched shapes; the caption rides inside
+     the slide, set in the body face at a size meant to be read. */
+  .shots { position: relative; margin: 46px calc(50% - 50vw) 0; }
+  .shots-track { display: flex; gap: 20px; overflow-x: auto;
+    scroll-snap-type: x mandatory; scrollbar-width: none;
+    padding: 4px calc(50vw - min(44vw, 470px)) 16px; }
+  .shots-track::-webkit-scrollbar { display: none; }
+  .shots-slide { flex: 0 0 min(88vw, 940px); scroll-snap-align: center;
+    border: 1px solid var(--line-hi); border-radius: 14px;
+    background: var(--panel); overflow: hidden;
+    box-shadow: 0 30px 70px rgba(0,0,0,0.5); }
+  .shots-stage { aspect-ratio: 3 / 2; display: flex; align-items: center;
+    justify-content: center; background: #05070a; }
+  .shots-stage img { max-width: 100%; max-height: 100%; }
+  .shots-cap { padding: 16px 22px 18px; border-top: 1px solid var(--line);
+    font-size: 15px; line-height: 1.65; color: var(--ink); }
+  .shots-cap b { color: var(--green); font-weight: 600; }
+  .shots-dots { display: flex; justify-content: center; gap: 8px; margin-top: 18px; }
+  .shots-dot { width: 6px; height: 6px; border-radius: 999px; border: 0; padding: 0;
+    background: var(--line-hi); cursor: pointer; transition: all 0.25s ease; }
+  .shots-dot.on { width: 22px; background: var(--green); }
+  .shots-arrow { position: absolute; top: 50%; transform: translateY(-50%);
+    width: 40px; height: 40px; border-radius: 999px;
+    border: 1px solid var(--line-hi); background: rgba(7,9,11,0.85);
+    color: var(--ink); font-size: 16px; cursor: pointer;
+    opacity: 0; transition: opacity 0.2s ease; z-index: 2; }
+  .shots:hover .shots-arrow { opacity: 1; }
+  .shots-arrow.prev { left: 18px; } .shots-arrow.next { right: 18px; }
+  @media (max-width: 720px) {
+    .shots-arrow { display: none; }
+    .shots-cap { font-size: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -323,40 +388,41 @@
 <div class="wrap">
   <nav>
     <b>onetext</b>
-    <a href="#install">install</a><a href="#box">in the box</a><a href="#migrate">migrate</a>
-    <a href="#correct">correctness</a><a href="#perf">performance</a><a href="#status">status</a>
+    <a href="#install" data-i18n="nav.install">install</a><a href="#box" data-i18n="nav.box">in the box</a><a href="#migrate" data-i18n="nav.migrate">migrate</a>
+    <a href="#correct" data-i18n="nav.correct">correctness</a><a href="#perf" data-i18n="nav.perf">performance</a><a href="#status" data-i18n="nav.status">status</a>
     <span class="spacer"></span>
     <span class="badge">MIT · Unity 2021.3+</span>
+    <span class="langsw" role="group" aria-label="language / 언어"><button type="button" data-lang="ko" lang="ko">KR</button><button type="button" data-lang="en" lang="en">EN</button></span>
   </nav>
 
   <header>
     <div class="hero">
       <div>
         <div class="kicker"><i>OneText</i></div>
-        <h1>Every language,<br><span>one draw call</span>.</h1>
-        <p class="sub">
+        <h1 data-i18n="hero.h1">Every language,<br><span>one draw call</span>.</h1>
+        <p class="sub" data-i18n="hero.sub">
           Thai stacks. Arabic joins. Emoji stay whole.<br>
           A text engine for Unity uGUI that gets every script right, in a
           single draw call.
           <b>Free and open source.<br>Because correct text shouldn't cost extra.</b>
         </p>
         <div class="cta">
-          <a class="btn" href="#install">Install</a>
+          <a class="btn" href="#install" data-i18n="cta.install">Install</a>
           <a class="btn ghost" href="https://github.com/CodeOneLabs/OneText">GitHub</a>
-          <span class="meta">free means free &middot; no pro tier &middot; no paid modules</span>
+          <span class="meta" data-i18n="cta.meta">free means free &middot; no pro tier &middot; no paid modules</span>
         </div>
       </div>
 
       <div class="specimen" aria-hidden="true">
         <div class="stage" id="globe"></div>
-        <div class="spec-label">every script, one atlas, one draw call</div>
+        <div class="spec-label" data-i18n="hero.speclabel">every script, one atlas, one draw call</div>
       </div>
     </div>
 
   </header>
 
   <section class="statement">
-    <div class="pin"><p>Your engine speaks English.<br>
+    <div class="pin"><p data-i18n="st.1">Your engine speaks English.<br>
     <span class="g">Your players don't.</span></p></div>
   </section>
 
@@ -364,8 +430,8 @@
        engines, straight out of the corridor. -->
   <figure>
     <img src="assets/vs-tmp.png" alt="Arabic, Hindi, Thai, Korean and an emoji ZWJ sequence rendered by TextMeshPro and by OneText, side by side">
-    <figcaption>
-      Same string. Same font. Same box. Only the engine differs &mdash; rendered in
+    <figcaption data-i18n="fig.vs">
+      Same string. Same font. Same box. Only the engine differs. Rendered in
       Unity, headless, from this repository, each column clipped to the box it was
       given. <b>Korean needs no rescue, and the table says so. Neither does Arabic.
       The difference is everything in between.</b>
@@ -374,10 +440,10 @@
 
   <!-- ================= PERFORMANCE ================= -->
   <section id="perf">
-    <p class="eyebrow">performance</p>
-    <h2>Fast where it hurts.</h2>
-    <p class="lede">
-      Anyone can win the benchmark they chose. So here are all of them &mdash; medians,
+    <p class="eyebrow" data-i18n="perf.eyebrow">performance</p>
+    <h2 data-i18n="perf.h2">Fast where it hurts.</h2>
+    <p class="lede" data-i18n="perf.lede">
+      Anyone can win the benchmark they chose. So here are all of them: medians,
       tails, draw calls, and the runs we lose.<sup>5</sup> The medians are mostly a
       tie. But a player never feels the median. A player feels the frame that
       arrives late.
@@ -385,7 +451,7 @@
 
     <div class="ratio">
       <b>11&ndash;51&times;</b>
-      <div>
+      <div data-i18n="perf.ratio">
         <em>the worst frame, when the atlas has work to do<sup>1</sup></em>
         A language pack lands mid-session. TextMeshPro stops for
         <span class="vs">351.8 ms</span>. OneText takes
@@ -394,98 +460,98 @@
     </div>
 
     <div class="tabs" role="tablist">
-      <button role="tab" aria-selected="true" aria-controls="p-ui">global ui</button>
-      <button role="tab" aria-selected="false" aria-controls="p-chat">chat stream</button>
-      <button role="tab" aria-selected="false" aria-controls="p-world">world-space</button>
-      <button role="tab" aria-selected="false" aria-controls="p-novel">unseen glyphs</button>
+      <button role="tab" aria-selected="true" aria-controls="p-ui" data-i18n="tab.ui">global ui</button>
+      <button role="tab" aria-selected="false" aria-controls="p-chat" data-i18n="tab.chat">chat stream</button>
+      <button role="tab" aria-selected="false" aria-controls="p-world" data-i18n="tab.world">world-space</button>
+      <button role="tab" aria-selected="false" aria-controls="p-novel" data-i18n="tab.novel">unseen glyphs</button>
     </div>
 
     <div class="panel" id="p-ui" role="tabpanel">
       <table>
-        <tr><th>global ui &mdash; 60 labels, language switch</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
-        <tr><td>median</td><td class="num">0.446 ms</td><td class="num">0.454 ms</td><td class="tie">tie</td></tr>
-        <tr><td>p99</td><td class="num">1.385 ms</td><td class="num">14.438 ms</td><td class="win">10&times;</td></tr>
-        <tr><td>worst frame</td><td class="num">6.875 ms</td><td class="num">351.800 ms</td><td class="win">51&times;</td></tr>
-        <tr><td>draw calls</td><td class="num">1</td><td class="num">5</td><td class="win">5&times;</td></tr>
+        <tr><th data-i18n="th.ui">global ui · 60 labels, language switch</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td data-i18n="r.median">median</td><td class="num">0.446 ms</td><td class="num">0.454 ms</td><td class="tie" data-i18n="c.tie">tie</td></tr>
+        <tr><td data-i18n="r.p99">p99</td><td class="num">1.385 ms</td><td class="num">14.438 ms</td><td class="win">10&times;</td></tr>
+        <tr><td data-i18n="r.worst">worst frame</td><td class="num">6.875 ms</td><td class="num">351.800 ms</td><td class="win">51&times;</td></tr>
+        <tr><td data-i18n="r.draws">draw calls</td><td class="num">1</td><td class="num">5</td><td class="win">5&times;</td></tr>
       </table>
     </div>
 
     <div class="panel" id="p-chat" role="tabpanel" hidden>
       <table>
-        <tr><th>chat stream &mdash; 30 lines, CJK churn</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">TMP static<sup>2</sup></th></tr>
-        <tr><td>median</td><td class="num">0.216 ms</td><td class="num">0.658 ms</td><td class="num">0.091 ms</td></tr>
-        <tr><td>p99</td><td class="num">0.480 ms</td><td class="num">10.003 ms</td><td class="num">0.126 ms</td></tr>
-        <tr><td>worst frame</td><td class="num">0.599 ms</td><td class="num">12.325 ms</td><td class="num">0.182 ms</td></tr>
-        <tr><td>draw calls</td><td class="num">1</td><td class="num">6</td><td class="num">2</td></tr>
-        <tr><td>characters it can draw</td><td class="num">100 %</td><td class="num">100 %</td><td class="lose">60 %</td></tr>
+        <tr><th data-i18n="th.chat">chat stream · 30 lines, CJK churn</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">TMP static<sup>2</sup></th></tr>
+        <tr><td data-i18n="r.median">median</td><td class="num">0.216 ms</td><td class="num">0.658 ms</td><td class="num">0.091 ms</td></tr>
+        <tr><td data-i18n="r.p99">p99</td><td class="num">0.480 ms</td><td class="num">10.003 ms</td><td class="num">0.126 ms</td></tr>
+        <tr><td data-i18n="r.worst">worst frame</td><td class="num">0.599 ms</td><td class="num">12.325 ms</td><td class="num">0.182 ms</td></tr>
+        <tr><td data-i18n="r.draws">draw calls</td><td class="num">1</td><td class="num">6</td><td class="num">2</td></tr>
+        <tr><td data-i18n="r.chars.can">characters it can draw</td><td class="num">100 %</td><td class="num">100 %</td><td class="lose">60 %</td></tr>
       </table>
     </div>
 
     <div class="panel" id="p-world" role="tabpanel" hidden>
       <table>
-        <tr><th>world-space &mdash; 200 labels, 50 retexted per frame<sup>3</sup></th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
-        <tr><td>median</td><td class="num">0.630 ms</td><td class="num">0.632 ms</td><td class="tie">tie</td></tr>
-        <tr><td>p99</td><td class="num">0.814 ms</td><td class="num">0.759 ms</td><td class="lose">−7 %</td></tr>
-        <tr><td>worst frame</td><td class="num">0.933 ms</td><td class="num">0.850 ms</td><td class="lose">−10 %</td></tr>
-        <tr><td>draw calls</td><td class="num">1</td><td class="num">3</td><td class="win">3&times;</td></tr>
+        <tr><th data-i18n="th.world">world-space · 200 labels, 50 retexted per frame<sup>3</sup></th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td data-i18n="r.median">median</td><td class="num">0.630 ms</td><td class="num">0.632 ms</td><td class="tie" data-i18n="c.tie">tie</td></tr>
+        <tr><td data-i18n="r.p99">p99</td><td class="num">0.814 ms</td><td class="num">0.759 ms</td><td class="lose">−7 %</td></tr>
+        <tr><td data-i18n="r.worst">worst frame</td><td class="num">0.933 ms</td><td class="num">0.850 ms</td><td class="lose">−10 %</td></tr>
+        <tr><td data-i18n="r.draws">draw calls</td><td class="num">1</td><td class="num">3</td><td class="win">3&times;</td></tr>
       </table>
     </div>
 
     <div class="panel" id="p-novel" role="tabpanel" hidden>
       <table>
-        <tr><th>unseen glyphs &mdash; 5 labels/frame, none prebakeable</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
-        <tr><td>median</td><td class="num">1.032 ms</td><td class="num">12.380 ms</td><td class="win">12&times;</td></tr>
-        <tr><td>p99</td><td class="num">1.598 ms</td><td class="num">36.146 ms</td><td class="win">23&times;</td></tr>
-        <tr><td>worst frame</td><td class="num">4.036 ms</td><td class="num">43.836 ms</td><td class="win">11&times;</td></tr>
-        <tr><td>draw calls</td><td class="num">1</td><td class="num">8</td><td class="win">8&times;</td></tr>
+        <tr><th data-i18n="th.novel">unseen glyphs · 5 labels/frame, none prebakeable</th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td data-i18n="r.median">median</td><td class="num">1.032 ms</td><td class="num">12.380 ms</td><td class="win">12&times;</td></tr>
+        <tr><td data-i18n="r.p99">p99</td><td class="num">1.598 ms</td><td class="num">36.146 ms</td><td class="win">23&times;</td></tr>
+        <tr><td data-i18n="r.worst">worst frame</td><td class="num">4.036 ms</td><td class="num">43.836 ms</td><td class="win">11&times;</td></tr>
+        <tr><td data-i18n="r.draws">draw calls</td><td class="num">1</td><td class="num">8</td><td class="win">8&times;</td></tr>
       </table>
       <table style="margin-top:26px">
-        <tr><th>&hellip; and at 50 labels/frame<sup>4</sup></th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
-        <tr><td>median</td><td class="num">11.419 ms</td><td class="num">4.384 ms</td><td class="lose">−62 %</td></tr>
-        <tr><td>p99</td><td class="num">15.142 ms</td><td class="num">191.701 ms</td><td class="win">13&times;</td></tr>
-        <tr><td>worst frame</td><td class="num">16.736 ms</td><td class="num">254.569 ms</td><td class="win">15&times;</td></tr>
-        <tr><td>draw calls</td><td class="num">1</td><td class="num">18</td><td class="win">18&times;</td></tr>
-        <tr><td>texture memory</td><td class="num">4 MB fixed</td><td class="num">20 MB growing</td><td class="win">5&times;</td></tr>
-        <tr><td>characters it drew</td><td class="num">100 %</td><td class="lose">79 %</td><td>&nbsp;</td></tr>
+        <tr><th data-i18n="th.novel50">&hellip; and at 50 labels/frame<sup>4</sup></th><th class="num">OneText</th><th class="num">TMP dynamic</th><th class="num">&nbsp;</th></tr>
+        <tr><td data-i18n="r.median">median</td><td class="num">11.419 ms</td><td class="num">4.384 ms</td><td class="lose">−62 %</td></tr>
+        <tr><td data-i18n="r.p99">p99</td><td class="num">15.142 ms</td><td class="num">191.701 ms</td><td class="win">13&times;</td></tr>
+        <tr><td data-i18n="r.worst">worst frame</td><td class="num">16.736 ms</td><td class="num">254.569 ms</td><td class="win">15&times;</td></tr>
+        <tr><td data-i18n="r.draws">draw calls</td><td class="num">1</td><td class="num">18</td><td class="win">18&times;</td></tr>
+        <tr><td data-i18n="r.texmem">texture memory</td><td class="num" data-i18n="c.4mb">4 MB fixed</td><td class="num" data-i18n="c.20mb">20 MB growing</td><td class="win">5&times;</td></tr>
+        <tr><td data-i18n="r.chars.drew">characters it drew</td><td class="num">100 %</td><td class="lose">79 %</td><td>&nbsp;</td></tr>
       </table>
     </div>
 
     <div class="footnotes">
-      <p><b>1</b> The range across the four scenarios: 11&times; (unseen glyphs) to
-        51&times; (a global UI switching language). The scenario with no atlas work
-        &mdash; short ASCII labels over a warm atlas &mdash; has nothing to win and
+      <p data-i18n="fn.1"><b>1</b> The range across the four scenarios: 11&times; (unseen glyphs) to
+        51&times; (a global UI switching language). The scenario with no atlas work,
+        short ASCII labels over a warm atlas, has nothing to win and
         is a tie on the median, a few per cent behind at the tail. It is published
         here with the rest.</p>
-      <p><b>2</b> A static atlas, frozen at build time, does no atlas work at all
-        &mdash; and cannot draw two characters in five of this corpus. A smaller
+      <p data-i18n="fn.2"><b>2</b> A static atlas, frozen at build time, does no atlas work at all,
+        and cannot draw two characters in five of this corpus. A smaller
         job, not a faster engine.</p>
-      <p><b>3</b> The scenario built to suit the other engine: nothing to shape,
+      <p data-i18n="fn.3"><b>3</b> The scenario built to suit the other engine: nothing to shape,
         nothing to bake, nothing a correct engine can be correct at. It used to
         lose by 16&nbsp;%; it is now a tie on the median.</p>
-      <p><b>4</b> TMP's 62&nbsp;% median win is bought with thirty-two atlas pages,
+      <p data-i18n="fn.4"><b>4</b> TMP's 62&nbsp;% median win is bought with thirty-two atlas pages,
         20&nbsp;MB of texture, one character in five undrawn, and 191&nbsp;ms frames
         while the atlas grows. OneText holds 4&nbsp;MB and one draw call; its worst
         frame is 16.7&nbsp;ms.</p>
-      <p><b>5</b> Apple M4 Pro, Unity 6000.0.77, Burst compiled ahead of the run,
+      <p data-i18n="fn.5"><b>5</b> Apple M4 Pro, Unity 6000.0.77, Burst compiled ahead of the run,
         null graphics device, identical scenes and frame loops; median of 3
         repetitions per cell, chosen by p99. Harness, scenarios and raw per-frame
-        CSVs in <code>Docs/BENCHMARKS.md</code>, losses included &mdash; a
+        CSVs in <code>Docs/BENCHMARKS.md</code>, losses included, because a
         comparison that lists only its wins is an advertisement.</p>
     </div>
   </section>
 
   <!-- ================= INSTALL ================= -->
   <section id="install">
-    <p class="eyebrow">install</p>
-    <h2>Two steps. No baking.</h2>
-    <p class="lede">
-      Add the package. Put a label on a canvas. Type in any language on Earth &mdash;
+    <p class="eyebrow" data-i18n="ins.eyebrow">install</p>
+    <h2 data-i18n="ins.h2">Two steps. No baking.</h2>
+    <p class="lede" data-i18n="ins.lede">
+      Add the package. Put a label on a canvas. Type in any language on Earth:
       no atlas to bake, no charset to declare, nothing to configure first.
     </p>
 
     <div class="two">
       <div>
-        <div class="step">1 · add the package</div>
+        <div class="step" data-i18n="ins.step1">1 · add the package</div>
 <pre><span class="c">// Packages/manifest.json</span>
 {
   "dependencies": {
@@ -494,7 +560,7 @@
 }</pre>
       </div>
       <div>
-        <div class="step">2 · put a label on a canvas</div>
+        <div class="step" data-i18n="ins.step2">2 · put a label on a canvas</div>
 <pre><span class="c">// or: Add Component &gt; OneText &gt; Label</span>
 var label = go.AddComponent&lt;<span class="v">OneTextLabel</span>&gt;();
 label.SetFont(File.ReadAllBytes(path));
@@ -505,144 +571,189 @@ label.Text = <span class="s">"สวัสดีชาวโลก"</span>;</pre
 
     <div class="two" style="margin-top:16px">
       <div>
-        <div class="step">fallback fonts, in one call</div>
+        <div class="step" data-i18n="ins.step3">fallback fonts, in one call</div>
 <pre>label.SetFont(latin, arabic, thai, emoji);
 label.Language = <span class="s">"ja"</span>;   <span class="c">// locl: Han unification</span>
 label.CjkLatinSpacing = <span class="v">true</span>;
 label.PunctuationCompression = <span class="v">true</span>;</pre>
       </div>
       <div>
-        <div class="step">typewriter, without a coroutine</div>
+        <div class="step" data-i18n="ins.step4">typewriter, without a coroutine</div>
 <pre>label.CharactersPerSecond = <span class="s">28</span>;
 label.RevealGranularity = <span class="v">Syllable</span>;
 label.SkipToEnd();      <span class="c">// the mash-to-skip button</span>
 label.RestartReveal();</pre>
       </div>
     </div>
+
+    <div class="shots">
+      <button class="shots-arrow prev" aria-label="previous">‹</button>
+      <button class="shots-arrow next" aria-label="next">›</button>
+      <div class="shots-track">
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/hub-overview.png" loading="lazy" alt="The Hub overview: stat tiles, a first-steps checklist that ticks itself off, and a map of every section"></div>
+          <div class="shots-cap" data-i18n="cap.hub">Everything after those two steps lives in one
+            window, the Hub (<b>Window &gt; OneText &gt; Hub</b>). First steps that
+            tick themselves off, and every number a link to the screen that owns
+            it.</div></div>
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/hub-dictionaries.png" loading="lazy" alt="The dictionaries screen after a one-click install: four word lists registered, coverage at 100%"></div>
+          <div class="shots-cap" data-i18n="cap.dict">Thai, Lao, Khmer and Burmese word lists ship inside
+            the package, and one click installs them and re-measures word-break coverage
+            <b>against your own strings</b>, not somebody else's corpus.</div></div>
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/hub-gallery.png" loading="lazy" alt="The Hub's string gallery: every localised string in its box, overflow framed in red"></div>
+          <div class="shots-cap" data-i18n="cap.gallery">The string gallery, rendered headlessly by the
+            package itself: every localised string in the box it has to live in,
+            overflow framed in red. <b>The pass this replaces is opening every screen
+            in every language, by hand.</b></div></div>
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/hub-doctor.png" loading="lazy" alt="Doctor: renderability findings with rule badges, and a passing verdict"></div>
+          <div class="shots-cap" data-i18n="cap.doctor">Doctor, the renderability lint: a character no font
+            in the chain can draw, a locale whose line breaking needs a dictionary
+            nobody installed. All of it decidable before the build, <b>and it exits 1, so CI
+            can fail the merge</b>.</div></div>
+      </div>
+      <div class="shots-dots"></div>
+    </div>
   </section>
 
   <section class="statement">
-    <div class="pin"><p>Everything in the box.<br>
+    <div class="pin"><p data-i18n="st.2">Everything in the box.<br>
     <span class="g">Nothing behind a paywall.</span></p></div>
   </section>
 
   <!-- ================= IN THE BOX ================= -->
   <section id="box">
-    <p class="eyebrow">in the box</p>
-    <h2>Everything in the box.</h2>
-    <p class="lede">
+    <p class="eyebrow" data-i18n="box.eyebrow">in the box</p>
+    <h2 data-i18n="box.h2">Everything in the box.</h2>
+    <p class="lede" data-i18n="box.lede">
       One package. Every feature. Nothing sold separately.
       Somewhere else, this list is a price sheet.
     </p>
     <ul class="checks">
-      <li><b>Shaping &amp; bidi</b> HarfBuzz GSUB/GPOS and the full UAX&nbsp;#9 algorithm — Arabic, Devanagari, Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking</li>
-      <li><b>Rich text &amp; emoji</b> Named styles you edit once and every label follows, inline sprites, colour emoji including ZWJ sequences, flags and skin tones</li>
-      <li><b>Text animation</b> Typewriter by grapheme, orthographic cluster or syllable, per-punctuation pauses for CJK and Thai, <code>&lt;wait=&gt;</code>, skip, per-unit callback, per-cluster effects and a custom-effect API</li>
-      <li><b>Asian typography</b> Kinsoku, punctuation compression, CJK–Latin spacing, Korean word wrap, dictionary line breaking for Thai, Lao, Khmer and Burmese, and a josa tag</li>
-      <li><b>Outline, shadow, glow</b> Packed into vertex channels already paid for, so a decorated label and a plain one still share one material and one draw call</li>
-      <li><b>An input field that survives an IME</b> Inline composition drawn at the caret with a Japanese clause highlight, no syllable lost or doubled on focus change — Input Manager, Input System and the mobile soft keyboard</li>
-      <li><b>The Hub</b> Fonts, charsets, dictionary import with before/after coverage, atlas occupancy and budget advice, a string gallery that flags overflow per locale, and Doctor — a renderability lint that exits 1 so CI can fail a merge</li>
+      <li data-i18n="box.li1"><b>Shaping &amp; bidi</b> HarfBuzz GSUB/GPOS and the full UAX&nbsp;#9 algorithm. Arabic, Devanagari, Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking</li>
+      <li data-i18n="box.li2"><b>Rich text &amp; emoji</b> Named styles you edit once and every label follows, inline sprites, colour emoji including ZWJ sequences, flags and skin tones</li>
+      <li data-i18n="box.li3"><b>Text animation</b> Typewriter by grapheme, orthographic cluster or syllable, per-punctuation pauses for CJK and Thai, <code>&lt;wait=&gt;</code>, skip, per-unit callback, per-cluster effects and a custom-effect API</li>
+      <li data-i18n="box.li4"><b>Asian typography</b> Kinsoku, punctuation compression, CJK-Latin spacing, Korean word wrap, dictionary line breaking for Thai, Lao, Khmer and Burmese, and a josa tag</li>
+      <li data-i18n="box.li5"><b>Outline, shadow, glow</b> Packed into vertex channels already paid for, so a decorated label and a plain one still share one material and one draw call</li>
+      <li data-i18n="box.li6"><b>An input field that survives an IME</b> Inline composition drawn at the caret with a Japanese clause highlight, no syllable lost or doubled on focus change. Input Manager, Input System and the mobile soft keyboard</li>
+      <li data-i18n="box.li7"><b>The Hub</b> Fonts, charsets, dictionary import with before/after coverage, atlas occupancy and budget advice, a string gallery that flags overflow per locale, and Doctor, a renderability lint that exits 1 so CI can fail a merge</li>
     </ul>
 
-    <figure>
-      <img src="assets/decorations.png" alt="The same string drawn plain, outlined, shadowed, glowing and both at once, plus an outlined Arabic line">
-      <figcaption>
-        Every row above is one material, one canvas, one draw call. <b>The Arabic line is
-        the one that matters: the outline follows the joined contour because the cluster
-        was rasterized as a single merged field — a per-glyph outline shows a seam at
-        every join.</b>
-      </figcaption>
-    </figure>
-
-    <figure>
-      <img src="assets/gallery.png" alt="The Hub's string gallery: every localised string in its box, overflow framed in red">
-      <figcaption>
-        The string gallery, rendered headlessly by the package itself: every localised
-        string in the box it has to live in, overflow framed in red with the width it
-        actually needs. <b>The pass this replaces is opening every screen in every
-        language, by hand.</b>
-      </figcaption>
-    </figure>
+    <div class="shots">
+      <button class="shots-arrow prev" aria-label="previous">‹</button>
+      <button class="shots-arrow next" aria-label="next">›</button>
+      <div class="shots-track">
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/decorations.png" loading="lazy" alt="The same string drawn plain, outlined, shadowed, glowing and both at once, plus an outlined Arabic line"></div>
+          <div class="shots-cap" data-i18n="cap.deco">Outline, shadow, glow: every row is one material,
+            one canvas, one draw call. <b>The Arabic line is the one that matters: the
+            outline follows the joined contour, where a per-glyph outline shows a seam
+            at every join.</b></div></div>
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/vertical.png" loading="lazy" alt="Vertical writing: columns right to left, kinsoku at the column ends, rotated Latin, ruby beside the column"></div>
+          <div class="shots-cap" data-i18n="cap.vertical">Vertical writing (縦書き): columns right to left, the
+            same line-breaking and kinsoku pipeline turned ninety degrees, Latin
+            rotated by UAX #50, ruby beside its column. <b>No Unity text solution,
+            first-party or paid, has this.</b></div></div>
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/ruby.png" loading="lazy" alt="Ruby placed by the W3C rules: distribution, padding, overhang, decorations, any script"></div>
+          <div class="shots-cap" data-i18n="cap.ruby">Ruby (furigana) placed by the published rules: slack
+            distributed under a narrow reading, a wide reading allowed to hang only
+            over a neighbour's blank, base and reading unbreakable across a wrap.
+            <b>Compare the padded row with the overhang row: the punctuation gave up
+            its blank, and the line stayed tight.</b></div></div>
+        <div class="shots-slide"><div class="shots-stage">
+          <img src="assets/shots/msdf.png" loading="lazy" alt="Single-channel SDF beside the MSDF precise option at display size"></div>
+          <div class="shots-cap" data-i18n="cap.msdf">The per-label <code>precise</code> option:
+            multi-channel distance fields keep corners sharp at display sizes, where a
+            single channel rounds them off. <b>Same material, same draw call: a
+            precise heading still batches with the paragraph under it.</b></div></div>
+      </div>
+      <div class="shots-dots"></div>
+    </div>
   </section>
 
   <!-- ================= MIGRATE ================= -->
   <section id="migrate">
-    <p class="eyebrow">migrate</p>
-    <h2>Switching is the boring part.</h2>
-    <p class="lede">
-      It is a <code>MaskableGraphic</code>, so everything you already know just works
-      &mdash; <code>RectTransform</code>, layout groups, <code>ContentSizeFitter</code>,
+    <p class="eyebrow" data-i18n="mig.eyebrow">migrate</p>
+    <h2 data-i18n="mig.h2">Switching is the boring part.</h2>
+    <p class="lede" data-i18n="mig.lede">
+      It is a <code>MaskableGraphic</code>, so everything you already know just works:
+      <code>RectTransform</code>, layout groups, <code>ContentSizeFitter</code>,
       masks, raycasting. Rename the component, keep your habits.
       Boring, on purpose.
     </p>
     <table>
-      <tr><th>TextMeshPro</th><th>OneText</th><th>note</th></tr>
-      <tr><td><code>TextMeshProUGUI</code></td><td><code>OneTextLabel</code></td><td>same component slot</td></tr>
-      <tr><td><code>.text</code></td><td><code>.Text</code></td><td>—</td></tr>
-      <tr><td><code>.fontSize</code></td><td><code>.FontSize</code></td><td>—</td></tr>
-      <tr><td><code>.font</code> (baked asset)</td><td><code>.SetFont(bytes, …fallbacks)</code></td><td>no atlas to bake first</td></tr>
+      <tr><th>TextMeshPro</th><th>OneText</th><th data-i18n="mig.th.note">note</th></tr>
+      <tr><td><code>TextMeshProUGUI</code></td><td><code>OneTextLabel</code></td><td data-i18n="mig.n1">same component slot</td></tr>
+      <tr><td><code>.text</code></td><td><code>.Text</code></td><td data-i18n="mig.n2">rename only</td></tr>
+      <tr><td><code>.fontSize</code></td><td><code>.FontSize</code></td><td data-i18n="mig.n2">rename only</td></tr>
+      <tr><td data-i18n="mig.c4"><code>.font</code> (baked asset)</td><td><code>.SetFont(bytes, …fallbacks)</code></td><td data-i18n="mig.n4">no atlas to bake first</td></tr>
       <tr><td><code>.enableWordWrapping</code></td><td><code>.Wrap</code></td><td><code>NoWrap</code> / <code>Wrap</code></td></tr>
-      <tr><td><code>TMP_InputField</code></td><td><code>OneTextInputField</code></td><td>composition is handled, not worked around</td></tr>
-      <tr><td>fallback font list per asset</td><td>one call, one shared atlas</td><td>fallbacks do not split the draw</td></tr>
+      <tr><td><code>TMP_InputField</code></td><td><code>OneTextInputField</code></td><td data-i18n="mig.n6">composition is handled, not worked around</td></tr>
+      <tr><td data-i18n="mig.c7">fallback font list per asset</td><td data-i18n="mig.c7b">one call, one shared atlas</td><td data-i18n="mig.n7">fallbacks do not split the draw</td></tr>
     </table>
   </section>
 
   <section class="statement">
-    <div class="pin"><p>888,289 tests.<br>
+    <div class="pin"><p data-i18n="st.3">888,289 tests.<br>
     <span class="g">Zero failures.</span></p></div>
   </section>
 
   <!-- ================= CORRECTNESS ================= -->
   <section id="correct">
-    <p class="eyebrow">correctness</p>
-    <h2>Correctness, as a number.</h2>
-    <p class="lede">
+    <p class="eyebrow" data-i18n="cor.eyebrow">correctness</p>
+    <h2 data-i18n="cor.h2">Correctness, as a number.</h2>
+    <p class="lede" data-i18n="cor.lede">
       Unicode publishes a test for every algorithm it defines. OneText runs all of
-      them, on every commit &mdash; 888,289 cases, zero failures. Correct isn't a
+      them, on every commit: 888,289 cases, zero failures. Correct isn't a
       claim here. It's a build step.
     </p>
     <table>
-      <tr><th>suite</th><th>standard</th><th class="num">cases</th><th>result</th></tr>
-      <tr><td>BidiTest</td><td>UAX #9 · by class</td><td class="num">770,241</td><td class="pass">PASS</td></tr>
-      <tr><td>BidiCharacterTest</td><td>UAX #9 · by character</td><td class="num">91,707</td><td class="pass">PASS</td></tr>
+      <tr><th data-i18n="cor.th.suite">suite</th><th data-i18n="cor.th.std">standard</th><th class="num" data-i18n="cor.th.cases">cases</th><th data-i18n="cor.th.result">result</th></tr>
+      <tr><td>BidiTest</td><td data-i18n="cor.byclass">UAX #9 · by class</td><td class="num">770,241</td><td class="pass">PASS</td></tr>
+      <tr><td>BidiCharacterTest</td><td data-i18n="cor.bychar">UAX #9 · by character</td><td class="num">91,707</td><td class="pass">PASS</td></tr>
       <tr><td>LineBreakTest</td><td>UAX #14</td><td class="num">19,338</td><td class="pass">PASS</td></tr>
       <tr><td>emoji-test</td><td>UTS #51</td><td class="num">3,781</td><td class="pass">PASS</td></tr>
       <tr><td>WordBreakTest</td><td>UAX #29</td><td class="num">1,944</td><td class="pass">PASS</td></tr>
       <tr><td>GraphemeBreakTest</td><td>UAX #29</td><td class="num">766</td><td class="pass">PASS</td></tr>
       <tr><td>SentenceBreakTest</td><td>UAX #29</td><td class="num">512</td><td class="pass">PASS</td></tr>
-      <tr><td><b>every official suite</b></td><td>no exceptions</td><td class="num"><b>888,289</b></td><td class="pass">PASS</td></tr>
+      <tr><td data-i18n="cor.every"><b>every official suite</b></td><td data-i18n="cor.noexc">no exceptions</td><td class="num"><b>888,289</b></td><td class="pass">PASS</td></tr>
     </table>
-    <p class="lede" style="margin-top:22px">
+    <p class="lede" style="margin-top:22px" data-i18n="cor.lede2">
       Then once more, against real fonts: every assigned codepoint in Unicode 17.0.0,
       shaped, outlined, rasterized and placed. All 159,631 of them.
     </p>
 <pre><span class="g">[coverage]</span> shaped 159,631/159,631 codepoints, 177,400 glyphs, 0 threw; 53 s
 <span class="g">[coverage]</span> 155,496 of 159,631 have a glyph in 213 fonts (97.41 %)
-<span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed
-<span class="s">[coverage]</span> 4,135 uncovered (2.59 %) — three blocks added in Unicode 16–17,
-            for which no free font exists yet</pre>
+<span class="g">[coverage]</span> 155,496 outlines read, 66 blank, 0 malformed</pre>
   </section>
 
   <!-- ================= STATUS ================= -->
   <section id="status">
-    <p class="eyebrow">status</p>
-    <h2>Built in the open.</h2>
-    <p class="lede">
+    <p class="eyebrow" data-i18n="sta.eyebrow">status</p>
+    <h2 data-i18n="sta.h2">Built in the open.</h2>
+    <p class="lede" data-i18n="sta.lede">
       Early, and built in the open. What isn't done is listed, not implied.
     </p>
     <table>
-      <tr><th>area</th><th>state</th></tr>
-      <tr><td>Shaping, bidi, segmentation, layout, SDF atlas, uGUI components</td><td class="pass">done</td></tr>
-      <tr><td>Rich text, colour emoji, animation, Asian typography, decorations, Hub, IME input</td><td class="pass">done</td></tr>
-      <tr><td>Windows · macOS · Linux · Android · iOS natives</td><td class="pass">shipped</td></tr>
-      <tr><td>Verified end to end on a real device</td><td class="wip">macOS only so far</td></tr>
-      <tr><td>WebGL + browser demo</td><td class="wip">coming up</td></tr>
-      <tr><td>Outline, shadow, glow</td><td class="pass">done</td></tr>
-      <tr><td>MSDF — sharp corners at large sizes</td><td class="wip">coming up</td></tr>
-      <tr><td>Ruby (furigana), vertical writing</td><td class="wip">coming up</td></tr>
-      <tr><td>UI Toolkit frontend, ECS, screen readers</td><td class="wip">unbuilt</td></tr>
+      <tr><th data-i18n="sta.th.area">area</th><th data-i18n="sta.th.state">state</th></tr>
+      <tr><td data-i18n="sta.a1">Shaping, bidi, segmentation, layout, SDF atlas, uGUI components</td><td class="pass" data-i18n="sta.done">done</td></tr>
+      <tr><td data-i18n="sta.a2">Rich text, colour emoji, animation, Asian typography, decorations, Hub, IME input</td><td class="pass" data-i18n="sta.done">done</td></tr>
+      <tr><td data-i18n="sta.a3">Windows · macOS · Linux · Android · iOS natives</td><td class="pass" data-i18n="sta.shipped">shipped</td></tr>
+      <tr><td data-i18n="sta.a4">Verified end to end on a real device</td><td class="wip" data-i18n="sta.macos">macOS only so far</td></tr>
+      <tr><td data-i18n="sta.a5">Web native (HarfBuzz on wasm), verified in WebGL2 and WebGPU players</td><td class="pass" data-i18n="sta.shipped">shipped</td></tr>
+      <tr><td data-i18n="sta.a6">Playable browser demo</td><td class="wip" data-i18n="sta.soon">coming up</td></tr>
+      <tr><td data-i18n="sta.a7">Outline, shadow, glow</td><td class="pass" data-i18n="sta.done">done</td></tr>
+      <tr><td data-i18n="sta.a8">MSDF, sharp corners at large sizes</td><td class="pass" data-i18n="sta.done">done</td></tr>
+      <tr><td data-i18n="sta.a9">Ruby (furigana), vertical writing</td><td class="pass" data-i18n="sta.done">done</td></tr>
+      <tr><td data-i18n="sta.a10">System font fallback, so a missing character is not a box</td><td class="pass" data-i18n="sta.done">done</td></tr>
+      <tr><td data-i18n="sta.a11">Tate-chū-yoko, vertical editing, COLRv1</td><td class="wip" data-i18n="sta.unbuilt">unbuilt</td></tr>
+      <tr><td data-i18n="sta.a12">UI Toolkit frontend, ECS, screen readers</td><td class="wip" data-i18n="sta.unbuilt">unbuilt</td></tr>
     </table>
-    <div class="note">
+    <div class="note" data-i18n="sta.note">
       <b>Requirements.</b> Unity 2021.3 LTS or newer. HarfBuzz and FreeType binaries ship
       with the package. MIT licensed; the native dependencies are permissively licensed
       too. Full ICU word-break dictionaries for Thai, Lao, Khmer and Burmese import as a
@@ -651,11 +762,245 @@ label.RestartReveal();</pre>
     </div>
   </section>
 
-  <footer>
-    OneText — free, open source, MIT · Unicode 17.0.0 · Unity 2021.3+<br>
+  <footer data-i18n="footer">
+    OneText · free, open source, MIT · Unicode 17.0.0 · Unity 2021.3+<br>
     Every number on this page is produced by a script in the repository and can be re-run.
   </footer>
 </div>
+
+<script>
+/* Korean, when the reader is Korean. The page ships in English; every
+   translatable node carries data-i18n, the English in the markup *is* the
+   en dictionary (captured once at startup), and ko is the table below.
+   The choice is remembered, and the URL wins over both so a link can pin a
+   language: ?lang=ko.
+
+   This runs before the interlude script on purpose: that script shreds the
+   statement sentences into per-word spans, and it must shred the words the
+   reader is actually going to get. On a later switch it rebuilds, by
+   listening for the event fired at the bottom of this block. */
+(function () {
+  var KO = {
+    'nav.install': '설치',
+    'nav.box': '기본 탑재',
+    'nav.migrate': '이전',
+    'nav.correct': '정확성',
+    'nav.perf': '성능',
+    'nav.status': '현황',
+
+    'hero.h1': '모든 언어를,<br><span>드로우 콜 하나로</span>.',
+    'hero.sub': '태국어는 쌓이고, 아랍어는 이어지고, 이모지는 온전합니다.<br>모든 문자를 제대로 그리는 Unity uGUI 텍스트 엔진. 드로우 콜은 하나.<b>무료입니다. ' +
+      '오픈 소스입니다.<br>제대로 된 텍스트에 값을 더 치를 이유는 없으니까요.</b>',
+    'cta.install': '설치하기',
+    'cta.meta': '무료는 진짜 무료 &middot; 프로 버전 없음 &middot; 유료 모듈 없음',
+    'hero.speclabel': '모든 문자, 아틀라스 하나, 드로우 콜 하나',
+
+    'st.1': '엔진은 영어를 합니다.<br><span class="g">플레이어는 못 합니다.</span>',
+    'st.2': '전부 상자 안에 있습니다.<br><span class="g">결제창 뒤엔 없습니다.</span>',
+    'st.3': '테스트 888,289건.<br><span class="g">실패 0건.</span>',
+
+    'fig.vs': '같은 문자열, 같은 폰트, 같은 상자. 다른 건 텍스트 엔진뿐입니다. 이 저장소에서 Unity 헤드리스로 렌더링했고 각 열은 주어진 상자에 맞춰 잘렸습니다. ' +
+      '<b>한국어는 두 엔진 다 멀쩡하게 그립니다. 표에 그대로 나옵니다. 아랍어도 마찬가지. 그 사이의 모든 것이 다릅니다.</b>',
+
+    'perf.eyebrow': '성능',
+    'perf.h2': '뚝- 끊기지 않습니다.',
+    'perf.lede': '누구나 자기가 고른 벤치마크에서는 이깁니다. 그래서 전부 실었습니다. 중앙값, 꼬리, 드로우 콜, 우리가 지는 항목까지.<sup>5</sup> ' +
+      '중앙값도 지지 않죠. 하지만 플레이어는 중앙값을 느끼지 않습니다. 늦게 도착한 프레임을 느낍니다.',
+    'perf.ratio': '<em>아틀라스 갱신이 필요할 때의 최악 프레임<sup>1</sup></em>세션 도중 언어 팩이 들어옵니다. TextMeshPro는 <span ' +
+      'class="vs">351.8 ms</span> 동안 멈춥니다. OneText는 <span class="vs">6.9 ms</span>입니다.',
+
+    'tab.ui': '글로벌 UI',
+    'tab.chat': '채팅 스트림',
+    'tab.world': '월드 스페이스',
+    'tab.novel': '처음 보는 글리프',
+    'th.ui': '글로벌 UI · 라벨 60개, 언어 전환',
+    'th.chat': '채팅 스트림 · 30줄, CJK 교체',
+    'th.world': '월드 스페이스 · 라벨 200개, 프레임당 50개 텍스트 교체<sup>3</sup>',
+    'th.novel': '처음 보는 글리프 · 프레임당 라벨 5개, 미리 구울 수 없음',
+    'th.novel50': '&hellip; 그리고 프레임당 라벨 50개일 때<sup>4</sup>',
+    'r.median': '중앙값',
+    'r.p99': 'p99',
+    'r.worst': '최악 프레임',
+    'r.draws': '드로우 콜',
+    'r.chars.can': '그릴 수 있는 문자',
+    'r.chars.drew': '실제로 그린 문자',
+    'r.texmem': '텍스처 메모리',
+    'c.tie': '무승부',
+    'c.4mb': '4 MB 고정',
+    'c.20mb': '20 MB 증가',
+
+    'fn.1': '<b>1</b> 네 시나리오에 걸친 범위입니다. 11&times;(처음 보는 글리프)에서 51&times;(언어를 전환하는 글로벌 UI)까지. 아틀라스 작업이 ' +
+      '없는 시나리오, 그러니까 웜업된 아틀라스 위의 짧은 ASCII 라벨에서는 이길 것이 없습니다. 중앙값은 무승부, 꼬리에서는 몇 퍼센트 뒤집니다. 나머지와 함께 ' +
+      '그대로 싣습니다.',
+    'fn.2': '<b>2</b> 빌드 시점에 얼린 정적 아틀라스는 아틀라스 작업을 아예 하지 않습니다. 이 코퍼스의 다섯 문자 중 둘도 그리지 못합니다. 엔진이 빨라서가 아니라 ' +
+      '일을 덜 해서입니다.',
+    'fn.3': '<b>3</b> 상대 엔진에 맞춰 만든 시나리오입니다. 셰이핑할 것도 구울 것도 없고 정확성이 드러날 자리 자체가 없습니다. 예전에는 16&nbsp;% 뒤졌지만 ' +
+      '지금은 중앙값 무승부입니다.',
+    'fn.4': '<b>4</b> TMP는 중앙값에서 62&nbsp;% 앞섭니다. 그 대가가 아틀라스 페이지 32장, 텍스처 20&nbsp;MB, 다섯 문자 중 하나를 못 그리는 ' +
+      '결과, 아틀라스가 커지는 동안의 191&nbsp;ms 프레임입니다. OneText는 4&nbsp;MB와 드로우 콜 하나를 유지합니다. 최악 프레임은 ' +
+      '16.7&nbsp;ms.',
+    'fn.5': '<b>5</b> Apple M4 Pro, Unity 6000.0.77, 실행 전 Burst 컴파일, 널 그래픽스 디바이스, 동일한 씬과 프레임 루프. 셀마다 3회 ' +
+      '반복해 그 중앙값을 p99 기준으로 골랐습니다. 하네스, 시나리오, 프레임별 원본 CSV는 <code>Docs/BENCHMARKS.md</code>에 있습니다. ' +
+      '진 항목도 함께 실었습니다. 이긴 것만 나열한 비교는 광고니까요.',
+
+    'ins.eyebrow': '설치',
+    'ins.h2': '두 단계. 굽지 않습니다.',
+    'ins.lede': '패키지를 추가하고 캔버스에 라벨을 올리세요. 지구상의 어떤 언어든 그대로 입력하면 됩니다. 구울 아틀라스도, 선언할 문자셋도, 먼저 설정할 것도 없습니다.',
+    'ins.step1': '1 · 패키지 추가',
+    'ins.step2': '2 · 캔버스에 라벨 올리기',
+    'ins.step3': '폴백 폰트, 호출 한 번으로',
+    'ins.step4': '코루틴 없는 타자기 효과',
+    'cap.hub': '그 두 단계 다음의 모든 것은 창 하나, 허브(<b>Window &gt; OneText &gt; Hub</b>)에 있습니다. ' +
+      '오버뷰에서는 간단히 현재 세팅 상황을 확인하고 숫자를 눌러 해당 항목으로 넘어갈 수 있습니다.',
+    'cap.dict': '태국어, 라오어, 크메르어, 버마어 단어 목록이 패키지 안에 들어 있습니다. 한 번 클릭하면 설치됩니다. <b>남의 코퍼스가 아니라 당신의 문자열</b>로 단어 ' +
+      '분리 커버리지를 다시 잽니다.',
+    'cap.gallery': '패키지가 직접 헤드리스로 렌더링한 문자열 갤러리입니다. 지역화된 모든 문자열을 실제로 들어갈 상자 안에 그려 보고, 넘치면 빨간 테두리로 표시합니다. <b>모든 ' +
+      '언어로 모든 화면을 하나씩 열어 보던 작업, 이게 대신합니다.</b>',
+    'cap.doctor': '렌더 가능성 린트, 닥터. 체인의 어떤 폰트도 그리지 못하는 문자, 줄바꿈에 사전이 필요한데 아무도 설치하지 않은 로케일. 전부 빌드 전에 잡아낼 수 있습니다. ' +
+      '<b>종료 코드 1을 반환하므로 CI가 머지를 막을 수 있습니다</b>.',
+
+    'box.eyebrow': '기본 탑재',
+    'box.h2': '이거 하나로 끝내세요.',
+    'box.lede': '패키지 하나. 모든 기능. 따로 파는 것 없음. 텍스트를 언제부터 돈 내고 썼나요?',
+    'box.li1': '<b>셰이핑 &amp; 양방향</b> HarfBuzz GSUB/GPOS와 UAX&nbsp;#9 전체 알고리즘. 아랍어, 데바나가리, 태국어, 크메르어, 미얀마어, ' +
+      '티베트어의 문맥 자형, 재배열, 마크 스태킹',
+    'box.li2': '<b>리치 텍스트 &amp; 이모지</b> 이름 있는 스타일(한 번 고치면 모든 라벨이 따라옵니다), 인라인 스프라이트, ZWJ 시퀀스와 국기·피부색을 포함한 ' +
+      '컬러 이모지',
+    'box.li3': '<b>텍스트 애니메이션</b> 자소·정자법 클러스터·음절 단위 타자기 효과, CJK와 태국어의 구두점별 멈춤, <code>&lt;wait=&gt;</code>, ' +
+      '건너뛰기, 단위별 콜백, 클러스터별 이펙트와 커스텀 이펙트 API',
+    'box.li4': '<b>아시아 조판</b> 금칙 처리, 구두점 압축, CJK-라틴 간격, 한국어 어절 줄바꿈, 태국어·라오어·크메르어·버마어 사전 줄바꿈, 그리고 조사 태그',
+    'box.li5': '<b>외곽선, 그림자, 글로우</b> 이미 값을 치른 정점 채널에 채워 넣습니다. 그래서 장식한 라벨과 평범한 라벨이 머티리얼 하나, 드로우 콜 하나를 그대로 ' +
+      '함께 씁니다',
+    'box.li6': '<b>IME에서 살아남는 입력 필드</b> 캐럿 자리에 그려지는 인라인 조합과 일본어 문절 하이라이트, 포커스가 바뀌어도 음절이 사라지거나 겹치지 않습니다. ' +
+      'Input Manager, Input System, 모바일 소프트 키보드',
+    'box.li7': '<b>허브</b> 폰트, 문자셋, 전후 커버리지를 보여주는 사전 임포트, 아틀라스 점유율과 예산 조언, 로케일별 오버플로를 잡는 문자열 갤러리, 렌더 가능성 린트 ' +
+      '닥터 — 종료 코드 1을 반환해 CI가 머지를 막습니다',
+    'cap.deco': '외곽선, 그림자, 글로우. 각 행은 머티리얼 하나, 캔버스 하나, 드로우 콜 하나입니다. <b>아랍어 줄이 핵심입니다. 외곽선이 이어진 윤곽을 그대로 따라갑니다. ' +
+      '글리프별 외곽선은 이음매마다 자국이 남습니다.</b>',
+    'cap.vertical': '세로쓰기(縦書き). 열은 오른쪽에서 왼쪽으로, 같은 줄바꿈·금칙 파이프라인을 90도 돌린 것, UAX #50에 따라 회전한 라틴, 열 옆에 붙는 루비. ' +
+      '<b>퍼스트파티든 유료든, 이게 되는 Unity 텍스트 솔루션은 없습니다.</b>',
+    'cap.ruby': '공개된 규칙대로 배치한 루비(후리가나). 읽기가 좁으면 여백을 나눠 주고 넓으면 이웃의 빈칸 위로만 넘치게 둡니다. 본문과 읽기는 줄바꿈으로 갈라지지 않습니다. ' +
+      '<b>여백을 준 행과 넘치게 둔 행을 비교해 보세요. 구두점이 자기 빈칸을 내줬고 줄은 그대로 조여 있습니다.</b>',
+    'cap.msdf': '라벨별 <code>precise</code> 옵션입니다. 멀티 채널 거리 필드는 디스플레이 크기에서도 모서리를 날카롭게 유지하지만 단일 채널은 뭉갭니다. ' +
+      '<b>같은 머티리얼, 같은 드로우 콜. precise 제목도 아래 문단과 함께 배칭됩니다.</b>',
+
+    'mig.eyebrow': '이전',
+    'mig.h2': '갈아타는 건 어렵지 않습니다.',
+    'mig.lede': '<code>MaskableGraphic</code>이라 쓰던 것이 그대로 동작합니다. <code>RectTransform</code>, 레이아웃 그룹, ' +
+      '<code>ContentSizeFitter</code>, 마스크, 레이캐스팅. 컴포넌트 이름만 바꾸고 습관은 그대로 두세요. 너무 쉬워서 지루하게 느껴질지도 몰라요.',
+    'mig.th.note': '비고',
+    'mig.n1': '컴포넌트 자리 그대로',
+    'mig.n2': '이름만 다름',
+    'mig.c4': '<code>.font</code> (구워 둔 에셋)',
+    'mig.n4': '먼저 구울 아틀라스 없음',
+    'mig.n6': '조합 입력을 우회하지 않고 처리',
+    'mig.c7': '에셋마다 폴백 폰트 목록',
+    'mig.c7b': '호출 한 번, 공유 아틀라스 하나',
+    'mig.n7': '폴백이 드로우를 쪼개지 않음',
+
+    'cor.eyebrow': '정확성',
+    'cor.h2': '정확성을, 숫자로.',
+    'cor.lede': '유니코드는 자신이 정의한 모든 알고리즘의 테스트를 공개합니다. OneText는 커밋마다 그 전부를 돌립니다. 888,289건, 실패 0건. 여기서 정확성은 주장이 ' +
+      '아니라 빌드 단계입니다.',
+    'cor.th.suite': '스위트',
+    'cor.th.std': '표준',
+    'cor.th.cases': '케이스',
+    'cor.th.result': '결과',
+    'cor.byclass': 'UAX #9 · 클래스별',
+    'cor.bychar': 'UAX #9 · 문자별',
+    'cor.every': '<b>모든 공식 스위트</b>',
+    'cor.noexc': '예외 없음',
+    'cor.lede2': '그다음 한 번 더, 실제 폰트를 상대로. 유니코드 17.0.0의 배정된 모든 코드포인트를 셰이핑하고, 외곽선을 읽고, 래스터화해 배치했습니다. 159,631자 ' +
+      '전부.',
+
+    'sta.eyebrow': '현황',
+    'sta.h2': '공개된 자리에서 만듭니다.',
+    'sta.lede': '아직 초기입니다. 전부 공개된 자리에서 진행합니다. 안 된 것은 암시하지 않고 적어 둡니다.',
+    'sta.th.area': '영역',
+    'sta.th.state': '상태',
+    'sta.a1': '셰이핑, 양방향, 분절, 레이아웃, SDF 아틀라스, uGUI 컴포넌트',
+    'sta.a2': '리치 텍스트, 컬러 이모지, 애니메이션, 아시아 조판, 장식, 허브, IME 입력',
+    'sta.a3': 'Windows · macOS · Linux · Android · iOS 네이티브',
+    'sta.a4': '실기기에서 처음부터 끝까지 검증',
+    'sta.a5': '웹 네이티브(wasm 위의 HarfBuzz), WebGL2와 WebGPU 플레이어에서 검증',
+    'sta.a6': '브라우저에서 해 보는 데모',
+    'sta.a7': '외곽선, 그림자, 글로우',
+    'sta.a8': 'MSDF, 큰 크기에서도 날카로운 모서리',
+    'sta.a9': '루비(후리가나), 세로쓰기',
+    'sta.a10': '시스템 폰트 폴백, 없는 문자가 네모가 되지 않도록',
+    'sta.a11': '종중횡(縦中横), 세로쓰기 편집, COLRv1',
+    'sta.a12': 'UI Toolkit 프론트엔드, ECS, 스크린 리더',
+    'sta.done': '완료',
+    'sta.shipped': '출시',
+    'sta.macos': '아직 macOS만',
+    'sta.soon': '준비 중',
+    'sta.unbuilt': '미구현',
+    'sta.note': '<b>요구 사항.</b> Unity 2021.3 LTS 이상. HarfBuzz와 FreeType 바이너리는 패키지에 함께 들어 있습니다. MIT 라이선스. ' +
+      '네이티브 의존성도 모두 관대한 라이선스입니다. 태국어·라오어·크메르어·버마어의 전체 ICU 단어 분리 사전은 패키지 샘플로 임포트됩니다. 그 언어를 쓰지 않는 ' +
+      '프로젝트는 4.2 MB를 지고 가지 않습니다.',
+
+    'footer': 'OneText · 무료, 오픈 소스, MIT · Unicode 17.0.0 · Unity 2021.3+<br>이 페이지의 모든 숫자는 저장소 안의 스크립트가 ' +
+      '만들었습니다. 직접 다시 돌려 볼 수 있습니다.'
+  };
+  var TITLE = {
+    en: 'OneText · Every language. One draw call.',
+    ko: 'OneText · 모든 언어를, 드로우 콜 하나로.'
+  };
+
+  var nodes = [].slice.call(document.querySelectorAll('[data-i18n]'));
+  var EN = {};
+  nodes.forEach(function (el) {
+    var k = el.getAttribute('data-i18n');
+    if (!(k in EN)) EN[k] = el.innerHTML;
+  });
+
+  var DICT = { en: EN, ko: KO };
+  var buttons = [].slice.call(document.querySelectorAll('.langsw [data-lang]'));
+
+  function apply(lang) {
+    var d = DICT[lang] || EN;
+    nodes.forEach(function (el) {
+      var k = el.getAttribute('data-i18n');
+      var s = d[k];
+      if (s == null) s = EN[k];
+      if (s != null && el.innerHTML !== s) el.innerHTML = s;
+    });
+    document.documentElement.lang = lang;
+    document.title = TITLE[lang] || TITLE.en;
+    buttons.forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-lang') === lang ? 'true' : 'false');
+    });
+  }
+
+  function stored() {
+    try { return localStorage.getItem('onetext.lang'); } catch (e) { return null; }
+  }
+  function remember(lang) {
+    try { localStorage.setItem('onetext.lang', lang); } catch (e) {}
+  }
+
+  // The URL pins it, then the reader's own past choice, then the browser's
+  // stated preference. Anything that is not Korean is English: there are two
+  // translations, not a negotiation.
+  var qs = (location.search.match(/[?&]lang=([a-zA-Z-]+)/) || [])[1];
+  var pick = qs || stored() ||
+    ((navigator.languages || [navigator.language || 'en'])[0] || 'en');
+  var lang = /^ko\b/i.test(pick) ? 'ko' : 'en';
+  apply(lang);
+
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var next = b.getAttribute('data-lang');
+      if (next === document.documentElement.lang) return;
+      apply(next);
+      remember(next);
+      // The interlude sentences are rebuilt by whoever owns them; this is the
+      // only thing that has to cross the script boundary.
+      window.dispatchEvent(new CustomEvent('onetext:lang', { detail: next }));
+    });
+  });
+})();
+</script>
 
 <script type="importmap">
 {
@@ -671,7 +1016,7 @@ label.RestartReveal();</pre>
 // once and blitted, and a loose shoal of glyphs that drifts behind the
 // scroll interludes.
 //
-// There was briefly a third — one enormous glyph per section, fixed behind
+// There was briefly a third: one enormous glyph per section, fixed behind
 // the page, crossing as you scrolled. It could never have worked. A
 // transmissive material refracts what is in the WebGL scene behind it, and the
 // scene behind a transparent full-page canvas is empty, so the glass had
@@ -680,12 +1025,12 @@ label.RestartReveal();</pre>
 // it is an in-scene lightbox that never reaches the page: render the glass
 // over a streaked backdrop, render a white silhouette without it, and keep
 // only the pixels the silhouette says are letter. That was built for the
-// wordmark and then dropped for looking wrong — the note survives so the next
+// wordmark and then dropped for looking wrong; the note survives so the next
 // attempt starts from the technique rather than from the wall.
 //
 // Outlines are baked by Tools/extract_glyph_paths.py, so a visitor with no
 // Devanagari font still sees Devanagari: by the time it reaches the page it is
-// a shape, not text. Decorative — aria-hidden, behind a try/catch, and a
+// a shape, not text. Decorative: aria-hidden, behind a try/catch, and a
 // browser without WebGL simply gets a page without it.
 import * as THREE from "three";
 import { SVGLoader } from "three/addons/loaders/SVGLoader.js";
@@ -736,12 +1081,12 @@ function glass(hue, opts) {
 
 // A point earns its place if it moves the outline. Everything else is a
 // point the flattener left behind, and those are not free: earcut hands a
-// run of collinear points back as needles — triangles whose three corners
-// sit on one line — and a needle's face normal is the cross product of two
+// run of collinear points back as needles, triangles whose three corners
+// sit on one line, and a needle's face normal is the cross product of two
 // parallel edges, which is zero or noise. Under a transmissive material a
 // noisy normal is a black speck, and katakana ユ, whose every stroke is a
 // long straight bar, wore a row of them along both edges of its crossbar at
-// any angle but head-on. The tolerance is a ten-thousandth of the em —
+// any angle but head-on. The tolerance is a ten-thousandth of the em,
 // below a tenth of a pixel at the size these are drawn, and far under the
 // sag of a real curve's chord, so bowls keep every point they need.
 function simplify(ring, epsilon) {
@@ -784,7 +1129,7 @@ function geometryFor(entry, opts) {
   const set = Object.assign({
     // Thin enough to stay a letter. At 14 % of the em plus a heavy bevel every
     // glyph became a brick, and twelve curve segments matter on a page whose
-    // product is glyph fidelity — six left visible polygons on the bowls.
+    // product is glyph fidelity: six left visible polygons on the bowls.
     // (The wordmark overrides: seen head-on, glass needs a deeper slab for
     // the refraction to happen in, and a wider bevel to catch a highlight.)
     depth: 0.06, bevelThickness: 0.009, bevelSize: 0.007, curveSegments: 12
@@ -813,7 +1158,7 @@ function geometryFor(entry, opts) {
 
 // Which scripts the ball shows. A random slice of fifty could hand back six
 // near-identical CJK blocks, and a ball of squares is the one thing this
-// object must never look like — so the draw is one glyph per silhouette
+// object must never look like, so the draw is one glyph per silhouette
 // family, shuffled within each.
 const FAMILIES = [
   ["Arabic", "Syriac", "Thaana", "N'Ko"],
@@ -852,7 +1197,7 @@ function environmentFor(renderer) {
 }
 
 function wordEnvironment(renderer) {
-  // The globe borrows a white room and gets away with it — its glyphs are
+  // The globe borrows a white room and gets away with it: its glyphs are
   // small and tinted. At wordmark size a white environment is what every
   // face reflects, and white sheen over every face reads as brushed metal:
   // it desaturates the very hue the glass transmits. So the wordmark
@@ -899,7 +1244,7 @@ function buildGlobe(host) {
     if (!geo) return;
 
     const mesh = new THREE.Mesh(geo, glass(tint(Math.random(), Math.random() * 0.25)));
-    // Font units are large but already y-up — the extractor dumps the pen's
+    // Font units are large but already y-up; the extractor dumps the pen's
     // coordinates raw, it only borrows SVG's path *syntax*. Scale, don't
     // flip: a negative y put every glyph on the ball upside down and turned
     // the extrusion's normals inside out, which glass shading then paid for.
@@ -907,14 +1252,14 @@ function buildGlobe(host) {
     mesh.scale.set(scale, scale, scale);
 
     // Inside the sphere, not on it. A direction picked uniformly and a radius
-    // taken as the cube root of a uniform draw fills the volume evenly —
+    // taken as the cube root of a uniform draw fills the volume evenly;
     // scaling the radius linearly would crowd everything against the shell.
     const dir = new THREE.Vector3().randomDirection();
     const holder = new THREE.Group();
     holder.position.copy(dir).multiplyScalar(RADIUS * Math.cbrt(Math.random()));
     // A small tilt, not a random orientation. Tumbling each glyph through a
     // full sphere showed most of them edge-on or from behind, and a ball of
-    // unreadable slabs argues against the headline instead of for it — the
+    // unreadable slabs argues against the headline instead of for it; the
     // group's own turn supplies all the parallax this needs.
     holder.rotation.set((Math.random() - 0.5) * 0.5,
                         (Math.random() - 0.5) * 0.5,
@@ -987,7 +1332,7 @@ function buildGlobe(host) {
       if (dragging) {
         idle = 0;
       } else {
-        // Carry the throw, then hand back to the idle turn — a hard stop on
+        // Carry the throw, then hand back to the idle turn: a hard stop on
         // release feels like the ball hit something.
         spinX *= 0.94; spinY *= 0.94;
         group.rotation.x += spinX;
@@ -1002,14 +1347,14 @@ function buildGlobe(host) {
 
 // ------------------------------------------------- the drift, behind statements
 // The interlude sentences hang in corridors of empty page, and empty is the
-// one thing this page should never say about text. A single fixed canvas —
-// one more WebGL context in total, not one per statement — fades in while a
+// one thing this page should never say about text. A single fixed canvas,
+// one more WebGL context in total, not one per statement, fades in while a
 // corridor is on screen. The first corridor says hello: Hello!, 안녕,
-// नमस्ते, مرحبا — whole words, shaped by HarfBuzz at bake time
+// नमस्ते, مرحبا: whole words, shaped by HarfBuzz at bake time
 // (Tools/extract_greeting_paths.py), so the conjuncts and joins are real;
 // skipping the shaper for its own decorations is the one hypocrisy this
 // page cannot afford. The later corridors go back to single specimen
-// glyphs — the greeting is an opener, not a wallpaper. Either shoal rings
+// glyphs; the greeting is an opener, not a wallpaper. Either shoal rings
 // the middle of the viewport where the sentence sits: in its orbit, never
 // on its words. Time does the bobbing; the scroll owns the parallax, and
 // each corridor gets its own turn of the ring so they do not repeat.
@@ -1034,7 +1379,7 @@ function buildDrift() {
 
   // One shoal per look, both built once, toggled by corridor. The ring
   // lives in the screen plane and each corridor advances everything along
-  // it — new arrangement, same facing. Rotating a group in y instead sent
+  // it: new arrangement, same facing. Rotating a group in y instead sent
   // half the greetings edge-on or backwards.
   function shoal(entries, opts) {
     const group = new THREE.Group();
@@ -1073,7 +1418,7 @@ function buildDrift() {
   }
 
   const greetings = shoal(shuffled(GREETINGS).slice(0, 10), {
-    // An em height of 2.4, unless the word is long — こんにちは at that size
+    // An em height of 2.4, unless the word is long; こんにちは at that size
     // is wider than the ring, so width caps the scale instead. Gentler tilts
     // and spins than the glyphs get: a glyph reads at any angle, a word
     // stops being a greeting the moment it goes edge-on.
@@ -1090,7 +1435,7 @@ function buildDrift() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     // Words sized for a desktop frame crowd a phone's. Shrink the pieces,
-    // not the groups — a scaled group would shrink the ring's radius too,
+    // not the groups: a scaled group would shrink the ring's radius too,
     // and the ring is already measured from the viewport every frame.
     const shrink = Math.max(0.55, Math.min(1, camera.aspect / 1.6));
     [greetings, specimens].forEach(s =>
@@ -1101,7 +1446,7 @@ function buildDrift() {
 
   let clock = 0, shown = false;
   return function drift(dt) {
-    // Which corridor, and how far through it — the same measure the word
+    // Which corridor, and how far through it: the same measure the word
     // scrub takes, taken again so the two scripts stay strangers.
     let active = -1, progress = 0;
     for (let i = 0; i < corridors.length; i++) {
@@ -1142,7 +1487,7 @@ function buildDrift() {
       f.holder.rotateOnAxis(f.axis, f.spin * dt);
     }
     // The ring follows the sentence, not the viewport. The pin's centre is
-    // where the words actually are — under a retracting URL bar, or while
+    // where the words actually are, under a retracting URL bar, or while
     // the corridor is still entering, that is not the middle of the screen.
     const pinRect = pins[active] ? pins[active].getBoundingClientRect() : null;
     const follow = pinRect
@@ -1210,73 +1555,83 @@ function buildDrift() {
 // The scroll does the talking: a full-height sentence between chapters, inked
 // in one word at a time by how far the reader has carried it, and content
 // that rises a few pixels as it enters. Reduced motion, or no JavaScript,
-// gets the same words — simply already there.
+// gets the same words, simply already there.
 (function () {
   var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
+  var perf = document.getElementById('perf');
   var statements = [];
-  document.querySelectorAll('.statement').forEach(function (sec) {
-    var p = sec.querySelector('p');
-    var pin = sec.querySelector('.pin');
-    if (!p || !pin) return;
-    var words = [];
-    (function wrap(node, green) {
-      Array.prototype.slice.call(node.childNodes).forEach(function (child) {
-        if (child.nodeType === 3) {
-          var frag = document.createDocumentFragment();
-          child.textContent.split(/(\s+)/).forEach(function (part) {
-            if (!part) return;
-            if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(' ')); return; }
-            var w = document.createElement('span');
-            w.className = green ? 'w g' : 'w';
-            w.textContent = part;
-            frag.appendChild(w);
-            words.push(w);
-          });
-          node.replaceChild(frag, child);
-        } else if (child.nodeType === 1) {
-          wrap(child, green || child.classList.contains('g'));
-        }
-      });
-    })(p, false);
-    statements.push({ sec: sec, pin: pin, words: words });
-  });
+  var ticking = false;
 
-  if (reduce) {
-    statements.forEach(function (s) {
-      s.words.forEach(function (w) { w.classList.add('lit'); });
+  // Rebuildable, because a language switch replaces these sentences whole and
+  // the per-word spans have to be cut again from the words the reader now has.
+  function build() {
+    statements = [];
+    document.querySelectorAll('.statement').forEach(function (sec) {
+      var p = sec.querySelector('p');
+      var pin = sec.querySelector('.pin');
+      if (!p || !pin) return;
+      var words = [];
+      (function wrap(node, green) {
+        Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+          if (child.nodeType === 3) {
+            var frag = document.createDocumentFragment();
+            child.textContent.split(/(\s+)/).forEach(function (part) {
+              if (!part) return;
+              if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(' ')); return; }
+              var w = document.createElement('span');
+              w.className = green ? 'w g' : 'w';
+              w.textContent = part;
+              frag.appendChild(w);
+              words.push(w);
+            });
+            node.replaceChild(frag, child);
+          } else if (child.nodeType === 1) {
+            wrap(child, green || child.classList.contains('g'));
+          }
+        });
+      })(p, false);
+      statements.push({ sec: sec, pin: pin, words: words });
     });
-  } else if (statements.length) {
-    var perf = document.getElementById('perf');
-    var ticking = false;
-    function paint() {
-      ticking = false;
-      var vh = window.innerHeight;
-      // The theme flip rides the same scroll: violet while the performance
-      // chapter is the thing on screen, green-black again once it is not.
-      if (perf) {
-        var pr = perf.getBoundingClientRect();
-        document.body.classList.toggle('flip', pr.top < vh * 0.6 && pr.bottom > vh * 0.4);
-      }
+    if (reduce) {
       statements.forEach(function (s) {
-        var rect = s.sec.getBoundingClientRect();
-        // Against the pin's own height, not the window's: on a phone the
-        // URL bar makes innerHeight and 100vh disagree, and the mismatch
-        // shifts when every word has finished lighting.
-        var travel = rect.height - s.pin.offsetHeight;
-        var progress = travel > 0 ? -rect.top / travel : 1;
-        // The first stretch of the corridor is entrance and the last is exit;
-        // the words spend the middle three-fifths arriving one at a time.
-        var t = Math.min(1, Math.max(0, (progress - 0.15) / 0.6));
-        var lit = Math.round(t * s.words.length);
-        s.words.forEach(function (w, i) { w.classList.toggle('lit', i < lit); });
+        s.words.forEach(function (w) { w.classList.add('lit'); });
       });
     }
-    function ask() { if (!ticking) { ticking = true; requestAnimationFrame(paint); } }
+  }
+
+  function paint() {
+    ticking = false;
+    var vh = window.innerHeight;
+    // The theme flip rides the same scroll: violet while the performance
+    // chapter is the thing on screen, green-black again once it is not.
+    if (perf) {
+      var pr = perf.getBoundingClientRect();
+      document.body.classList.toggle('flip', pr.top < vh * 0.6 && pr.bottom > vh * 0.4);
+    }
+    statements.forEach(function (s) {
+      var rect = s.sec.getBoundingClientRect();
+      // Against the pin's own height, not the window's: on a phone the
+      // URL bar makes innerHeight and 100vh disagree, and the mismatch
+      // shifts when every word has finished lighting.
+      var travel = rect.height - s.pin.offsetHeight;
+      var progress = travel > 0 ? -rect.top / travel : 1;
+      // The first stretch of the corridor is entrance and the last is exit;
+      // the words spend the middle three-fifths arriving one at a time.
+      var t = Math.min(1, Math.max(0, (progress - 0.15) / 0.6));
+      var lit = Math.round(t * s.words.length);
+      s.words.forEach(function (w, i) { w.classList.toggle('lit', i < lit); });
+    });
+  }
+  function ask() { if (!ticking) { ticking = true; requestAnimationFrame(paint); } }
+
+  build();
+  if (!reduce && statements.length) {
     addEventListener('scroll', ask, { passive: true });
     addEventListener('resize', ask);
     paint();
   }
+  // The new sentence lights to where the reader already stands, not from zero.
+  addEventListener('onetext:lang', function () { build(); if (!reduce) paint(); });
 
   if (reduce || !('IntersectionObserver' in window)) return;
   var io = new IntersectionObserver(function (entries) {
@@ -1289,6 +1644,205 @@ function buildDrift() {
   }, { rootMargin: '0px 0px -12% 0px' });
   document.querySelectorAll('section:not(.statement) > *, .wrap > figure')
     .forEach(function (el) { el.classList.add('reveal'); io.observe(el); });
+})();
+</script>
+
+<script>
+/* Shot carousels: dots follow the scroll position by observation rather than
+   scroll events (embedded browsers have been seen moving scrollLeft without
+   firing any), and a smooth scroll the snap engine drops is retried as a
+   jump. */
+(function () {
+  document.querySelectorAll('.shots').forEach(function (root) {
+    var track = root.querySelector('.shots-track');
+    var dots = root.querySelector('.shots-dots');
+    var slides = [].slice.call(track.children);
+    slides.forEach(function (_, i) {
+      var d = document.createElement('button');
+      d.className = 'shots-dot' + (i === 0 ? ' on' : '');
+      d.setAttribute('aria-label', 'slide ' + (i + 1));
+      d.addEventListener('click', function () { goTo(i); });
+      dots.appendChild(d);
+    });
+    function current() {
+      var mid = track.scrollLeft + track.clientWidth / 2, best = 0, bd = Infinity;
+      slides.forEach(function (s, i) {
+        var c = s.offsetLeft + s.offsetWidth / 2;
+        if (Math.abs(c - mid) < bd) { bd = Math.abs(c - mid); best = i; }
+      });
+      return best;
+    }
+    function goTo(i) {
+      var s = slides[Math.max(0, Math.min(slides.length - 1, i))];
+      var before = track.scrollLeft;
+      s.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      setTimeout(function () {
+        if (Math.abs(track.scrollLeft - before) < 2)
+          s.scrollIntoView({ inline: 'center', block: 'nearest' });
+      }, 260);
+    }
+    var last = -1;
+    setInterval(function () {
+      var i = current();
+      if (i !== last) {
+        last = i;
+        [].forEach.call(dots.children, function (d, j) {
+          d.classList.toggle('on', j === i);
+        });
+      }
+    }, 150);
+    root.querySelector('.shots-arrow.prev')
+      .addEventListener('click', function () { goTo(current() - 1); });
+    root.querySelector('.shots-arrow.next')
+      .addEventListener('click', function () { goTo(current() + 1); });
+  });
+})();
+</script>
+
+<script>
+/* Korean ragging, in two passes.
+
+   The first is free: a break at a sentence end that does not cost the block a
+   line is always taken. Nothing is spent, and the ragged edge lands where the
+   meaning already ended instead of wherever the measure ran out. This is what
+   sets a two-sentence caption as two lines rather than a line and a stub.
+
+   The second is paid: a sentence that ends past seven tenths of the measure
+   takes the break even though the block grows a line, because the alternative
+   is squeezing three syllables into the sliver that is left. Hangul has no
+   hyphenation and keep-all forbids breaking inside a 어절, so those slivers
+   are uglier here than in English, where this page was set by hand.
+
+   Measured, not written into the copy: the same string is set at 940 px in a
+   caption and at 340 px on a phone, and a <br> typed into the dictionary
+   would be wrong at one of them. So the breaks are computed against the boxes
+   as they actually render, and recomputed when the box changes. */
+(function () {
+  var SEL = '.sub, .lede, figcaption, .shots-cap, .note, .footnotes p,' +
+            ' .ratio div, .checks li';
+  var THRESHOLD = 0.70;
+  var MAX_BREAKS = 12;
+  var els = [].slice.call(document.querySelectorAll(SEL));
+  if (!els.length) return;
+
+  function clear(el) {
+    [].slice.call(el.getElementsByTagName('br')).forEach(function (br) {
+      if (br.className === 'rag') br.parentNode.removeChild(br);
+    });
+    el.normalize();  // the splits from the last pass, put back
+  }
+
+  // Every text node in the element flattened into one string, with each
+  // character remembering the node it came from: a sentence can end in a
+  // plain node and resume inside a <b>, and that pair still has to be seen.
+  function flatten(el) {
+    var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+    var s = '', map = [], n;
+    while ((n = w.nextNode())) {
+      var v = n.nodeValue;
+      for (var i = 0; i < v.length; i++) { s += v[i]; map.push([n, i]); }
+    }
+    return { s: s, map: map };
+  }
+
+  // How many lines the element's inline content occupies, counted off the
+  // distinct tops of its client rects.
+  function lineCount(el, range) {
+    range.selectNodeContents(el);
+    var tops = {}, n = 0;
+    [].forEach.call(range.getClientRects(), function (r) {
+      if (r.width <= 0) return;
+      var k = Math.round(r.top);
+      if (!tops[k]) { tops[k] = 1; n++; }
+    });
+    return n;
+  }
+
+  function insertBreak(pos) {
+    var br = document.createElement('br');
+    br.className = 'rag';
+    // The space stays on the line above, where it collapses.
+    var tail = pos[1] ? pos[0].splitText(pos[1]) : pos[0];
+    tail.parentNode.insertBefore(br, tail);
+    return br;
+  }
+
+  // One break per call: inserting one moves everything after it, so the rest
+  // is re-measured rather than predicted. `budget` is the line count the block
+  // may not exceed; pass null to ignore cost and go by the threshold alone.
+  // Candidates before `skip` are passed over — that is how the caller walks
+  // past the ones a trial has already rejected.
+  //
+  // Returns the ordinal of the sentence end it broke at, -(ordinal + 1) if a
+  // trial there cost a line and was undone, or null when nothing is left. A
+  // trial splits a text node, so the flattened offsets are stale the moment it
+  // is undone: the scan has to restart, and does.
+  function breakOnce(el, range, budget, skip) {
+    var cs = getComputedStyle(el);
+    var width = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (!(width > 0)) return null;
+    var left = el.getBoundingClientRect().left +
+               parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+
+    var f = flatten(el), re = /[.?!]\s+(?=\S)/g, m, ord = -1;
+    while ((m = re.exec(f.s))) {
+      ord++;
+      if (ord < skip) continue;
+      var a = f.map[m.index], b = f.map[m.index + m[0].length];
+      if (!a || !b) continue;
+      range.setStart(a[0], a[1]); range.setEnd(a[0], a[1] + 1);
+      var ra = range.getBoundingClientRect();
+      range.setStart(b[0], b[1]); range.setEnd(b[0], b[1] + 1);
+      var rb = range.getBoundingClientRect();
+      if (!ra.width || !rb.width) continue;
+      if (rb.top > ra.top + 1) continue;  // already a line end
+      if (budget === null) {
+        if ((ra.right - left) / width <= THRESHOLD) continue;  // room to spare
+        insertBreak(b);
+        return ord;
+      }
+      var br = insertBreak(b);
+      if (lineCount(el, range) <= budget) return ord;  // free, keep it
+      br.parentNode.removeChild(br);                   // costs a line, undo
+      el.normalize();
+      return -(ord + 1);
+    }
+    return null;
+  }
+
+  var range = document.createRange();
+  function pass(el, budget) {
+    var skip = 0;
+    for (var i = 0; i < MAX_BREAKS * 3; i++) {
+      var at = breakOnce(el, range, budget, skip);
+      if (at === null) return;
+      skip = at < 0 ? -at : 0;  // past a rejection, or back to the top
+    }
+  }
+  function rag() {
+    var on = document.documentElement.lang === 'ko';
+    els.forEach(function (el) {
+      clear(el);
+      if (!on) return;
+      pass(el, lineCount(el, range));  // free breaks first
+      pass(el, null);                  // then the ones worth a line
+    });
+  }
+
+  var pending = false;
+  function ask() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function () { pending = false; rag(); });
+  }
+
+  rag();
+  addEventListener('resize', ask);
+  addEventListener('onetext:lang', ask);
+  addEventListener('load', ask);
+  // Web fonts land after first paint and every measure taken before them is
+  // stale by a few per cent.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(ask);
 })();
 </script>
 
