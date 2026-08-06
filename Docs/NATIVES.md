@@ -6,11 +6,15 @@ what was checked before they were committed, and how to replace them.
 
 ## Where they come from
 
-All of them are from the `HarfBuzzSharp.NativeAssets.*` NuGet packages:
+Most of them are from the `HarfBuzzSharp.NativeAssets.*` NuGet packages:
 Microsoft's builds for SkiaSharp, MIT licensed, one build tree, one HarfBuzz
 version across every platform. Building HarfBuzz five ways ourselves would be
 five toolchains to keep working and five chances for the platforms to drift
 apart in ways nobody notices until a script stops joining on one of them.
+
+Two are not, and both have a section of their own below. Web, because NuGet has
+no wasm build and there was never anything to vendor. Linux, because the
+vendored one loaded into the Linux editor and took the editor down with it.
 
 Current version: **14.2.1.1** (HarfBuzz **14.2.1**).
 
@@ -20,16 +24,14 @@ Current version: **14.2.1.1** (HarfBuzz **14.2.1**).
 | Windows x64 | `HarfBuzzSharp.NativeAssets.Win32` | `runtimes/win-x64/native/libHarfBuzzSharp.dll` |
 | Windows x86 | `HarfBuzzSharp.NativeAssets.Win32` | `runtimes/win-x86/native/libHarfBuzzSharp.dll` |
 | Windows ARM64 | `HarfBuzzSharp.NativeAssets.Win32` | `runtimes/win-arm64/native/libHarfBuzzSharp.dll` |
-| Linux x64 | `HarfBuzzSharp.NativeAssets.Linux` | `runtimes/linux-x64/native/libHarfBuzzSharp.so` |
+| Linux x64 | *built here*, `Tools/build_linux_natives.sh` | HarfBuzz 14.2.1 sources |
 | Android arm64-v8a | `HarfBuzzSharp.NativeAssets.Android` | `runtimes/android-arm64/native/libHarfBuzzSharp.so` |
 | Android armeabi-v7a | `HarfBuzzSharp.NativeAssets.Android` | `runtimes/android-arm/native/libHarfBuzzSharp.so` |
 | Android x86_64 | `HarfBuzzSharp.NativeAssets.Android` | `runtimes/android-x64/native/libHarfBuzzSharp.so` |
 | iOS device + simulator | `HarfBuzzSharp.NativeAssets.iOS` | `runtimes/ios/…` and `runtimes/iossimulator/…`, repacked into one `.xcframework` |
 
 Linux ships x64 only, because that is the only Linux target Unity's standalone
-player builds for. Web is the exception to the whole table: NuGet has no wasm
-build, so that one is compiled here, from source, and has its own section
-below.
+player builds for.
 
 Windows ARM64 is tagged `StandaloneWindows64` with `CPU: ARM64`, which is a
 Unity-6-era concept. The package still claims 2021.3 LTS, and no 2021.3 editor
@@ -123,6 +125,150 @@ exactly what a hand-written platform mask gets wrong. `NativesTests` fails if a
 binary is missing, marked Any Platform, tagged for the wrong CPU or editor OS,
 enabled for a platform that is not its own, not 16 KB aligned, or (on iOS) not
 embedded or missing a slice.
+
+## Linux: the one that had to stop being vendored
+
+`Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so` is 2.3 MB, built by
+`Tools/build_linux_natives.sh` from HarfBuzz 14.2.1, in an old-glibc container,
+on GitHub Actions (`.github/workflows/build-natives.yml`, dispatched by hand).
+It was vendored from `HarfBuzzSharp.NativeAssets.Linux` like everything else
+until the first real Linux CI run, and that run is why it is not any more.
+
+### Unity's editor already contains a HarfBuzz too
+
+The Web section below ends with Unity statically linking its own HarfBuzz into
+every Web player. The Linux editor does the same thing, for TextCore, and the
+consequence is worse, because on Web the collision is a link error and here it
+is a running process.
+
+Editor **6000.0.77f1** on Linux, first shaping call, 45 frames, of which four:
+
+```
+#0  burst_signal_handler(int, siginfo_t*, void*)
+#2  0x007f16e18973fe in free
+#3  0x007f16e120ba42 in hb_font_set_var_coords_normalized
+#4  0x007f14a5e7f353 in hb_font_create
+#5  (wrapper managed-to-native) OneText.Native.HarfBuzzApi:hb_font_create
+```
+
+Read the addresses. `hb_font_create` is at `0x7f14a5…`, in the library Mono
+just loaded, and the `hb_font_set_var_coords_normalized` it calls is at
+`0x7f16e1…`, six hundred megabytes of address space away, in a different
+module: Unity's. Our `hb_font_create` allocated a `hb_font_t` of our shape and
+handed it to a HarfBuzz that had a different one, which walked it and freed
+something that was never a pointer.
+
+Nothing was wrong with the file. ELF resolves an exported function through the
+process's global symbol scope, first definition wins, and a library's calls to
+its *own* exported functions are no exception: they go through the PLT like
+anything else. Unity's copy is already in that scope, so it wins every hb_\*
+our copy asks for. The vendored `.so` is linked to allow exactly that, because
+it was built to be one HarfBuzz on a system, which is a correct thing to build
+and not what this package needs.
+
+**This is why 508 EditMode tests pass on macOS and cannot catch it.** Mach-O's
+two-level namespace records, per undefined symbol, which library it came from,
+so a dylib's calls to itself are bound to itself no matter what else is loaded.
+The same source, the same HarfBuzz version, the same test file: fine on one
+loader, SIGSEGV on the other.
+
+### The fix, which is one linker flag
+
+`-Wl,-Bsymbolic`. It resolves every reference the library makes to a symbol the
+library defines at link time, against the local definition, so those calls
+never reach the PLT and never meet Unity's HarfBuzz. `readelf -d` shows it as
+`(SYMBOLIC)` or as `SYMBOLIC` inside `(FLAGS)`, depending on how old the
+binutils is, and the build script accepts either and fails if it finds neither.
+
+Two more flags that are hygiene rather than the fix. A version script exports
+the 59 entry points `HarfBuzzApi.cs` names plus `hb_subset_*` and makes
+everything else local, which takes the dynamic symbol table from thousands of
+C++ internals to **84 symbols**; and `-static-libstdc++ -static-libgcc` drops
+`libstdc++.so.6` from `NEEDED`, leaving `libm`, `libpthread` and `libc`. Both
+narrow what two HarfBuzzes in one process can do to each other. Neither would
+have prevented the crash on its own.
+
+### What the build run checks, and how it knows the check works
+
+`Tools/build_linux_natives.sh` refuses to write a binary that fails any of:
+`DT_SYMBOLIC`/`DF_SYMBOLIC` present, `NEEDED` within the expected list, no
+glibc requirement above **2.14**, all 59 P/Invoke entry points exported, at
+least 31 `hb_subset_*` exported, no undefined `hb_*` at all.
+
+Then it runs one. A stub library defining fourteen `hb_*` names is loaded
+`RTLD_GLOBAL` first, standing in for Unity's; the real library is loaded after
+it; and a font is shaped through `dlsym` on the real library's own handle. Each
+stub counts its calls, and any call at all is our library having reached a
+stranger's HarfBuzz.
+
+The workflow runs the same harness against the binary being replaced, on the
+runner where a modern libstdc++ can load it, and **fails if that one comes back
+clean**, because a harness that cannot see the bug is not evidence of anything.
+The run that produced the committed binary:
+
+| | vendored 14.2.1 | built here |
+|---|---|---|
+| `hb_version_string` | `14.2.1` | `14.2.1` |
+| `hb_face_get_upem` | 1000 | 1000 |
+| `hb_shape` of `AVATar Wave` | 11 glyphs, first gid 36 | 11 glyphs, first gid 36 |
+| **calls that landed in the stub** | **1** | **0** |
+| exit | 2 | 0 |
+
+Same HarfBuzz, same answers, and one of them phoned a stranger.
+
+### The other Linux editor, which failed differently and for another reason
+
+**2022.3.62f1** never got as far as a crash: every test that touches HarfBuzz
+threw `DllNotFoundException: libHarfBuzzSharp`, with Mono probing
+`/opt/unity/Editor/Data/MonoBleedingEdge/lib/` and nothing else. That reads
+like a missing dependency and is not one. One line of the editor log says what
+it is:
+
+```
+2022.3.62f1   Refreshing native plugins compatible for Editor ... found 0 plugins.
+6000.0.77f1   Refreshing native plugins compatible for Editor ... found 1 plugins.
+```
+
+The 2022.3 editor never registered the plugin, so Mono was never given a path
+and fell back to probing. The binary is fine; the `.meta` is what 2022.3 cannot
+read. `PluginImporter` metas written by a Unity 6 editor are
+`serializedVersion: 3`, whose `platformData` is a map keyed by platform name;
+2022.3 writes `serializedVersion: 2`, a list of `first:`/`second:` pairs keyed
+by *group and* name. Given the newer shape, 2022.3 falls back to guessing the
+platform from the folder the file is in, which is why the same run reads
+`Linux64` and `Android` settings correctly and reads back **empty strings** for
+the two things no folder name can imply: `GetEditorData("OS")` and the iOS
+`AddToEmbeddedBinaries`. No editor OS means no editor plugin, which is the
+`DllNotFoundException`.
+
+So the Linux `.so`'s `.meta` is written in the older form, which Unity 6 reads
+back unchanged (Unity's own `com.unity.rendering.denoising` ships that form to
+a Unity 6 editor). The GUID is untouched, as it must be.
+
+**The other nine are still `serializedVersion: 3`**, and on 2022.3 they still
+read back empty for anything a folder name cannot imply: `NativesTests` reports
+`macOS/libHarfBuzzSharp.dylib: wrong editor OS` and `the iOS framework is not
+embedded`. Neither can be seen from a Linux runner as anything but a failed
+assertion, and neither is a Linux problem; converting the rest wants an editor
+of each platform to confirm against, or a 2022.3 editor to run
+`NativePluginSettings.ApplyBatch` from, which is what writes these files.
+
+### Rebuilding it
+
+There is no Docker on the machine this was developed on and no Linux box, so
+the build is a workflow:
+
+```bash
+gh workflow run build-natives.yml
+gh run watch <id>
+gh run download <id> -n libHarfBuzzSharp-linux-x86_64
+```
+
+It is `workflow_dispatch` only, and it commits nothing. Drop the artifact on
+`Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so`, keep mode `755` (the
+committed file is `100755`; a plugin Unity copies into a player is happier
+executable, and the vendored one was `644` for no reason anyone chose), leave
+the `.meta` alone, and read the checks in the run log before believing it.
 
 ## Web (WebGL): the one we build ourselves
 
@@ -492,14 +638,19 @@ binary under it; these come from one build tree.
 
 ## What has not been verified
 
-Only macOS has run. The other binaries are checked for everything checkable
-without the platform (presence, architecture, exported symbols, page
-alignment, import settings) and no further. Specifically untested: any
-Windows, Linux, Android or iOS build; the Windows ARM64 rows on 2021.3; and
-the iOS xcframework's Xcode integration, which is the piece with the most
-moving parts.
+macOS, Web and now Linux have run. The remaining binaries are checked for
+everything checkable without the platform (presence, architecture, exported
+symbols, page alignment, import settings) and no further. Specifically
+untested: any Android or iOS build, and the iOS xcframework's Xcode
+integration, which is the piece with the most moving parts. The Windows
+binaries have loaded in a Windows editor and in a Windows player, which is the
+first time anything in that column has been executed.
 
-CI has never run either: the repository has no remote yet. The Windows editor
-job added for this milestone is marked `continue-on-error`, because game-ci's
-test runner documents package testing as Linux-only and the job may simply not
-work; it is there to be made to work, not to be relied on.
+The Linux run is the one to read the rest of this file against. Every other
+platform's binary is still vendored, still linked to be the only HarfBuzz on
+the machine, and Unity has one of its own in the editor on all of them. macOS
+is safe by loader design. Windows resolves imports per-module and has no global
+scope to lose an argument in, and its editor job passes. Android and iOS load
+into a player with no Unity HarfBuzz beside them, so far as anyone has checked,
+and "so far as anyone has checked" is exactly what that Linux stack trace was
+before somebody ran it.

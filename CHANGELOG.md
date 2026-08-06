@@ -257,6 +257,45 @@
 
 ### Fixed
 
+- **The Linux editor crashed on the first shaping call, because two HarfBuzzes
+  were in the room.** Unity's editor links a HarfBuzz of its own for TextCore,
+  ELF resolves an exported function through the process's global symbol scope
+  with the first definition winning, and a library's calls to its *own*
+  exported functions go through that scope like anything else. So our
+  `hb_font_create` allocated a font and passed it to Unity's
+  `hb_font_set_var_coords_normalized`, which walked a struct of a different
+  shape and freed something that was never a pointer. The stack trace has both
+  addresses in it, six hundred megabytes apart, in two different modules.
+
+  macOS could not have caught this and never will: Mach-O's two-level namespace
+  records which library each undefined symbol came from, so a dylib's calls to
+  itself are bound to itself no matter what else is loaded. Same HarfBuzz, same
+  version, same tests, green on one loader and a SIGSEGV on the other. The
+  package has now made the two-HarfBuzzes mistake on Web and on Linux, in
+  opposite directions: there it was a link error nobody could ignore, here it
+  was a segfault forty-five frames deep.
+
+  The Linux binary is therefore no longer vendored from the HarfBuzzSharp NuGet
+  packages. It is built from HarfBuzz 14.2.1 by `Tools/build_linux_natives.sh`,
+  in an old-glibc container, with `-Wl,-Bsymbolic`, which binds those calls at
+  link time so they never reach the PLT. A version script cuts the dynamic
+  symbol table to the 59 entry points `HarfBuzzApi.cs` names plus `hb_subset_*`
+  (84 symbols, down from thousands), and libstdc++ is linked statically, so
+  there is less of it able to collide with anything at all. The build workflow
+  loads a stub HarfBuzz first and shapes through the real one afterwards, and
+  refuses to ship a binary that answered the stub: the binary being replaced
+  answers it once, and this one never does.
+
+- **The 2022.3 editor could not find the library at all**, which looked like a
+  missing dependency and was a `.meta` written by a newer editor. Unity 6
+  writes `PluginImporter` metas as `serializedVersion: 3`; 2022.3 reads
+  `serializedVersion: 2` and, handed the newer shape, guesses each plugin's
+  platform from the folder it sits in. That covers `Linux64` and `Android` and
+  cannot cover the editor's own OS, so 2022.3 logged `found 0 plugins`, never
+  gave Mono a path, and threw `DllNotFoundException: libHarfBuzzSharp` from
+  every test that shapes. The Linux plugin's import settings are written in the
+  older form now, which Unity 6 reads back unchanged.
+
 - **iOS could not call HarfBuzz at all.** Every non-Web platform loads the
   native library by name, and on iOS that lookup has nowhere to land: an
   embedded framework is resolved through its install name, not through a
