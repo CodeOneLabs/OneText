@@ -153,7 +153,7 @@ Editor **6000.0.77f1** on Linux, first shaping call, 45 frames, of which four:
 
 Read the addresses. `hb_font_create` is at `0x7f14a5…`, in the library Mono
 just loaded, and the `hb_font_set_var_coords_normalized` it calls is at
-`0x7f16e1…`, six hundred megabytes of address space away, in a different
+`0x7f16e1…`, nearly nine gigabytes of address space away, in a different
 module: Unity's. Our `hb_font_create` allocated a `hb_font_t` of our shape and
 handed it to a HarfBuzz that had a different one, which walked it and freed
 something that was never a pointer.
@@ -180,13 +180,18 @@ never reach the PLT and never meet Unity's HarfBuzz. `readelf -d` shows it as
 `(SYMBOLIC)` or as `SYMBOLIC` inside `(FLAGS)`, depending on how old the
 binutils is, and the build script accepts either and fails if it finds neither.
 
-Two more flags that are hygiene rather than the fix. A version script exports
-the 59 entry points `HarfBuzzApi.cs` names plus `hb_subset_*` and makes
-everything else local, which takes the dynamic symbol table from thousands of
-C++ internals to **84 symbols**; and `-static-libstdc++ -static-libgcc` drops
-`libstdc++.so.6` from `NEEDED`, leaving `libm`, `libpthread` and `libc`. Both
-narrow what two HarfBuzzes in one process can do to each other. Neither would
-have prevented the crash on its own.
+Two more flags beside it. A version script exports the 59 entry points
+`HarfBuzzApi.cs` names plus `hb_subset_*` and makes everything else local,
+which takes the dynamic symbol table from thousands of C++ internals to **84
+symbols**; and `-static-libstdc++ -static-libgcc` drops `libstdc++.so.6` from
+`NEEDED`, leaving `libm`, `libpthread` and `libc`.
+
+The version script would in fact have stopped *this* crash by itself, and that
+is the reason not to rely on it: `hb_font_set_var_coords_normalized` is not one
+of the 59, so it is local now and cannot be interposed. But 59 of them are
+still exported, HarfBuzz calls its own public API internally all over the
+place, and the next stack trace would have looked exactly like this one with a
+different name in frame 3. `-Bsymbolic` is what covers the 59 as well.
 
 ### What the build run checks, and how it knows the check works
 
@@ -215,6 +220,23 @@ The run that produced the committed binary:
 | exit | 2 | 0 |
 
 Same HarfBuzz, same answers, and one of them phoned a stranger.
+
+### What the editors said afterwards
+
+Both Linux EditMode jobs now run all 508 tests to a report, with **no
+`DllNotFoundException` and no stack trace** anywhere in either log, and the
+tests that actually call HarfBuzz pass on both: `NativesTests`'
+`HarfBuzzLoadsAndReportsItsVersion` and `SubsettingIsAvailable`, all six
+`ShapingTests`, all ten `SubsetTests`. Before it, 2022.3 threw
+`DllNotFoundException` 230 times and 6000.0.77f1 produced no report at all,
+because the editor died with exit 139 partway through.
+
+What is left is not the natives and is the same on both editors, to within one
+test: 35 need `Tests/CoverageFonts~`, which CI does not fetch, and the rest are
+one cause, which is that **`OneText/SDF` does not load in a Linux editor**. The
+PlayMode job is the cleanest statement of it: 28 tests, 28 failures, every one
+of them the same `OneText/SDF shader not found`, and not one native error in
+the log. That is its own bug and not this file's.
 
 ### The other Linux editor, which failed differently and for another reason
 

@@ -112,16 +112,19 @@ CFLAGS=(
 
 # -Wl,-Bsymbolic is the fix. It resolves every reference this library makes to
 # a symbol this library defines at link time, against the local definition, so
-# the calls never reach the PLT and never meet Unity's HarfBuzz. Nothing else
-# in this file would prevent the crash; the export list narrows the surface and
-# the static libstdc++ removes a dependency, but they are hygiene, and this is
-# the load-bearing line. Removing it puts the SIGSEGV back.
+# the calls never reach the PLT and never meet Unity's HarfBuzz.
 #
-# -Bsymbolic and not -Bsymbolic-functions: the data symbols matter too.
-# HarfBuzz's immutable singletons (hb_font_get_empty and friends hand out
-# pointers to file-scope objects) would otherwise be one object in our copy and
-# a different one in Unity's, and code that compares a pointer against the
-# empty instance would be wrong in a way no crash reports.
+# The version script above would have stopped the one crash that was actually
+# observed, because the symbol in frame 3 of it is not one of the 59 and is
+# local now. That is not a reason to drop this line, it is the reason to keep
+# it: 59 hb_* are still exported, HarfBuzz calls its own public API internally
+# throughout, and the next crash would have read identically with a different
+# name in that frame. This flag covers the 59 as well.
+#
+# -Bsymbolic rather than -Bsymbolic-functions, which would leave data
+# references to be resolved through the global scope. Everything exported here
+# happens to be a function, so today the two are the same binary; there is no
+# reason to ship the one whose guarantee is narrower than the problem.
 #
 # --no-undefined turns a missing symbol into a link error here rather than a
 # DllNotFoundException on a user's machine: dlopen resolves everything eagerly
