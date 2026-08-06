@@ -9,9 +9,9 @@ namespace OneText
     /// the edits, and the composition an IME parks on top of all of it.
     ///
     /// It lives here rather than inside <c>OneTextInputField</c> because the
-    /// bugs this milestone exists to avoid — a Korean syllable lost when focus
+    /// bugs this milestone exists to avoid (a Korean syllable lost when focus
     /// moves, a backspace that eats committed text instead of the composition,
-    /// a Chinese candidate list that splits a surrogate pair — are bugs about
+    /// a Chinese candidate list that splits a surrogate pair) are bugs about
     /// state, not about pixels, and state can be tested at a thousand cases per
     /// second. The field drives this and draws what it reports.
     ///
@@ -246,8 +246,8 @@ namespace OneText
         }
 
         /// <summary>
-        /// Commits the composition into the text now, because nobody else will
-        /// — focus is leaving, or the application asked. The platform's own
+        /// Commits the composition into the text now, because nobody else will:
+        /// focus is leaving, or the application asked. The platform's own
         /// commit, if it ever arrives, is swallowed as an echo.
         /// </summary>
         public bool CommitComposition()
@@ -309,7 +309,7 @@ namespace OneText
         // ------------------------------------------------------------- external
 
         /// <summary>
-        /// Replaces the whole state from an editor we do not own — the mobile
+        /// Replaces the whole state from an editor we do not own: the mobile
         /// soft keyboard, which keeps its own buffer and hands back a string.
         /// Returns true when the value changed, so the field can raise its event
         /// once per real change rather than once per poll.

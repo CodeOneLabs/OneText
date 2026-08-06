@@ -8,7 +8,7 @@ namespace OneText.UGUI
     /// Rebuilds labels when a style asset they reference changes.
     ///
     /// This is what "labels store the reference, not baked values" costs: one
-    /// subscription and a list. The payoff is the whole point of named styles —
+    /// subscription and a list. The payoff is the whole point of named styles:
     /// editing a style updates every label using it, in the editor and at
     /// runtime, and theming becomes a style swap rather than a walk over every
     /// label in every loaded scene.
@@ -38,7 +38,7 @@ namespace OneText.UGUI
         {
             s_users.Clear();
             // The subscription is to a static C# event, which survives the
-            // session exactly as this class does — so it is not re-taken here,
+            // session exactly as this class does, so it is not re-taken here,
             // only re-taken after a real domain reload.
         }
 

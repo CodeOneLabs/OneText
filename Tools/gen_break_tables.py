@@ -129,7 +129,7 @@ def main():
     ucd, out = sys.argv[1], sys.argv[2]
     p = lambda f: os.path.join(ucd, f)
 
-    # General_Category first — LB1 needs Mn/Mc, and the flags need Pi/Pf/Cn.
+    # General_Category first: LB1 needs Mn/Mc, and the flags need Pi/Pf/Cn.
     gc = ["Cn"] * MAX_CP
     for lo, hi, value in parse(p("DerivedGeneralCategory.txt")):
         for cp in range(lo, hi + 1):

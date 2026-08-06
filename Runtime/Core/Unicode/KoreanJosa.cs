@@ -1,13 +1,13 @@
 namespace OneText.Unicode
 {
     /// <summary>
-    /// Korean postposition selection — 조사.
+    /// Korean postposition selection: 조사.
     ///
     /// Korean particles come in pairs, and which one is correct depends on
     /// whether the preceding syllable ends in a consonant: 사과<b>를</b> but
     /// 수박<b>을</b>. Interpolate an item name into "{item}을" and it is wrong
     /// half the time, so Korean teams write a custom formatter for this in
-    /// every project — and a formatter is a C# call, which does not help a
+    /// every project, and a formatter is a C# call, which does not help a
     /// string that arrives from a localisation table.
     ///
     /// So this ships as a markup tag as well: <c>사과&lt;josa=을&gt;</c> resolves
@@ -66,7 +66,7 @@ namespace OneText.Unicode
         /// <paramref name="preceding"/>.
         ///
         /// Returns the particle unchanged when it is not a pair we know or the
-        /// preceding text is not Korean — a Latin name before a Korean particle
+        /// preceding text is not Korean; a Latin name before a Korean particle
         /// is a real case, and guessing at it produces something worse than
         /// leaving the author's choice alone.
         /// </summary>
@@ -135,7 +135,7 @@ namespace OneText.Unicode
 
         /// <summary>
         /// Final consonant of a digit's Korean reading. Only whether it has one
-        /// matters, except for 1 — 일 ends in ㄹ, which the (으)로 exception
+        /// matters, except for 1: 일 ends in ㄹ, which the (으)로 exception
         /// needs to know about.
         /// </summary>
         private static int DigitJongseong(char digit) => digit switch
@@ -146,7 +146,7 @@ namespace OneText.Unicode
             '6' => KiyeokJongseong, // 육
             '7' => RieulJongseong,  // 칠
             '8' => RieulJongseong,  // 팔
-            _ => 0,                 // 2 이, 4 사, 5 오, 9 구 — all end in a vowel
+            _ => 0,                 // 2 이, 4 사, 5 오, 9 구: all end in a vowel
         };
 
         private const int KiyeokJongseong = 1;  // ㄱ

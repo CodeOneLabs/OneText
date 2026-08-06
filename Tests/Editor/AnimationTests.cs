@@ -10,7 +10,7 @@ namespace OneText.Tests
     /// <summary>
     /// M9: tag-driven animation.
     ///
-    /// The claim is not "text can wobble" — anything can wobble. It is that
+    /// The claim is not "text can wobble"; anything can wobble. It is that
     /// effects animate <em>grapheme clusters</em>, which is possible here and
     /// not possible in an animation layer bolted onto a text engine: from
     /// outside there is no way to know which character became which glyph, and
@@ -52,7 +52,7 @@ namespace OneText.Tests
         }
 
         /// <summary>
-        /// Rebuilds and returns the tiles <em>as drawn</em> — after effects.
+        /// Rebuilds and returns the tiles <em>as drawn</em>, after effects.
         /// Reading the pre-effect geometry would test that layout is stable,
         /// which it is, and nothing about whether the animation ran.
         /// </summary>
@@ -216,7 +216,7 @@ namespace OneText.Tests
         public void Animating_RebuildsNeitherTheLayoutNorTheQuads()
         {
             // Counted, not inferred. The previous version of this test compared
-            // LayoutResult before and after — but LayoutResult is the same
+            // LayoutResult before and after, but LayoutResult is the same
             // object forever and its contents are identical after re-laying out
             // unchanged text, so it passed while every frame re-ran everything.
             // A cache that never hits looks exactly like one that always does,
@@ -238,7 +238,7 @@ namespace OneText.Tests
             Assert.AreEqual(layouts, label.LayoutRuns,
                 "an animation frame re-laid out the text");
             Assert.AreEqual(builds, label.QuadBuilds,
-                "an animation frame re-clustered and re-hashed every tile — which is the " +
+                "an animation frame re-clustered and re-hashed every tile, which is the " +
                 "rebuild time this design exists to avoid paying");
 
             // And changing the text still rebuilds both.
@@ -252,7 +252,7 @@ namespace OneText.Tests
         public void Wobble_ActuallyMovesVertices()
         {
             // Rotation used to be carried as a displacement of the tile's
-            // centre about itself, which is identically zero — so <wobble> was
+            // centre about itself, which is identically zero, so <wobble> was
             // a no-op that no test noticed. Vertices, not degrees.
             var label = NewLabel("<wobble>turning</wobble>");
             label.AnimationTime = 0f;
@@ -328,7 +328,7 @@ namespace OneText.Tests
         public void Effects_MoveJoinedArabicAsOneThing()
         {
             // The part no TMP-based animator can do. Joined letters bake as one
-            // tile, so an effect addressed by cluster moves them together —
+            // tile, so an effect addressed by cluster moves them together:
             // the word shakes as joined letters rather than coming apart at
             // the joins.
             var label = NewLabel("<shake>مرحبا</shake>", ArabicFontPath);
@@ -398,7 +398,7 @@ namespace OneText.Tests
             Assert.AreEqual(255, earlyAlpha,
                 "a cluster revealed a second ago should have finished fading in");
             Assert.Less(lateAlpha, 255,
-                "a cluster revealed a moment ago should still be fading in — the effect is keyed " +
+                "a cluster revealed a moment ago should still be fading in; the effect is keyed " +
                 "off wall time rather than off the reveal");
         }
 
@@ -427,7 +427,7 @@ namespace OneText.Tests
             // A designer typing <fade> into a label in the Scene view must not
             // watch their text disappear. With no clock running there is no
             // "moment the character's turn came", so the honest answer is to
-            // show the effect finished rather than never-started — the latter
+            // show the effect finished rather than never-started; the latter
             // is alpha zero, which is text that has vanished.
             var label = NewLabel("<fade>visible in the editor</fade>");
             label.AnimationTime = 0f;
@@ -578,7 +578,7 @@ namespace OneText.Tests
                 var a = effect.Evaluate(input);
                 var b = effect.Evaluate(input);
                 Assert.AreEqual(a.Translate, b.Translate,
-                    "same input must tear the same way — a paused game must not twitch");
+                    "same input must tear the same way; a paused game must not twitch");
                 if (Mathf.Abs(a.Translate.x) > 0.001f) torn++;
             }
             Assert.Greater(torn, 0, "it never glitched at all");

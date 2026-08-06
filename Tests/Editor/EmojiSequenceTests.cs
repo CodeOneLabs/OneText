@@ -18,7 +18,7 @@ namespace OneText.Tests
     /// modifier that has to merge into the glyph before it, and a keycap is a
     /// digit plus a variation selector plus U+20E3. Each of those has to come
     /// out as ONE glyph, and a text engine that treats them as characters draws
-    /// a family as five people standing in a row — which is what TextMeshPro
+    /// a family as five people standing in a row, which is what TextMeshPro
     /// does, and the reason this file exists.
     ///
     /// The measure is deliberately narrow: a sequence whose parts the font all
@@ -50,7 +50,7 @@ namespace OneText.Tests
         }
 
         /// <summary>
-        /// The fully-qualified sequences — the forms a keyboard actually emits.
+        /// The fully-qualified sequences: the forms a keyboard actually emits.
         /// Minimally-qualified and unqualified forms are legacy spellings, and
         /// components (a lone skin tone) are not emoji on their own.
         /// </summary>
@@ -182,7 +182,7 @@ namespace OneText.Tests
             // path skips clustering and goes one glyph to one tile, the atlas
             // key is built by hand from (face, glyph, ppem, tint), and the
             // separators between emoji are glyphs of their own with no bitmap.
-            // So this drives a real label and reads the finished geometry —
+            // So this drives a real label and reads the finished geometry:
             // three sequences in, three tiles out, in the order they were typed.
             string fontPath = Path.GetFullPath(EmojiFontPath);
             if (!File.Exists(fontPath))
@@ -217,14 +217,14 @@ namespace OneText.Tests
 
                 var quads = label.Quads;
                 Assert.AreEqual(3, quads.Count,
-                    "three emoji must draw three tiles — a space has no bitmap and no outline " +
+                    "three emoji must draw three tiles; a space has no bitmap and no outline " +
                     "in a colour font, and must not fall through to a notdef box");
                 Assert.AreEqual(3, label.DrawnQuads.Count, "reveal dropped a tile at full reveal");
 
                 for (int i = 0; i < quads.Count; i++)
                 {
                     Assert.IsTrue(quads[i].IsColor,
-                        $"tile {i} came from the SDF atlas — a CBDT bitmap was not decoded, " +
+                        $"tile {i} came from the SDF atlas: a CBDT bitmap was not decoded, " +
                         "and an SDF of a glyph with no outline is a blank");
                     // One tile per sequence, addressed as one grapheme: an
                     // effect moves it whole and a typewriter reveals it whole.
@@ -241,7 +241,7 @@ namespace OneText.Tests
 
                 // Three distinct tiles. The colour atlas key is assembled from
                 // shifted fields, and a collision between two of them would
-                // draw one emoji three times — which reads as "it works" in
+                // draw one emoji three times, which reads as "it works" in
                 // every count-based assertion above.
                 Assert.AreNotEqual(quads[0].UvRect, quads[1].UvRect);
                 Assert.AreNotEqual(quads[1].UvRect, quads[2].UvRect);

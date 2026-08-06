@@ -9,8 +9,8 @@ namespace OneText.Tests
     /// <summary>
     /// One frame asking for more tiles than the atlas holds.
     ///
-    /// This is the failure the field has already shipped fixes for — "rasterizing
-    /// many glyphs in one frame could permanently drop some of them" — and it is
+    /// This is the failure the field has already shipped fixes for ("rasterizing
+    /// many glyphs in one frame could permanently drop some of them"), and it is
     /// nasty precisely because it is quiet: the frame that overflows recovers, but
     /// a glyph that lost the race stays blank for the rest of the session. The
     /// eviction guard that spares tiles touched since the last flush is what makes
@@ -83,7 +83,7 @@ namespace OneText.Tests
             {
                 var location = atlas.GetOrAdd(font, gid, 96f);
                 Assert.IsTrue(location.HasPixels,
-                    $"glyph {gid} never came back after the atlas was crowded — a dropped tile was " +
+                    $"glyph {gid} never came back after the atlas was crowded: a dropped tile was " +
                     "cached as a permanent failure");
                 Assert.Greater(location.SizeUnits.x, 0f);
                 Assert.Greater(location.SizeUnits.y, 0f);
@@ -113,7 +113,7 @@ namespace OneText.Tests
 
             Assert.IsFalse(first.HasPixels, "test needs a cluster too wide for the layer");
             Assert.IsFalse(small.Contains(font, hash, 256f),
-                "a tile that did not fit must not sit in the cache as a blank entry — it would " +
+                "a tile that did not fit must not sit in the cache as a blank entry; it would " +
                 "be served as 'blank' forever, including after the budget is raised");
             Assert.AreEqual(1, small.GetStats().Drops, "an overflowing tile has to be counted somewhere");
 
@@ -134,7 +134,7 @@ namespace OneText.Tests
             // case where evicting by age frees space the requesting tile cannot
             // use: a freed 40px tile does nothing for a 90px one. An eviction
             // loop that cannot tell the difference either spins or gives up, and
-            // both show up here — the first as a hang, the second as a drop.
+            // both show up here: the first as a hang, the second as a drop.
             LogAssert.ignoreFailingMessages = true;
             for (int pass = 0; pass < 3; pass++)
             {

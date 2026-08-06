@@ -22,8 +22,8 @@ namespace OneText
     /// fragment.
     ///
     /// Packing is the simple half of the SDF atlas: shelves and LRU eviction,
-    /// no compaction. Colour tiles are a few hundred at most — an emoji set, a
-    /// sprite sheet — where the SDF atlas has to survive a CJK chat stream, so
+    /// no compaction. Colour tiles are a few hundred at most (an emoji set, a
+    /// sprite sheet) where the SDF atlas has to survive a CJK chat stream, so
     /// the fragmentation the compactor exists to fix does not arise. If that
     /// stops being true it is the same algorithm to lift across.
     /// </summary>
@@ -140,7 +140,7 @@ namespace OneText
 
         /// <summary>
         /// Looks a tile up, or writes one. <paramref name="key"/> identifies the
-        /// content — the caller mixes font, glyph and size into it, exactly as
+        /// content: the caller mixes font, glyph and size into it, exactly as
         /// the SDF atlas does.
         /// </summary>
         public ColorLocation GetOrAdd(long key, in ColorGlyph glyph)
@@ -208,7 +208,7 @@ namespace OneText
                     // An empty shelf may re-type itself, but only within the
                     // rows it owns. Growing past them writes a tall tile into
                     // the next shelf's pixels while that shelf's entries still
-                    // resolve to their old UVs — silent corruption of live
+                    // resolve to their old UVs: silent corruption of live
                     // tiles, and invisible until someone looks at the atlas.
                     if (shelf.LiveTiles == 0 && h <= shelf.Capacity) shelf.Height = h;
                     if (h > shelf.Height || shelf.X + w > _textureSize) continue;
@@ -299,7 +299,7 @@ namespace OneText
         ///
         /// Tiles pack flush against each other and the sampler is bilinear, so
         /// sampling exactly at the boundary blends in the neighbour's edge
-        /// texel — and since an evicted tile's pixels are never cleared, that
+        /// texel, and since an evicted tile's pixels are never cleared, that
         /// neighbour may be something that is no longer even in the atlas.
         /// </summary>
         private Rect UvRectOf(int x, int y, int w, int h)

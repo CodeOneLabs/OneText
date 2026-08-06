@@ -9,7 +9,7 @@ namespace OneText
     /// `harfbuzz-subset` is a second library in HarfBuzz's build, and a binary
     /// can be a perfectly good shaper without it. That makes subsetting a
     /// feature that either exists or does not depending on which platform's
-    /// binary got loaded — the worst kind of feature. Every binary this package
+    /// binary got loaded, the worst kind of feature. Every binary this package
     /// vendors is checked at vendor time (see Docs/NATIVES.md) and again here at
     /// runtime, so a future re-vendor that quietly drops it is caught by a test
     /// rather than by a user whose build got 40 MB bigger.

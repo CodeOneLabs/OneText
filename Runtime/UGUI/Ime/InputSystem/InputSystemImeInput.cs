@@ -10,7 +10,7 @@ namespace OneText.UGUI
     /// Composition through the Input System package. This lives in its own
     /// assembly, constrained on the package being installed, because an
     /// assembly definition that references a package which is not there does
-    /// not fail to find it — it fails to compile.
+    /// not fail to find it; it fails to compile.
     ///
     /// The Input System pushes composition at us instead of letting us poll it,
     /// so the string is cached as it arrives and read back on the field's own

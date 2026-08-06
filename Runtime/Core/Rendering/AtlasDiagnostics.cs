@@ -30,7 +30,7 @@ namespace OneText
 
         /// <summary>
         /// The layout front-end, stage by stage. A three-character nameplate was
-        /// measured at 7.2 us to lay out, of which shaping is 1.4 — the rest is
+        /// measured at 7.2 us to lay out, of which shaping is 1.4; the rest is
         /// spread across break analysis, segmentation, itemization, wrapping and
         /// alignment, each of which is a fixed per-call cost that a short string
         /// cannot amortise. Which one is biggest is not guessable from reading
@@ -40,8 +40,8 @@ namespace OneText
         public static long LayoutBytes, MeshBytes;
 
         /// <summary>
-        /// Managed heap right now. Only meaningful summed over many frames —
-        /// a collection inside the window hides allocations — but that is
+        /// Managed heap right now. Only meaningful summed over many frames
+        /// (a collection inside the window hides allocations), but that is
         /// enough to say which half of a rebuild is doing the allocating.
         /// </summary>
         public static long Heap => Enabled ? System.GC.GetTotalMemory(false) : 0L;
@@ -55,9 +55,9 @@ namespace OneText
         /// This is NOT scheduling overhead, and reading it as overhead has
         /// already cost one wrong fix: it is almost entirely the distance-field
         /// work itself, done on worker threads, which Complete() is waiting for.
-        /// Replacing the schedule with an inline Run() on small batches — on the
+        /// Replacing the schedule with an inline Run() on small batches (on the
         /// theory that 85 us blocked against three tiles had to be mostly
-        /// wake-up — doubled the frame time of the workload it was aimed at,
+        /// wake-up) doubled the frame time of the workload it was aimed at,
         /// because what it actually removed was the parallelism.
         ///
         /// What it is good for is the ratio against the rest of RasterizeTicks,

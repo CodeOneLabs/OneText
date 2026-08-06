@@ -81,7 +81,7 @@ namespace OneText.Editor
             canvas.planeDistance = 5f;
 
             CreateLabel(canvasGo.transform, ArabicFont, "السلام عليكم ورحمة الله", 92f, 120f);
-            CreateLabel(canvasGo.transform, LatinFont, "Hello, OneText! — SDF m2", 76f, -110f);
+            CreateLabel(canvasGo.transform, LatinFont, "Hello, OneText! · SDF m2", 76f, -110f);
 
             // Plain white quad: if this is missing from the output, the
             // canvas/camera path itself failed, not the SDF shader.
@@ -146,7 +146,7 @@ namespace OneText.Editor
             canvas.renderMode = RenderMode.ScreenSpaceCamera;
             canvas.worldCamera = cam;
 
-            // RTL base with an embedded number and embedded Latin — the
+            // RTL base with an embedded number and embedded Latin: the
             // classic BiDi cases TextMesh Pro cannot lay out.
             CreateLabel(canvasGo.transform, ArabicFont, "العدد 123 يظهر بشكل صحيح!", 84f, 140f);
             CreateLabel(canvasGo.transform, ArabicFont, "قال المطور Hello World ثم أكمل", 84f, 0f);

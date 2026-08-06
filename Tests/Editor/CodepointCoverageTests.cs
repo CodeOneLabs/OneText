@@ -12,8 +12,8 @@ namespace OneText.Tests
     /// <summary>
     /// Every codepoint Unicode assigns, put through the whole pipeline.
     ///
-    /// The UCD conformance suites check the algorithms — bidi resolves, lines
-    /// break, clusters segment — against Unicode's own expected answers. None of
+    /// The UCD conformance suites check the algorithms (bidi resolves, lines
+    /// break, clusters segment) against Unicode's own expected answers. None of
     /// them touches a font. This asks the other question: given the real text
     /// of the standard, does anything in shaping, outline extraction,
     /// rasterization or atlas placement throw, hang, or produce a tile that is
@@ -22,7 +22,7 @@ namespace OneText.Tests
     ///
     /// Two tiers, because one assertion cannot cover both halves honestly:
     ///
-    /// 1. A codepoint some font in the set has a glyph for MUST render — a tile
+    /// 1. A codepoint some font in the set has a glyph for MUST render: a tile
     ///    with sane ink bounds, placed in the atlas.
     /// 2. EVERY assigned codepoint, glyph or not, must survive. A codepoint no
     ///    font covers has to come out as a clean miss rather than an exception,
@@ -48,7 +48,7 @@ namespace OneText.Tests
         ///
         /// Private use is excluded because what it renders is by definition a
         /// private agreement, surrogates because they are not characters, and
-        /// Cc/Cf because a control is correct to draw as nothing — asserting a
+        /// Cc/Cf because a control is correct to draw as nothing; asserting a
         /// glyph for U+0009 would be asserting a bug.
         /// </summary>
         private static List<int> RenderableCodepoints()
@@ -206,8 +206,8 @@ namespace OneText.Tests
             {
                 var owner = BuildOwnership(fonts, loaded, codepoints);
 
-                // Deliberately small. The point is not to hold 160,000 tiles —
-                // nothing could — but to make eviction run continuously and
+                // Deliberately small. The point is not to hold 160,000 tiles
+                // (nothing could) but to make eviction run continuously and
                 // prove the pipeline stays correct while it does.
                 atlas = new GlyphAtlas(new GlyphAtlasSettings { TextureSize = 1024, LayerCount = 4 });
 

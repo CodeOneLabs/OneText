@@ -13,7 +13,7 @@ namespace OneText.Benchmarks
         // ------------------------------------------------------------ C2: chat
 
         /// <summary>
-        /// C2 — a chat/log window under permanent churn: 30 visible lines, one
+        /// C2, a chat/log window under permanent churn: 30 visible lines, one
         /// new line every frame, mixed Korean/Chinese/English with 60% of the
         /// vocabulary repeating. This is the only scenario where the atlas runs
         /// *permanently full*, which is what per-tile eviction was built for:
@@ -67,7 +67,7 @@ namespace OneText.Benchmarks
         // -------------------------------------------------------- C1: global UI
 
         /// <summary>
-        /// C1 — a live-service HUD: 40 static elements and 20 that change every
+        /// C1, a live-service HUD: 40 static elements and 20 that change every
         /// frame (counters, timers, resources), three faces, three sizes, and a
         /// language switch a third of the way in. The switch is the interesting
         /// part: it floods the atlas with glyphs nobody has seen, which is
@@ -140,9 +140,9 @@ namespace OneText.Benchmarks
         /// One cell of the workload matrix: N labels, R of them retexted every
         /// frame, drawing from a corpus whose novelty is a parameter.
         ///
-        /// C2 and C3 each move two variables at once — C2 has few long labels
+        /// C2 and C3 each move two variables at once (C2 has few long labels
         /// AND a stream of unseen glyphs, C3 has many short labels AND a warm
-        /// atlas — so neither can say which of the two a change acted on. This
+        /// atlas), so neither can say which of the two a change acted on. This
         /// varies rebuild count and glyph novelty independently, at a fixed
         /// string length, which is what makes "the fix moved the cell it was
         /// aimed at and left the others alone" a statement the numbers can
@@ -201,7 +201,7 @@ namespace OneText.Benchmarks
         // ------------------------------------------------------- C3: worldspace
 
         /// <summary>
-        /// C3 — 200 world-space labels: 150 nameplates that never change and 50
+        /// C3, 200 world-space labels: 150 nameplates that never change and 50
         /// damage numbers that change every frame. World space is where a
         /// material per font asset hurts most, because there is no screen-space
         /// canvas batching to hide behind, so the number to read here is

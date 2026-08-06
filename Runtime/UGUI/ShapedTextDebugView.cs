@@ -7,7 +7,7 @@ namespace OneText.UGUI
     /// <summary>
     /// M1 proof-of-life component: shapes a string with HarfBuzz and renders
     /// the glyph outlines as line strips inside a uGUI canvas. This is a
-    /// debug view — the real SDF-based renderer arrives in M2. It exists so
+    /// debug view; the real SDF-based renderer arrives in M2. It exists so
     /// that "correct Arabic inside a Canvas" is demonstrable from day one.
     /// </summary>
     [AddComponentMenu("OneText/Shaped Text Debug View")]

@@ -7,9 +7,9 @@ using UnityEngine;
 namespace OneText.Editor
 {
     /// <summary>
-    /// Walks the path a new user actually takes — create a font asset from a
+    /// Walks the path a new user actually takes (create a font asset from a
     /// .ttf, make it the project default, drop in a label that has no font of
-    /// its own — and renders the result. If this produces text, no onboarding
+    /// its own) and renders the result. If this produces text, no onboarding
     /// step is missing.
     /// Run: Unity -batchmode -quit -projectPath &lt;dev&gt; -executeMethod
     ///      OneText.Editor.OnboardingProofGenerator.Generate -oneOut &lt;dir&gt;
@@ -84,12 +84,12 @@ namespace OneText.Editor
             // No SetFont, no font assigned: the project default has to carry it,
             // and the Arabic has to come from the project fallback.
             var label = NewLabel(canvasGo.transform, new Rect(40f, 40f, 1320f, 120f));
-            label.Text = "No font assigned — the project default renders it, مرحبا from the fallback.";
+            label.Text = "No font assigned: the project default renders it, مرحبا from the fallback.";
             label.FontSize = 34f;
 
             var assigned = NewLabel(canvasGo.transform, new Rect(40f, 180f, 1320f, 120f));
             assigned.Font = fontAsset;
-            assigned.Text = $"Font asset: {fontAsset.FamilyName} — " +
+            assigned.Text = $"Font asset: {fontAsset.FamilyName}, " +
                             $"{fontAsset.FontFileSize / 1024} KB font stored as " +
                             $"{fontAsset.StoredSize / 1024} KB in the asset.";
             assigned.FontSize = 30f;

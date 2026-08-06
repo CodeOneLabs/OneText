@@ -20,7 +20,7 @@ namespace OneText
     ///
     /// One job per glyph was costing far more in fixed overhead than in
     /// distance-field work: at 18 ppem a Hangul tile spent ~132 ns per texel,
-    /// while a tile five times larger spent ~34 ns — the difference being the
+    /// while a tile five times larger spent ~34 ns, the difference being the
     /// scheduling and allocation paid once per call either way. Batching a
     /// frame's misses into one dispatch amortizes that across every tile, and
     /// the parallel loop gets enough work to fill the worker threads.

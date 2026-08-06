@@ -116,7 +116,7 @@ namespace OneText.Tests
             Assert.Greater(stats.TileCount, peak * 0.8f,
                 $"eviction dropped too much at once: {stats.TileCount} of a peak {peak}");
             Assert.Greater(stats.UsedFraction, 0.5f,
-                $"atlas only {stats.UsedFraction:P0} full after eviction — space is being wasted");
+                $"atlas only {stats.UsedFraction:P0} full after eviction: space is being wasted");
         }
 
         [Test]
@@ -138,7 +138,7 @@ namespace OneText.Tests
 
             Assert.Greater(atlas.GetStats().Evictions, 0, "test needs the atlas to overflow");
             Assert.IsTrue(atlas.Contains(font, hot, 96f),
-                "the most recently used glyph was evicted — LRU order is wrong");
+                "the most recently used glyph was evicted: LRU order is wrong");
         }
 
         [Test]
@@ -230,7 +230,7 @@ namespace OneText.Tests
             Assert.IsFalse(report.StoppedAtBudget);
             int tilesAfterPrewarm = atlas.GetStats().TileCount;
 
-            // Now draw the same text the way a label does — clustering and all.
+            // Now draw the same text the way a label does, clustering and all.
             using var shaper = new Shaper();
             var shaped = new List<ShapedGlyph>();
             shaper.Shape(font, "Hamburgefonstiv", shaped);

@@ -7,7 +7,7 @@ namespace OneText
     /// The style in force over a stretch of text: everything markup can change
     /// that the layout engine or the mesh builder has to know about.
     ///
-    /// This is a value, not a reference, and it is compared by value — that is
+    /// This is a value, not a reference, and it is compared by value; that is
     /// what makes "where does a run end" a cheap question. Two adjacent
     /// characters with equal styles stay in one run, and a run is the unit
     /// shaping, line metrics and the mesh all work in.

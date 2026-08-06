@@ -40,7 +40,7 @@ namespace OneText
 
         static BuiltInEffects()
         {
-            // The defaults here mirror each effect struct's constructor — they
+            // The defaults here mirror each effect struct's constructor; they
             // exist so tooling (the inspector's effect table) can SHOW what an
             // unparameterised tag will do, which a NaN cannot.
             Register("wave", p => new Wave(p),
@@ -90,7 +90,7 @@ namespace OneText
         /// <summary>
         /// Adds or replaces an effect. The name is what
         /// <c>&lt;name amp=… freq=…&gt;</c> looks up, and a name markup cannot
-        /// resolve stays literal text — the same rule every other tag follows.
+        /// resolve stays literal text, the same rule every other tag follows.
         /// </summary>
         public static void Register(string name, Func<TextEffectParameters, ITextEffect> factory) =>
             Register(name, factory, TextEffectParameters.Default,
@@ -99,7 +99,7 @@ namespace OneText
 
         /// <summary>
         /// Same, declaring the defaults an unparameterised tag gets and which
-        /// parameters the effect reads at all — what lets tooling present the
+        /// parameters the effect reads at all: what lets tooling present the
         /// effect honestly instead of offering knobs that do nothing.
         /// </summary>
         public static void Register(string name, Func<TextEffectParameters, ITextEffect> factory,
@@ -230,7 +230,7 @@ namespace OneText
         /// Corrupted-signal bursts: a cluster sits still most of the time and
         /// occasionally tears sideways for a slot or two, dimming as it does.
         /// Time is cut into slots and each (slot, cluster) pair rolls the same
-        /// dice every frame — deterministic like everything here, so two labels
+        /// dice every frame, deterministic like everything here, so two labels
         /// with the same text glitch identically and a paused game stays torn
         /// exactly as it was.
         /// </summary>
@@ -286,7 +286,7 @@ namespace OneText
         // -------------------------------------------------------------- colour
 
         /// <summary>
-        /// A blink. freq=0 — the default — blinks the whole span in unison,
+        /// A blink. freq=0 (the default) blinks the whole span in unison,
         /// which is what a warning wants; a non-zero freq staggers clusters.
         /// </summary>
         private readonly struct Flash : ITextEffect
@@ -360,7 +360,7 @@ namespace OneText
         //
         // Every one of them is also ISettlingTextEffect, reporting the same
         // duration it already clamps its own t against. That is what lets a
-        // dialogue box — an appearance effect over a long string with no for= —
+        // dialogue box (an appearance effect over a long string with no for=)
         // stop ticking once the text has arrived, instead of re-emitting the
         // mesh for the rest of the label's life to redraw a finished fade. The
         // ambient effects above deliberately do not implement it: they never end
@@ -411,7 +411,7 @@ namespace OneText
 
         /// <summary>
         /// Appears with an overshoot: scales up past full size and springs
-        /// back. The reason people reach past the built-in eases — swell
+        /// back. The reason people reach past the built-in eases: swell
         /// arrives politely, pop arrives with a "toc". amp scales the
         /// overshoot, speed is the duration, like every appearance effect.
         /// </summary>
@@ -425,7 +425,7 @@ namespace OneText
                 _duration = float.IsNaN(p.Speed) ? 0.25f : Mathf.Max(0.0001f, p.Speed);
             }
 
-            // The overshoot is inside the duration — the back-out ease has
+            // The overshoot is inside the duration: the back-out ease has
             // already crossed 1, peaked and settled by the time t reaches it.
             public float SettleSeconds => _duration;
 
@@ -443,7 +443,7 @@ namespace OneText
         }
 
         /// <summary>
-        /// Falls in from above and lands with one small bounce — rise's
+        /// Falls in from above and lands with one small bounce, rise's
         /// heavier sibling. amp is the drop height, speed the duration.
         /// </summary>
         private readonly struct DropIn : ITextEffect, ISettlingTextEffect

@@ -19,7 +19,7 @@ namespace OneText.Tests
     /// job exists at all. This test prints the ratio so the deferral work is
     /// budgeted against a measurement rather than against the total.
     ///
-    /// It asserts almost nothing — thresholds here would only measure the build
+    /// It asserts almost nothing; thresholds here would only measure the build
     /// agent. The number in the log is the point.
     /// </summary>
     public class RasterizerCostTests
@@ -28,7 +28,7 @@ namespace OneText.Tests
 
         // CJK is where tiles are largest and the job has the most to do, so it is
         // the case that decides whether deferral is worth its hazards. Not
-        // vendored — the coverage fetch downloads it, and macOS has a fallback.
+        // vendored: the coverage fetch downloads it, and macOS has a fallback.
         private static readonly string[] CjkFontPaths =
         {
             "Packages/com.onetext.core/Tests/CoverageFonts~/NotoSansCJKkr-Regular.otf",
@@ -74,8 +74,8 @@ namespace OneText.Tests
 
         /// <summary>
         /// Bakes every cluster of the text into a cold atlas exactly the way
-        /// <c>OneTextLabel</c> does — shape, split, then one
-        /// <c>PrepareClusters</c> dispatch per run — and reports where the time
+        /// <c>OneTextLabel</c> does (shape, split, then one
+        /// <c>PrepareClusters</c> dispatch per run), and reports where the time
         /// went. The atlas is new for each call so nothing is a cache hit.
         /// </summary>
         private static void Report(string label, string fontPath, string text)
@@ -95,7 +95,7 @@ namespace OneText.Tests
 
             // Burst compiles the SDF job on its first dispatch, in the editor,
             // on the thread that asked for it. Measuring that would report the
-            // compiler, not the rasterizer — and would inflate the job wait,
+            // compiler, not the rasterizer, and would inflate the job wait,
             // which is the one number this test exists to produce. Bake the
             // whole workload once into an atlas that is then thrown away.
             using (var warmup = new GlyphAtlas())
@@ -126,7 +126,7 @@ namespace OneText.Tests
                       $"  outline    {outline:F3} ms\n" +
                       $"  rasterize  {raster:F3} ms  of which job wait {jobWait:F3} ms\n" +
                       $"  tile copy  {copy:F3} ms\n" +
-                      $"  total      {total:F3} ms — deferral can reach " +
+                      $"  total      {total:F3} ms; deferral can reach " +
                       $"{(total > 0 ? jobWait / total * 100 : 0):F0}% of it");
 
             Assert.Greater(AtlasDiagnostics.DispatchCount, 0, "nothing was rasterized");

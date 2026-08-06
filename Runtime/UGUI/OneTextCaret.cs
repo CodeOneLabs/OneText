@@ -62,7 +62,7 @@ namespace OneText.UGUI
         /// <summary>
         /// Marks the range an input method is still composing: an underline
         /// under all of it, and a block behind the clause being converted. The
-        /// rects are the selection rects of those ranges — the caller squashes
+        /// rects are the selection rects of those ranges; the caller squashes
         /// them to underline height, because only it knows the text size.
         /// </summary>
         public void SetComposition(List<Rect> underlines, List<Rect> clause)

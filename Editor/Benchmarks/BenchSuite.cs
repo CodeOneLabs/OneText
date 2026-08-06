@@ -10,7 +10,7 @@ namespace OneText.Benchmarks
     ///
     /// The OneText side lives here, in the package. The TextMeshPro side
     /// implements <see cref="ITextSubject"/> in the dev project and calls the
-    /// same scenarios, so the package never depends on TMP — and both systems
+    /// same scenarios, so the package never depends on TMP, and both systems
     /// still run the identical scene, strings and frame loop.
     ///
     /// Run: Unity -batchmode -quit -projectPath &lt;dev&gt; -executeMethod
@@ -20,7 +20,7 @@ namespace OneText.Benchmarks
     {
         // Every entry point below is a command-line target that produces a
         // number someone will quote. They all run under Burst, forced on and
-        // compiled before the work starts — see BenchScene.ForceBurst for why
+        // compiled before the work starts; see BenchScene.ForceBurst for why
         // the editor's default would otherwise report the interpreter.
         public static void RunAll() => UnderBurst(RunAllCore);
         public static void Breakdown() => UnderBurst(BreakdownCore);
@@ -48,7 +48,7 @@ namespace OneText.Benchmarks
         /// <summary>
         /// Runs the churn scenario with the cost breakdown on, which is the only
         /// way to tell "the mesh path is slow" from "we are paying to bake
-        /// glyphs nobody has seen yet" — different numbers, different fixes.
+        /// glyphs nobody has seen yet": different numbers, different fixes.
         /// </summary>
         private static void BreakdownCore()
         {
@@ -124,7 +124,7 @@ namespace OneText.Benchmarks
         /// string length, with the per-stage breakdown printed for each cell.
         ///
         /// Three different bottlenecks have been measured in this engine and
-        /// each wants a different fix — a layout fast path for many short
+        /// each wants a different fix: a layout fast path for many short
         /// rebuilds, inline rasterization for a trickle of unseen glyphs, a
         /// parallel layout pre-pass for rebuild counts in general. A fix is only
         /// worth landing if it moves the cell it was aimed at, and only safe to
@@ -249,7 +249,7 @@ namespace OneText.Benchmarks
         /// What the M10 tailorings cost, one rule at a time, on the text they
         /// exist for.
         ///
-        /// Layout only — no shaping cache to warm, no atlas, no mesh — because
+        /// Layout only (no shaping cache to warm, no atlas, no mesh), because
         /// that is where every one of these rules lives and a compound scenario
         /// would bury a per-character cost under an atlas upload. The first row
         /// is the number that matters to projects that never ship Japanese: the
@@ -345,7 +345,7 @@ namespace OneText.Benchmarks
         ///
         /// Forcing synchronous compilation moves the stall from "somewhere in
         /// the background" to "the first dispatch", and the first dispatch would
-        /// otherwise be inside a measured frame — where it lands in the max
+        /// otherwise be inside a measured frame, where it lands in the max
         /// column, which is the column these benchmarks exist to report. The
         /// atlas here is thrown away so it cannot warm anything else either.
         /// </summary>
@@ -368,7 +368,7 @@ namespace OneText.Benchmarks
         {
             var runs = new List<BenchRun>();
             // A text system that logs once per missing glyph writes millions of
-            // lines over a few thousand frames — enough to sink the run, and
+            // lines over a few thousand frames: enough to sink the run, and
             // enough to distort what is being timed.
             var previousFilter = UnityEngine.Debug.unityLogger.filterLogType;
             UnityEngine.Debug.unityLogger.filterLogType = LogType.Assert;
@@ -397,8 +397,8 @@ namespace OneText.Benchmarks
         /// <summary>
         /// Runs a scenario several times and keeps the middle one by p99. A
         /// single repetition catches whatever the machine happened to be doing
-        /// — an editor GC pause showed up as one 76 ms frame in an otherwise
-        /// 0.6 ms run — and a mean would carry that noise into the headline.
+        /// (an editor GC pause showed up as one 76 ms frame in an otherwise
+        /// 0.6 ms run), and a mean would carry that noise into the headline.
         /// </summary>
         private static BenchRun Repeat(int times, Func<BenchRun> once)
         {

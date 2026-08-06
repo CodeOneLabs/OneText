@@ -11,9 +11,9 @@ namespace OneText.Tests
     /// M8: the cluster mapping, the reveal built on it, and the quad hook.
     ///
     /// The engine has to publish this because only the engine knows it. "One
-    /// character at a time" is not a thing in shaped text — an Arabic ligature
+    /// character at a time" is not a thing in shaped text (an Arabic ligature
     /// is two characters in one glyph, a Hangul syllable is three, a flag emoji
-    /// is four — and every animation layer built on TMP had to reconstruct the
+    /// is four), and every animation layer built on TMP had to reconstruct the
     /// mapping from outside, which stopped working the moment a ligature
     /// appeared. These tests are mostly about the scripts where counting
     /// characters gives the wrong answer.
@@ -66,7 +66,7 @@ namespace OneText.Tests
             var combining = Layout(fonts, "ȩ́");
             Assert.AreEqual(1, combining.GraphemeCount);
 
-            // An emoji flag is two regional indicators — four UTF-16 units.
+            // An emoji flag is two regional indicators, four UTF-16 units.
             var flag = Layout(fonts, "\U0001F1F0\U0001F1F7");
             Assert.AreEqual(4, "\U0001F1F0\U0001F1F7".Length);
             Assert.AreEqual(1, flag.GraphemeCount,
@@ -237,7 +237,7 @@ namespace OneText.Tests
             Assert.AreEqual(width, label.LayoutResult.Width, 0.0001f,
                 "revealing part of the text changed the layout");
             Assert.AreEqual(before.Count, label.Quads.Count,
-                "the geometry itself must not change — only what is drawn from it");
+                "the geometry itself must not change, only what is drawn from it");
             for (int i = 0; i < before.Count; i++)
                 Assert.AreEqual(before[i].Position, label.Quads[i].Position,
                     "a tile moved when the reveal changed");
@@ -255,8 +255,8 @@ namespace OneText.Tests
             label.MaxVisibleGraphemes = 1;
             CollectionAssert.AreEqual(new[] { 0 }, fired);
 
-            // A typewriter that jumps several clusters in one frame — a
-            // fast-forward, or a low frame rate — still has to fire each one,
+            // A typewriter that jumps several clusters in one frame (a
+            // fast-forward, or a low frame rate) still has to fire each one,
             // because a dialogue system is listening for every character.
             fired.Clear();
             label.MaxVisibleGraphemes = 5;
@@ -272,7 +272,7 @@ namespace OneText.Tests
         public void Reveal_ReusesTheLayout()
         {
             // The claim the quad hook is built on: revealing more text is a
-            // mesh rebuild, not a layout. Measured by identity — a re-run
+            // mesh rebuild, not a layout. Measured by identity: a re-run
             // engine rebuilds the run and glyph lists from scratch, so holding
             // the counts and the first run's identity across a reveal step is
             // what "not re-run" looks like from outside.

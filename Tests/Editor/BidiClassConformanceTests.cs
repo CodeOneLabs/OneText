@@ -13,7 +13,7 @@ namespace OneText.Tests
     ///
     /// <c>BidiCharacterTest.txt</c>, which <see cref="BidiTests"/> runs, is
     /// written in real characters. <c>BidiTest.txt</c> is written in bidi
-    /// classes instead, and covers every combination of them up to four deep —
+    /// classes instead, and covers every combination of them up to four deep,
     /// including the ones no language actually writes, which is exactly where an
     /// implementation that special-cased its way through the first file falls
     /// over. It is also where the volume is: 493,501 lines, each carrying a
@@ -21,7 +21,7 @@ namespace OneText.Tests
     /// cases against the character file's 91,707.
     ///
     /// Classes are turned back into characters through one representative each.
-    /// Any character of the class would do — the algorithm sees only the class —
+    /// Any character of the class would do (the algorithm sees only the class),
     /// and the representatives are checked against the engine's own class table
     /// before anything else runs, so a mapping that drifts fails loudly here
     /// rather than quietly passing the suite for the wrong reason.

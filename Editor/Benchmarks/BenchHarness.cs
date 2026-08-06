@@ -44,7 +44,7 @@ namespace OneText.Benchmarks
         /// What the scenario cost before its first sampled frame, captured at
         /// the moment the counters were zeroed for the timed loop. Null unless
         /// diagnostics were on. Kept rather than discarded because prewarm cost
-        /// is a real number someone will want — it is only a lie when it is
+        /// is a real number someone will want; it is only a lie when it is
         /// divided by the frame count and called per-frame.
         /// </summary>
         public string SetupNotes;
@@ -84,7 +84,7 @@ namespace OneText.Benchmarks
         /// <summary>
         /// Bytes per frame, over the frames whose delta was readable. The gauge
         /// resolves about a 4 KB page, so one frame's figure means little and
-        /// this mean is the number worth quoting — the page noise averages out
+        /// this mean is the number worth quoting: the page noise averages out
         /// across hundreds of frames, and it rounds up rather than down.
         /// </summary>
         public double MeanBytes
@@ -156,8 +156,8 @@ namespace OneText.Benchmarks
         private int _frameIndex;
 
         /// <summary>
-        /// How often the camera actually draws. The metrics do not need it —
-        /// draw groups are counted structurally — and tens of thousands of
+        /// How often the camera actually draws. The metrics do not need it
+        /// (draw groups are counted structurally), and tens of thousands of
         /// hand-driven renders exhaust the editor's graphics device, so this
         /// draws often enough to prove the scene still renders and no more.
         /// </summary>
@@ -198,7 +198,7 @@ namespace OneText.Benchmarks
         /// <summary>
         /// Runs one frame: <paramref name="mutate"/> changes text, then the
         /// canvas rebuilds and the system uploads whatever it batched. Only
-        /// that work is timed — the draw itself is measured in batches, not
+        /// that work is timed; the draw itself is measured in batches, not
         /// milliseconds, because a hand-driven render is not a frame budget.
         /// </summary>
         public FrameSample Frame(ITextSubject subject, Action mutate)
@@ -220,7 +220,7 @@ namespace OneText.Benchmarks
             {
                 Milliseconds = _watch.Elapsed.TotalMilliseconds,
                 // Only a heap gauge is available here, so a collection inside
-                // the window makes the delta meaningless — it can even go
+                // the window makes the delta meaningless; it can even go
                 // negative. Clamping that to zero is what turned the old figures
                 // into a floor and hid it: a frame that collected looked like a
                 // frame that allocated nothing. Say unreadable instead.
@@ -240,7 +240,7 @@ namespace OneText.Benchmarks
         ///
         /// This is a structural count, not a GPU counter: a hand-driven render
         /// in batch mode never ticks the engine's own batch statistics. It is
-        /// the number that decides batching all the same — uGUI can only merge
+        /// the number that decides batching all the same: uGUI can only merge
         /// draws that share a material and a texture, so a text system with a
         /// material per font asset, or one that splits fallback runs into
         /// submeshes, reports more groups here and issues more draws in a real
@@ -296,8 +296,8 @@ namespace OneText.Benchmarks
         /// counter is preferred and, in the editor, absent: Unity's Boehm
         /// collector returns 0 from it rather than throwing, so this probes with
         /// a known allocation instead of trusting the API to exist. Pinning the
-        /// collector to make a heap delta exact is not available either — the
-        /// editor refuses <c>GarbageCollector.GCMode</c> outright — and
+        /// collector to make a heap delta exact is not available either (the
+        /// editor refuses <c>GarbageCollector.GCMode</c> outright), and
         /// ProfilerRecorder's "GC Allocated In Frame" stays at zero samples
         /// without a player loop to tick it. A heap delta is what is left.
         /// </summary>
@@ -325,7 +325,7 @@ namespace OneText.Benchmarks
         /// it. A benchmark started from the command line lives for a few seconds
         /// and never sees that finish, so it measures the interpreter and calls
         /// it the engine. On this machine that read the SDF rasterizer as 12x
-        /// slower than it is — 131 ms against 11 ms for the same 368k texels.
+        /// slower than it is: 131 ms against 11 ms for the same 368k texels.
         ///
         /// A player has no such mode: Burst is compiled ahead of time and always
         /// on. Forcing synchronous compilation costs one stall in the warm-up
@@ -361,10 +361,10 @@ namespace OneText.Benchmarks
             get
             {
                 if (s_forcedBurst)
-                    return "Burst, compiled synchronously before the run — what a player build gets";
+                    return "Burst, compiled synchronously before the run: what a player build gets";
                 return BurstCompiler.Options.EnableBurstCompilation
                     ? "Burst compilation is on but asynchronous, so a short run measures the managed " +
-                      "fallback rather than the compiled job — on this machine that read the SDF " +
+                      "fallback rather than the compiled job; on this machine that read the SDF " +
                       "rasterizer as 12x slower than it is. These numbers are NOT what a player " +
                       "build gets; call BenchScene.ForceBurst() first"
                     : "Burst is DISABLED. The SDF rasterizer ran as managed IL. These numbers are not " +
@@ -409,8 +409,8 @@ namespace OneText.Benchmarks
             markdown.AppendLine();
             markdown.AppendLine($"Unity {Application.unityVersion}, {SystemInfo.graphicsDeviceType}, " +
                 $"{SystemInfo.processorType}. Median of the frames in each run; p99 and max are what a " +
-                "player feels as a hitch. Draw groups are distinct material+texture pairs — the thing " +
-                "that decides whether uGUI can batch — counted structurally, since a hand-driven render " +
+                "player feels as a hitch. Draw groups are distinct material+texture pairs (the thing " +
+                "that decides whether uGUI can batch), counted structurally, since a hand-driven render " +
                 "does not tick the engine's own batch statistics.");
             markdown.AppendLine();
             markdown.AppendLine($"Jobs: {BenchScene.BurstMethod}.");

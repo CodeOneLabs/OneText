@@ -1,7 +1,7 @@
 namespace OneText
 {
     /// <summary>
-    /// Text an input method is still composing — the Hangul syllable being
+    /// Text an input method is still composing: the Hangul syllable being
     /// assembled, the kana waiting to be converted, the pinyin before a
     /// candidate is picked. It is <em>not</em> part of the field's value: it
     /// sits inside the displayed text so the user can see it at the caret, and

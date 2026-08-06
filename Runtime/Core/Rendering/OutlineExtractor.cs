@@ -54,7 +54,7 @@ namespace OneText
     /// <see cref="FontData"/> of its own (see <c>FontData.ForCurrentThread</c>):
     /// the callback state below is per thread, and the draw-funcs object is
     /// written once and only read after that. Rasterization is a separate
-    /// question — it writes into the atlas, which is main-thread.
+    /// question: it writes into the atlas, which is main-thread.
     /// </summary>
     public static class OutlineExtractor
     {
@@ -63,7 +63,7 @@ namespace OneText
         /// at the density it will be rasterized.
         ///
         /// The field stores 8 pixels of distance in 8 bits, so one level is
-        /// 8/255 px and this tolerance is about 1.6 of them — chosen against
+        /// 8/255 px and this tolerance is about 1.6 of them, chosen against
         /// the quantization step rather than tuned by eye. Measured against as
         /// dense a flattening as the extractor will produce, glyphs come out
         /// within 3 levels at worst and about 1 on average, for TrueType's
@@ -108,7 +108,7 @@ namespace OneText
         private const int DefaultCurveSegments = 8;
 
         // The hb-draw callbacks are static functions with no user-data pointer
-        // wired up, so the outline being built has to live somewhere static —
+        // wired up, so the outline being built has to live somewhere static;
         // and static, here, means per thread. Two threads extracting two glyphs
         // through one set of these fields produce one glyph made of both, and
         // the symptom is a garbled letter rather than a crash.
@@ -134,7 +134,7 @@ namespace OneText
         /// Flattens a glyph's outline. <paramref name="pixelsPerUnit"/> is the
         /// density the result will be rasterized at: curves are then split only
         /// as finely as that resolution can show, which at UI sizes is a
-        /// fraction of the fixed subdivision it replaces — and the segment count
+        /// fraction of the fixed subdivision it replaces, and the segment count
         /// is what the distance-field inner loop costs.
         /// </summary>
         public static void Extract(FontData font, uint glyphId, GlyphOutline output,

@@ -12,7 +12,7 @@ namespace OneText.Editor
     /// Batch-mode visual proof for M12: what an input field looks like while an
     /// input method is composing into it. Every panel is a real
     /// <see cref="OneTextInputField"/> driven through the same
-    /// <see cref="IImeInput"/> the platform backends implement — the
+    /// <see cref="IImeInput"/> the platform backends implement: the
     /// composition is not painted on, it is the field's own state.
     ///
     /// Run: Unity -batchmode -quit -projectPath &lt;dev&gt; -executeMethod
@@ -98,7 +98,7 @@ namespace OneText.Editor
                 field.caretPosition = 4;
                 Compose(field, hangul[step]);
                 Caption(scene, new Rect(680f, 55f + step * 110f, 680f, 60f),
-                    $"composing “{hangul[step]}” — value is still “{field.text}”");
+                    $"composing “{hangul[step]}”; value is still “{field.text}”");
             }
 
             // Japanese conversion: the whole reading is underlined, the clause
@@ -110,14 +110,14 @@ namespace OneText.Editor
             Caption(scene, new Rect(680f, 395f, 680f, 60f),
                 "Japanese: clause 0..3 converting, the rest still a reading");
 
-            // Composing over a selection replaces it — the selection is already
+            // Composing over a selection replaces it; the selection is already
             // gone by the time the first key lands.
             var replacing = Field(scene, KoreanFont, new Rect(40f, 490f, 620f, 90f));
             replacing.text = "replace 이것 please";
             replacing.SetSelection(8, 10);
             Compose(replacing, "저것");
             Caption(scene, new Rect(680f, 505f, 680f, 60f),
-                $"composed over a selection — value is now “{replacing.text}”");
+                $"composed over a selection; value is now “{replacing.text}”");
 
             // A read-only field refuses composition outright.
             var readOnly = Field(scene, KoreanFont, new Rect(40f, 600f, 620f, 90f));
@@ -134,7 +134,7 @@ namespace OneText.Editor
         /// <summary>
         /// The bug this milestone is named after. Left: focus is leaving while
         /// a syllable is still being composed. Right: the same field one
-        /// deactivation later — the syllable is in the value, once.
+        /// deactivation later: the syllable is in the value, once.
         /// </summary>
         private static void RenderFocusLoss(string path)
         {
@@ -149,7 +149,7 @@ namespace OneText.Editor
             before.caretPosition = committed.Length;
             Compose(before, composing);
             Caption(scene, new Rect(40f, 160f, 620f, 60f),
-                $"focus about to leave — value “{before.text}”, composing “{composing}”");
+                $"focus about to leave: value “{before.text}”, composing “{composing}”");
 
             var after = Field(scene, fontPath, new Rect(720f, 60f, 620f, 90f));
             after.text = committed;
@@ -158,7 +158,7 @@ namespace OneText.Editor
             after.DeactivateInputField();
             after.UpdateVisuals();
             Caption(scene, new Rect(720f, 160f, 620f, 60f),
-                $"after DeactivateInputField — value “{after.text}”, nothing lost, nothing doubled");
+                $"after DeactivateInputField: value “{after.text}”, nothing lost, nothing doubled");
 
             Caption(scene, new Rect(40f, 240f, 1320f, 60f),
                 "TMP_InputField drops the last syllable here; the platform echo that follows is swallowed, not applied twice");

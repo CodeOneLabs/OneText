@@ -8,7 +8,7 @@ namespace OneText.Tests
     /// <summary>
     /// Font subsetting.
     ///
-    /// The interesting test is not "the file got smaller" — dropping glyphs at
+    /// The interesting test is not "the file got smaller"; dropping glyphs at
     /// random does that. It is that the <em>layout tables survive</em>. GSUB and
     /// GPOS entries reference glyph ids, so a subsetter that renumbers glyphs
     /// without rewriting them silently breaks ligatures, marks and kerning, and
@@ -57,7 +57,7 @@ namespace OneText.Tests
         public void Subsetting_IsAvailable()
         {
             Assert.IsTrue(FontSubsetter.IsAvailable,
-                "the vendored HarfBuzz has no subsetting API — see Docs/NATIVES.md, which " +
+                "the vendored HarfBuzz has no subsetting API; see Docs/NATIVES.md, which " +
                 "records the symbol count verified for every platform binary");
         }
 
@@ -91,7 +91,7 @@ namespace OneText.Tests
             var after = Shape(subset, text);
 
             Assert.AreEqual(before.Count, after.Count,
-                "the subset shaped a different number of glyphs — a ligature was lost, which " +
+                "the subset shaped a different number of glyphs; a ligature was lost, which " +
                 "means GSUB was not remapped");
             for (int i = 0; i < before.Count; i++)
                 Assert.AreEqual(before[i].Advance, after[i].Advance,
@@ -115,7 +115,7 @@ namespace OneText.Tests
 
             var after = Shape(subset, text);
             Assert.AreEqual(before.Count, after.Count,
-                "the subset shaped a different number of glyphs — joining forms were lost");
+                "the subset shaped a different number of glyphs; joining forms were lost");
 
             for (int i = 0; i < before.Count; i++)
             {
@@ -157,7 +157,7 @@ namespace OneText.Tests
             foreach (char kept in "ABC")
                 Assert.IsTrue(font.HasGlyph(kept), $"'{kept}' was asked for and is not there");
 
-            // And something well outside the request is gone — which is the
+            // And something well outside the request is gone, which is the
             // whole point, and also the cost: a subset face cannot draw what
             // nobody predicted.
             Assert.IsFalse(font.HasGlyph('Ж'),

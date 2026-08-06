@@ -57,7 +57,7 @@ namespace OneText.Unicode
             // below is an expensive way to write that down. Without R, AL or
             // AN there are no odd levels and I1 never lifts a number to level
             // 2 (W7 turns every EN into L first), so the whole resolution is a
-            // constant. Latin, CJK, digits and punctuation — most game text —
+            // constant. Latin, CJK, digits and punctuation (most game text)
             // take this path and allocate nothing.
             if (plain && para == 0)
             {

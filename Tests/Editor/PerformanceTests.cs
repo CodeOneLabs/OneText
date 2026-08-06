@@ -12,7 +12,7 @@ namespace OneText.Tests
 {
     /// <summary>
     /// Throughput budgets for the hot paths, plus the sharing guarantees that
-    /// make many labels cheap. The thresholds are deliberately loose — they are
+    /// make many labels cheap. The thresholds are deliberately loose; they are
     /// there to catch an order-of-magnitude regression in CI, not to measure a
     /// machine. Every test logs its real number so trends are visible in the
     /// run output.
@@ -139,7 +139,7 @@ namespace OneText.Tests
                 atlas.Texture.Apply(updateMipmaps: false, makeNoLongerReadable: false));
 
             // Rasterize into a fresh size bucket (untimed), then time only the
-            // upload of those new tiles — that is the per-frame cost a scene
+            // upload of those new tiles; that is the per-frame cost a scene
             // pays when a few glyphs appear.
             var watch = new Stopwatch();
             int rounds = 0;
@@ -225,7 +225,7 @@ namespace OneText.Tests
             using var arabic = LoadFont(ArabicFontPath);
             using var shaper = new Shaper();
 
-            // Latin letters stand apart, so they must stay one tile each — that
+            // Latin letters stand apart, so they must stay one tile each; that
             // is what lets the cache survive an edit. Arabic letters join, so
             // they must still merge or the joint seams.
             int latinLargest = Tiles(shaper, latin, "The quick brown fox", Shaper.Direction.LeftToRight);
@@ -365,7 +365,7 @@ namespace OneText.Tests
         }
 
         /// <summary>
-        /// Runs the label's own per-frame decision the way Update does — asking
+        /// Runs the label's own per-frame decision the way Update does: asking
         /// every frame whether there is anything left to animate, and paying the
         /// clock advance (which dirties the vertices) only when there is.
         /// Returns the frames that cost a mesh re-emit.
@@ -392,7 +392,7 @@ namespace OneText.Tests
             // A <pop for=0.3> damage number is 18 frames of work at 60 Hz. The
             // regression this guards is that it went on re-emitting its whole
             // mesh every frame afterwards, for the rest of its life, to write
-            // back identical vertices — the span outlives its envelope, so
+            // back identical vertices; the span outlives its envelope, so
             // "are there spans?" is always yes and is not the question.
             var canvasGo = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
             byte[] fontBytes = File.ReadAllBytes(Path.GetFullPath(LatinFontPath));
@@ -412,14 +412,14 @@ namespace OneText.Tests
                           $"frames, <wave> on {foreverTicks}/{frames}");
 
                 Assert.GreaterOrEqual(timedTicks, 15,
-                    "the pop never got to play — the clock stopped before its envelope did");
+                    "the pop never got to play: the clock stopped before its envelope did");
                 Assert.Less(timedTicks, 30,
                     "a finished for= effect is still dirtying its vertices every frame");
                 Assert.IsFalse(timed.IsAnimating,
                     "nothing about this label can change again until its text does");
 
                 // The envelope is not a hard stop, so a label that has gone idle
-                // must be resting exactly where an unanimated one draws — an
+                // must be resting exactly where an unanimated one draws; an
                 // idle test that passes on a frozen mid-swing is worse than none.
                 timed.SetAllDirty();
                 timed.Rebuild(CanvasUpdate.PreRender);
@@ -607,7 +607,7 @@ namespace OneText.Tests
             // The finish is each CLUSTER's reveal stamp plus the settle, never
             // the label clock. Measured against the clock instead, this label
             // goes idle a quarter second in with seven of its ten clusters still
-            // to arrive, and they arrive already faded — or never.
+            // to arrive, and they arrive already faded, or never.
             var canvasGo = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
             byte[] fontBytes = File.ReadAllBytes(Path.GetFullPath(LatinFontPath));
             const float delta = 1f / 60f;
@@ -647,7 +647,7 @@ namespace OneText.Tests
             // A designer typing <fade> into a label in the Scene view has no
             // clock advancing anything. Frozen at t=0 the effect is alpha 0,
             // which is text that has vanished; the label shows appearance
-            // effects finished instead. Deciding it is idle must not undo that —
+            // effects finished instead. Deciding it is idle must not undo that;
             // idle is about what the next frame would change, not about what is
             // already on screen.
             var canvasGo = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
@@ -661,9 +661,9 @@ namespace OneText.Tests
 
                 Assert.AreNotEqual(0, plain.DrawnQuads.Count, "the plain label drew nothing");
                 Assert.AreEqual(plain.DrawnQuads.Count, fade.DrawnQuads.Count,
-                    "a previewed fade drew fewer tiles than the text has — it is invisible");
+                    "a previewed fade drew fewer tiles than the text has; it is invisible");
                 Assert.AreEqual(plain.DrawnQuads.Count, rise.DrawnQuads.Count,
-                    "a previewed rise drew fewer tiles than the text has — it is invisible");
+                    "a previewed rise drew fewer tiles than the text has; it is invisible");
 
                 for (int i = 0; i < plain.DrawnQuads.Count; i++)
                 {

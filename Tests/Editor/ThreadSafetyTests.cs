@@ -11,13 +11,13 @@ namespace OneText.Tests
     /// <summary>
     /// Shaping and measuring the same font from several threads at once.
     ///
-    /// Nothing in the engine shapes in parallel yet — which is exactly why this
+    /// Nothing in the engine shapes in parallel yet, which is exactly why this
     /// is worth writing now. The shared state is already shaped like the trap:
     /// one parsed face behind many font handles, a per-font ink-bounds cache,
     /// and an outline extractor whose hb-draw callbacks have nowhere to put
     /// their state but a static. The field's version of this bug is not a crash
     /// but a word rendered at another label's weight, or a glyph assembled from
-    /// two glyphs — the kind that reaches a build. Written now, it fails loudly;
+    /// two glyphs, the kind that reaches a build. Written now, it fails loudly;
     /// written after something goes parallel, it fails in a bug report.
     /// </summary>
     public class ThreadSafetyTests
@@ -92,7 +92,7 @@ namespace OneText.Tests
             go.Set(); // release them together, so they overlap rather than queue
             foreach (var worker in workers)
                 Assert.IsTrue(worker.Join(TimeSpan.FromSeconds(60)),
-                    "a worker thread did not finish — the shared font state deadlocked");
+                    "a worker thread did not finish; the shared font state deadlocked");
 
             if (failures.TryDequeue(out var first)) throw first;
         }
@@ -111,7 +111,7 @@ namespace OneText.Tests
 
             OnThreads(threads: 8, iterations: 40, body: (thread, iteration) =>
             {
-                // Each thread takes its own handle onto the same parsed face —
+                // Each thread takes its own handle onto the same parsed face;
                 // the sharing that matters (the face) stays shared.
                 var latinHandle = latin.ForCurrentThread();
                 var arabicHandle = arabic.ForCurrentThread();
@@ -124,7 +124,7 @@ namespace OneText.Tests
                 string arabicWord = ArabicWords[(thread + iteration) % ArabicWords.Length];
                 var gotArabic = ShapeSignature(arabicHandle, arabicWord);
                 CollectionAssert.AreEqual(expectedArabic[arabicWord], gotArabic,
-                    $"'{arabicWord}' shaped differently on a worker thread — joining forms are " +
+                    $"'{arabicWord}' shaped differently on a worker thread; joining forms are " +
                     "contextual, so a corrupted shape here is a corrupted word");
             });
         }
@@ -151,7 +151,7 @@ namespace OneText.Tests
 
                 // Different weights must actually differ, or the test proves nothing.
                 CollectionAssert.AreNotEqual(expected[0], expected[3],
-                    "wght 100 and wght 900 shape identically — the axis is not being applied");
+                    "wght 100 and wght 900 shape identically; the axis is not being applied");
 
                 OnThreads(threads: 8, iterations: 40, body: (thread, iteration) =>
                 {
@@ -172,7 +172,7 @@ namespace OneText.Tests
         {
             // Two instances on purpose. The baseline is measured on one, so the
             // other reaches the workers with an empty cache and all eight
-            // threads race to fill it — a shared Dictionary being written, not
+            // threads race to fill it: a shared Dictionary being written, not
             // merely read, which is the only version of this race that bites.
             using var reference = LoadFont(LatinFontPath);
             using var font = LoadFont(LatinFontPath);
@@ -199,7 +199,7 @@ namespace OneText.Tests
             // Deliberately the shared instance, NOT ForCurrentThread: the cache
             // is per FontData, so per-thread handles would each get a cache of
             // their own and never contend. This is the only way to exercise the
-            // lock the cache actually has — and layout would use the shared
+            // lock the cache actually has, and layout would use the shared
             // instance too, since ink bounds are a property of the face.
             OnThreads(threads: 8, iterations: 20, body: (thread, iteration) =>
             {
@@ -251,7 +251,7 @@ namespace OneText.Tests
                     OutlineExtractor.Extract(handle, gid, outline, 0.05f);
                     var want = expected[gid];
                     Assert.AreEqual(want.Length, outline.Contours.Count,
-                        $"glyph {gid}: wrong contour count — the extractor's callback state was shared");
+                        $"glyph {gid}: wrong contour count; the extractor's callback state was shared");
                     for (int i = 0; i < want.Length; i++)
                         Assert.AreEqual(want[i], outline.Contours[i].Count,
                             $"glyph {gid}: contour {i} came back with the wrong number of points");
@@ -307,7 +307,7 @@ namespace OneText.Tests
                 Assert.AreNotSame(first, second, "two threads were handed the same variant handle");
 
                 // And the handle really is at the variant's weight, not the
-                // face default — copying the axes is the whole point.
+                // face default; copying the axes is the whole point.
                 CollectionAssert.AreEqual(
                     ShapeSignature(bold, "Hamburgefonstiv"),
                     ShapeSignature(first, "Hamburgefonstiv"),

@@ -4,7 +4,7 @@ using UnityEngine;
 namespace OneText.UGUI
 {
     /// <summary>
-    /// Composition through the Input Manager — <c>Input.compositionString</c>
+    /// Composition through the Input Manager: <c>Input.compositionString</c>
     /// and friends. Compiled only where the legacy backend is enabled, because
     /// every one of these properties throws when it is not.
     ///
@@ -23,8 +23,8 @@ namespace OneText.UGUI
         public void End()
         {
             // Auto, not Off: Off keeps the IME disabled for the whole
-            // application, which would break any other field — including a
-            // built-in one — that takes focus next.
+            // application, which would break any other field (including a
+            // built-in one) that takes focus next.
             Input.imeCompositionMode = IMECompositionMode.Auto;
         }
 

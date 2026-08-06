@@ -28,15 +28,15 @@ namespace OneText
     /// Reads the colour a font already has for a glyph.
     ///
     /// This is the half of emoji that is not shaping. Segmentation and shaping
-    /// were solved by UAX #29 and HarfBuzz — a ZWJ family is one grapheme
-    /// cluster and one glyph once the font's ligatures apply — so what is left
+    /// were solved by UAX #29 and HarfBuzz (a ZWJ family is one grapheme
+    /// cluster and one glyph once the font's ligatures apply), so what is left
     /// is getting the colour out. Two formats cover the fonts that matter:
     ///
     /// <list type="bullet">
-    /// <item><b>CBDT/CBLC</b> — PNG bitmaps, which is Noto Color Emoji and
+    /// <item><b>CBDT/CBLC</b>: PNG bitmaps, which is Noto Color Emoji and
     /// therefore Android and most of Linux. HarfBuzz hands the PNG straight
     /// over and Unity decodes it.</item>
-    /// <item><b>COLRv0</b> — layers of ordinary outlines, each drawn in a
+    /// <item><b>COLRv0</b>: layers of ordinary outlines, each drawn in a
     /// colour from the CPAL palette. Composited here from the same coverage the
     /// SDF rasterizer produces, which is why this needed no new rasterizer.</item>
     /// </list>
@@ -46,7 +46,7 @@ namespace OneText
     /// font in the fallback stack, not the system one. Saying so is better than
     /// a path that works on some iOS versions.
     ///
-    /// COLRv1 — gradients and transforms — is also absent. It is a paint graph,
+    /// COLRv1 (gradients and transforms) is also absent. It is a paint graph,
     /// not a layer list, and it deserves its own milestone rather than a
     /// half-implementation that renders some fonts wrong.
     /// </summary>
@@ -66,7 +66,7 @@ namespace OneText
 
         // Keyed by FontData.CacheId, never by the native face pointer. A freed
         // face's address is handed straight back to the next one, so a pointer
-        // cache reports the previous font's answer for an unrelated font —
+        // cache reports the previous font's answer for an unrelated font,
         // which showed up here as an ordinary text font claiming to have CBDT.
         private static readonly Dictionary<int, Support> s_support = new Dictionary<int, Support>();
 
@@ -123,8 +123,8 @@ namespace OneText
         /// Decodes one glyph in colour, or returns false if this glyph has none
         /// and should go down the ordinary SDF path.
         ///
-        /// <paramref name="textColor"/> is used for COLR layers that ask for it
-        /// — that is the mechanism by which a colour font lets part of a glyph
+        /// <paramref name="textColor"/> is used for COLR layers that ask for it:
+        /// that is the mechanism by which a colour font lets part of a glyph
         /// follow the label instead of the palette.
         /// </summary>
         public static bool TryDecode(FontData font, uint glyphId, float pixelsPerUnit,
@@ -289,7 +289,7 @@ namespace OneText
                     // hb_color_t is HB_COLOR(b,g,r,a) over HB_TAG, which packs
                     // its first argument into the *high* byte: blue is bits
                     // 24-31 and alpha is bits 0-7. Guessing this the other way
-                    // round is quiet — it turns one palette entry into another
+                    // round is quiet: it turns one palette entry into another
                     // valid colour rather than into garbage, and a red layer
                     // comes out with zero alpha and simply is not there.
                     uint c = colors[i];
@@ -352,7 +352,7 @@ namespace OneText
 
                     // Nonzero winding, not even-odd. TrueType outlines are
                     // filled nonzero, and real emoji shapes are unions of
-                    // overlapping same-direction contours — even-odd punches
+                    // overlapping same-direction contours; even-odd punches
                     // holes through exactly those.
                     int winding = 0;
                     for (int c = 0; c + 1 < crossings.Count; c++)
@@ -408,8 +408,8 @@ namespace OneText
         public static void ClearCache() => s_support.Clear();
 
         /// <summary>
-        /// Forgets one font's answer. Called from <see cref="FontData.Dispose"/>
-        /// — labels reload their fonts whenever a style or a font field changes,
+        /// Forgets one font's answer. Called from <see cref="FontData.Dispose"/>:
+        /// labels reload their fonts whenever a style or a font field changes,
         /// and every reload is a new CacheId, so without this the table grows
         /// for the lifetime of the editor.
         /// </summary>

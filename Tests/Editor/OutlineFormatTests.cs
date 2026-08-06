@@ -9,7 +9,7 @@ namespace OneText.Tests
     /// The PostScript/CFF outline path, and the shapes that break rasterizers.
     ///
     /// Both other test fonts are TrueType, so hb-draw's cubic callback and the
-    /// flattening that hangs off it had never been rendered by a test — the
+    /// flattening that hangs off it had never been rendered by a test: the
     /// half of the outline code with the harder error bound. `CffShapes.otf` is
     /// authored for this (see generate_cff_test_font.py) and holds a counter, a
     /// pair of overlapping contours and a long shallow S-curve.
@@ -71,7 +71,7 @@ namespace OneText.Tests
         {
             // 'O' is a ring inside a ring, wound the other way. If the sign
             // rule is wrong the middle fills in, which is the "glyphs with
-            // holes" failure — and it is invisible in a font whose counters
+            // holes" failure, and it is invisible in a font whose counters
             // happen to be small.
             using var font = LoadFont(CffFontPath);
             using var shaper = new Shaper();
@@ -83,7 +83,7 @@ namespace OneText.Tests
             byte beyond = Sample(tile, pixels, new Vector2(350 + 318, 350));
 
             Debug.Log($"[outline] counter: middle {middle}, ring {ring}, outer edge {beyond}");
-            Assert.Less(middle, Inside, "the counter filled in — the hole is being treated as ink");
+            Assert.Less(middle, Inside, "the counter filled in: the hole is being treated as ink");
             Assert.Greater(ring, Inside, "the ring itself is not ink");
         }
 

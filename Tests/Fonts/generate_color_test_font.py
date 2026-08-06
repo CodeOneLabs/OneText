@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Builds ColorGlyphs.ttf, the test face for the colour-glyph paths.
 
-Colour emoji is the differentiating feature of M8 — TextMesh Pro renders a ZWJ
+Colour emoji is the differentiating feature of M8 (TextMesh Pro renders a ZWJ
 sequence as separate glyphs and the standard workaround is a hand-maintained
-sprite sheet — so the paths that decode colour glyphs need a test face. Noto
+sprite sheet), so the paths that decode colour glyphs need a test face. Noto
 Color Emoji would do it, and the roadmap originally planned to vendor it, but
 it is 10.7 MB of someone else's font to carry forever in order to exercise two
 code paths. This authors a face containing exactly what those paths read, the
@@ -16,7 +16,7 @@ What is in it:
      from a CPAL palette. Layer order and palette lookup are the two things
      that go wrong.
   B  a COLRv0 glyph whose second layer uses palette index 0xFFFF, the "use the
-     text colour" sentinel — a real font's way of saying a layer should follow
+     text colour" sentinel: a real font's way of saying a layer should follow
      the label rather than the palette, and the case a naive palette lookup
      reads out of bounds on.
   C  a CBDT/CBLC glyph: a 32x32 PNG with a transparent border, so a decoder
@@ -48,7 +48,7 @@ PPEM = 32
 
 # 直 (U+76F4) is here for the Han-unification test: one codepoint whose correct
 # shape differs between Japanese and Chinese readers, so a test can check that
-# the locale — not the fallback order — decides which font draws it.
+# the locale, not the fallback order, decides which font draws it.
 GLYPHS = [".notdef", "A", "B", "C", "D", "AB", "space", "han"]
 CMAP = {0x41: "A", 0x42: "B", 0x43: "C", 0x44: "D", 0x20: "space", 0x76F4: "han"}
 
@@ -178,7 +178,7 @@ def main():
 
     # Left side bearings from the real outlines, not zero: fontTools derives a
     # glyph's bounding box from lsb, and a wrong box means HarfBuzz reports
-    # ink extents that are the right size in the wrong place — which is a tile
+    # ink extents that are the right size in the wrong place, which is a tile
     # positioned wrongly, not an obviously broken font.
     glyf = builder.font["glyf"]
     advances = {}

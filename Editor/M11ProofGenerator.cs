@@ -8,7 +8,7 @@ using UnityEngine.UI;
 namespace OneText.Editor
 {
     /// <summary>
-    /// Batch-mode visual proof for M11 — the Hub.
+    /// Batch-mode visual proof for M11: the Hub.
     ///
     /// The milestone is a window, and a window cannot be screenshotted in batch
     /// mode, so the panels here are the *views themselves*, drawn with the same
@@ -46,14 +46,14 @@ namespace OneText.Editor
         /// <summary>
         /// The gallery: one string per row, one locale per row, each in the box
         /// it has to live in. The red frames are computed by the same
-        /// measurement the tab uses — text that does not fit its button.
+        /// measurement the tab uses: text that does not fit its button.
         /// </summary>
         private static void RenderGallery(string path)
         {
             const int W = 1180, H = 620;
             var scene = new Scene(W, H);
 
-            Caption(scene, "every string, in its box, laid out headlessly — red does not fit",
+            Caption(scene, "every string, in its box, laid out headlessly; red does not fit",
                 new Rect(50f, 30f, 1080f, 34f));
 
             var rows = new List<(string Locale, string Text, string Font)>
@@ -118,7 +118,7 @@ namespace OneText.Editor
 
             const int W = 1180, H = 400;
             var scene = new Scene(W, H);
-            Caption(scene, "Doctor — the project's strings against the fonts it ships",
+            Caption(scene, "Doctor: the project's strings against the fonts it ships",
                 new Rect(50f, 30f, 1080f, 34f));
             Caption(scene, report.Summary(), new Rect(50f, 74f, 1080f, 30f));
 
@@ -162,7 +162,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// The atlas pie, from an atlas that was prewarmed with one set of
-        /// characters and then drawn into with another — which is exactly the
+        /// characters and then drawn into with another, which is exactly the
         /// split the tab exists to show.
         /// </summary>
         private static void RenderAtlas(string path)
@@ -211,14 +211,14 @@ namespace OneText.Editor
             foreach (var entry in legend)
             {
                 Box(scene, new Rect(470f, y + 8f, 18f, 18f), entry.Color);
-                var label = Label(scene, LatinFont, $"{entry.Label} — {entry.Detail}", 24f,
+                var label = Label(scene, LatinFont, $"{entry.Label} · {entry.Detail}", 24f,
                     new Rect(504f, y, 620f, 40f));
                 label.color = Color.white;
                 y += 46f;
             }
 
             var demand = Label(scene, LatinFont,
-                $"this session wanted {stats.DemandTiles} distinct tiles, {Mb(stats.DemandPixels)} — " +
+                $"this session wanted {stats.DemandTiles} distinct tiles, {Mb(stats.DemandPixels)}: " +
                 "the number occupancy cannot give you, because an atlas under pressure recycles " +
                 "instead of filling", 21f, new Rect(470f, y + 20f, 650f, 160f));
             demand.color = new Color(0.62f, 0.68f, 0.78f, 1f);
@@ -227,7 +227,7 @@ namespace OneText.Editor
             UnityEngine.Object.DestroyImmediate(pie);
         }
 
-        /// <summary>The pie itself, rasterized by hand — no Handles outside a window.</summary>
+        /// <summary>The pie itself, rasterized by hand: no Handles outside a window.</summary>
         private static Texture2D PieTexture(int size, float prewarmed, float runtime)
         {
             var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)

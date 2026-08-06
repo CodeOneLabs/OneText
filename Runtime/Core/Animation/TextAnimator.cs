@@ -8,7 +8,7 @@ namespace OneText
     /// <see cref="ITextQuadModifier"/>.
     ///
     /// It writes quad positions and colours in place and never re-runs shaping
-    /// or layout — that is the M8 hook's contract, and it is what makes
+    /// or layout; that is the M8 hook's contract, and it is what makes
     /// animated text cost vertex-write time instead of rebuild time. Nothing
     /// here allocates per frame: the effect list is built when the text is
     /// parsed and evaluated in place afterwards.
@@ -62,7 +62,7 @@ namespace OneText
         /// motion, so an effect that settled early still has vertices to write
         /// while it is being faded away.
         ///
-        /// A span without one ends only if its effect says it settles — see
+        /// A span without one ends only if its effect says it settles; see
         /// <see cref="ISettlingTextEffect"/>. Ambient effects say nothing and
         /// are unbounded, which is the whole point: stopping a
         /// <c>&lt;wave&gt;</c>'s clock freezes it mid-swing.
@@ -102,7 +102,7 @@ namespace OneText
         /// infinity for an effect that never settles.
         ///
         /// Measured off the REVEAL, never off the label clock. A typewriter
-        /// still running is unbounded whatever its effects declare — the cluster
+        /// still running is unbounded whatever its effects declare: the cluster
         /// revealed ten seconds from now has its whole appearance still to play,
         /// and answering with a time computed from the stamps taken so far would
         /// stop the clock on text that has not arrived yet.
@@ -111,7 +111,7 @@ namespace OneText
         /// label's latest stamp rather than this span's, so a span may be held
         /// open by a reveal outside it. That costs a few extra frames of ticking
         /// on a label that was already ticking for the reveal, where the other
-        /// direction — a span released early — is a fade frozen half-drawn.
+        /// direction, a span released early, is a fade frozen half-drawn.
         /// </summary>
         private float SettlesAt(ITextEffect effect)
         {
@@ -246,7 +246,7 @@ namespace OneText
         /// How much of a time-limited effect (<c>for=</c> on the tag) is still
         /// in force at <paramref name="time"/>: 1 while it runs, easing to 0
         /// over the last stretch, 0 after. No duration (NaN or non-positive)
-        /// is always 1. The ease-out is the point — a sine hard-stopped
+        /// is always 1. The ease-out is the point: a sine hard-stopped
         /// mid-swing snaps its letter home; one damped to zero settles.
         /// </summary>
         public static float EnvelopeWeight(float duration, float time)
@@ -278,8 +278,8 @@ namespace OneText
             quad.Position += output.Translate;
 
             // Carried to the emitter, which rotates the four corners about the
-            // tile's centre. Displacing the centre about itself — the obvious
-            // thing to try when the emitter is axis-aligned — is identically
+            // tile's centre. Displacing the centre about itself, the obvious
+            // thing to try when the emitter is axis-aligned, is identically
             // zero, which is a rotation effect that does nothing at all.
             quad.Rotation += output.RotationDegrees;
 

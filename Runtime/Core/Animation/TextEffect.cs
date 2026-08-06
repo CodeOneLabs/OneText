@@ -67,7 +67,7 @@ namespace OneText
 
         /// <summary>
         /// Combines two effects. Translations and rotations add, scales and
-        /// tints multiply — which is what makes <c>&lt;wave&gt;&lt;rainbow&gt;</c>
+        /// tints multiply, which is what makes <c>&lt;wave&gt;&lt;rainbow&gt;</c>
         /// mean both rather than whichever the parser saw last.
         /// </summary>
         public TextEffectOutput Combine(in TextEffectOutput other) => new TextEffectOutput
@@ -80,7 +80,7 @@ namespace OneText
 
         /// <summary>
         /// This output blended toward identity: 1 is the full effect, 0 is
-        /// none. How a time-limited effect ends — a sine stopped mid-swing
+        /// none. How a time-limited effect ends: a sine stopped mid-swing
         /// teleports its letter home, a sine faded to zero amplitude settles
         /// there.
         /// </summary>
@@ -120,8 +120,8 @@ namespace OneText
     /// <c>&lt;wave&gt;</c> with no <c>for=</c> genuinely never ends and its
     /// label must tick for ever; <c>&lt;fade&gt;</c> with no <c>for=</c> is over
     /// once the last cluster has faded in, and without this declaration a
-    /// dialogue box — a long string, an appearance effect, no <c>for=</c>,
-    /// which is the common case and not an exotic one — re-emits its whole mesh
+    /// dialogue box (a long string, an appearance effect, no <c>for=</c>,
+    /// which is the common case and not an exotic one) re-emits its whole mesh
     /// every frame for the rest of its life to write back identical vertices.
     ///
     /// Deliberately a separate interface rather than a member on
@@ -136,7 +136,7 @@ namespace OneText
     {
         /// <summary>
         /// Seconds after a cluster's reveal beyond which this effect no longer
-        /// changes that cluster. NaN or infinite means never — the same reading
+        /// changes that cluster. NaN or infinite means never, the same reading
         /// as an effect that does not implement this at all.
         ///
         /// Measured from each cluster's own reveal stamp, never from the label
@@ -151,7 +151,7 @@ namespace OneText
     ///
     /// A fixed set of named floats rather than a dictionary, because a
     /// dictionary per tag per rebuild is exactly the allocation the animation
-    /// pass exists to avoid — and because four is more than any effect in the
+    /// pass exists to avoid, and because four is more than any effect in the
     /// box needs.
     /// </summary>
     public readonly struct TextEffectParameters
@@ -160,7 +160,7 @@ namespace OneText
 
         /// <summary>
         /// Seconds the effect runs for (<c>&lt;wave for=0.5&gt;</c>); NaN or
-        /// non-positive means for ever. Effects never see this — the animator
+        /// non-positive means for ever. Effects never see this; the animator
         /// applies it as an envelope over their output, which is what makes
         /// every effect, including user-registered ones, time-limitable
         /// without knowing it.

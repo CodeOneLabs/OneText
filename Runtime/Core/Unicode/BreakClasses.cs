@@ -1,7 +1,7 @@
 namespace OneText.Unicode
 {
     /// <summary>
-    /// Line_Break property values (UAX #14, Table 1), as resolved by rule LB1 —
+    /// Line_Break property values (UAX #14, Table 1), as resolved by rule LB1:
     /// AI/SG/XX are already folded into AL, CJ into NS, SA into CM or AL.
     /// </summary>
     public enum LineBreakClass : byte

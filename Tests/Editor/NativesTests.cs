@@ -10,7 +10,7 @@ namespace OneText.Tests
     /// The natives are laid out the way the loader expects.
     ///
     /// A missing or mis-tagged binary is not a compile error and not a test
-    /// failure anywhere else — it is a build that succeeds and an app that
+    /// failure anywhere else; it is a build that succeeds and an app that
     /// shows no text, discovered on a device. Everything here is checkable from
     /// the editor on any host, so the whole matrix is covered by one CI run
     /// even though only one platform can actually be exercised.
@@ -44,7 +44,7 @@ namespace OneText.Tests
                 if (!File.Exists(full) && !Directory.Exists(full)) missing.Add(path);
             }
             CollectionAssert.IsEmpty(missing,
-                "a platform in the shipping matrix has no HarfBuzz binary — that platform builds " +
+                "a platform in the shipping matrix has no HarfBuzz binary; that platform builds " +
                 "and then draws nothing. See Docs/NATIVES.md to re-vendor.");
         }
 
@@ -53,7 +53,7 @@ namespace OneText.Tests
         {
             // Every one of these files is called libHarfBuzzSharp. Two enabled
             // for one platform is a build error; one enabled for none is silent.
-            // So this asserts both directions — enabled where it belongs, and
+            // So this asserts both directions: enabled where it belongs, and
             // enabled nowhere else. Only the second half catches the failure
             // that actually happens, which is a binary quietly inheriting a
             // platform it has no business being on.
@@ -61,7 +61,7 @@ namespace OneText.Tests
             {
                 string assetPath = $"{PluginRoot}/{path}";
                 var importer = AssetImporter.GetAtPath(assetPath) as PluginImporter;
-                Assert.IsNotNull(importer, $"{path} is not imported as a plugin — its .meta is missing " +
+                Assert.IsNotNull(importer, $"{path} is not imported as a plugin; its .meta is missing " +
                     "or wrong, and Unity will not ship it");
 
                 Assert.IsFalse(importer.GetCompatibleWithAnyPlatform(),
@@ -70,7 +70,7 @@ namespace OneText.Tests
                 Assert.IsTrue(importer.GetCompatibleWithPlatform(target),
                     $"{path} is not enabled for {target}");
                 Assert.AreEqual(cpu, importer.GetPlatformData(target, "CPU"),
-                    $"{path} is tagged for the wrong CPU — Unity would ship it to the wrong ABI");
+                    $"{path} is tagged for the wrong CPU; Unity would ship it to the wrong ABI");
 
                 foreach (var other in (BuildTarget[])System.Enum.GetValues(typeof(BuildTarget)))
                 {
@@ -79,7 +79,7 @@ namespace OneText.Tests
                     try { enabled = importer.GetCompatibleWithPlatform(other); }
                     catch (System.ArgumentException) { continue; } // platform module not installed
                     Assert.IsFalse(enabled,
-                        $"{path} is also enabled for {other} — two binaries of the same name on one " +
+                        $"{path} is also enabled for {other}; two binaries of the same name on one " +
                         "platform is a build Unity refuses");
                 }
 
@@ -107,7 +107,7 @@ namespace OneText.Tests
                 var importer = AssetImporter.GetAtPath(assetPath) as PluginImporter;
                 Assert.IsNotNull(importer, assetPath);
                 Assert.AreEqual("true", importer.GetPlatformData(BuildTarget.Android, "Is16KbAligned"),
-                    $"Android/{abi} is not 16 KB page aligned — Google Play rejects 64-bit " +
+                    $"Android/{abi} is not 16 KB page aligned; Google Play rejects 64-bit " +
                     "libraries that are not, and the failure is at submission, not at build");
             }
         }
@@ -122,7 +122,7 @@ namespace OneText.Tests
             // A dynamic framework that is not embedded is in the Xcode project
             // and absent from the app that ships.
             Assert.AreEqual("true", importer.GetPlatformData(BuildTarget.iOS, "AddToEmbeddedBinaries"),
-                "the iOS framework is not embedded — it links and then is not there at runtime");
+                "the iOS framework is not embedded; it links and then is not there at runtime");
 
             // Device and simulator binaries have the same name, and the plugin
             // importer has no switch to keep two of them apart. One xcframework
@@ -167,12 +167,12 @@ namespace OneText.Tests
         public void SubsettingIsAvailable_OnThisPlatform()
         {
             // Subsetting runs in the editor, so strictly it is only needed where
-            // the editor runs — but a platform build that omits harfbuzz-subset
+            // the editor runs, but a platform build that omits harfbuzz-subset
             // makes the feature platform-dependent, which is worse than not
             // having it. This asserts it for the host; Docs/NATIVES.md records
             // the symbol count verified for every other binary at vendor time.
             Assert.IsTrue(HarfBuzzSubset.IsAvailable,
-                "the vendored HarfBuzz has no subsetting API — the binary was built without " +
+                "the vendored HarfBuzz has no subsetting API; the binary was built without " +
                 "harfbuzz-subset, which is a separate library in HarfBuzz's build");
         }
 

@@ -32,8 +32,8 @@ namespace OneText.Tests
             var pixels = raster.CopyPixels();
             Assert.AreEqual(raster.Width * raster.Height, pixels.Length);
             // A healthy SDF must reach well inside (bright) and well outside (dark).
-            Assert.GreaterOrEqual(pixels.Max(), 200, "no deep-inside texels — sign/winding broken?");
-            Assert.LessOrEqual(pixels.Min(), 55, "no outside texels — bbox mapping broken?");
+            Assert.GreaterOrEqual(pixels.Max(), 200, "no deep-inside texels: sign/winding broken?");
+            Assert.LessOrEqual(pixels.Min(), 55, "no outside texels: bbox mapping broken?");
         }
 
         [Test]
@@ -44,7 +44,7 @@ namespace OneText.Tests
             var raster = GlyphRasterizer.Rasterize(font, FirstGlyph(font, "H"), ppu);
             Assert.IsFalse(raster.IsEmpty);
             Assert.AreEqual(1f / ppu, raster.UnitsPerPixel, 1e-3f,
-                "density must be exactly what the caller requested — uniform across glyphs");
+                "density must be exactly what the caller requested, uniform across glyphs");
         }
 
         [Test]

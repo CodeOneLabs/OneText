@@ -15,7 +15,7 @@ namespace OneText
     /// glyphs it will never rasterize, and those glyphs <em>are</em> the file.
     ///
     /// Almost none of this is new code. `CharsetRecorder` already collects what
-    /// a play session drew and `OneTextCharset` stores it — that is exactly a
+    /// a play session drew and `OneTextCharset` stores it; that is exactly a
     /// subsetter's input, and it was built for prewarming. The subsetter itself
     /// is in the binary already: the HarfBuzz we bundle exports 31
     /// <c>hb_subset_*</c> symbols on every platform. So this is a P/Invoke
@@ -23,7 +23,7 @@ namespace OneText
     ///
     /// <para><b>It cuts against what this engine is for.</b> A subset face
     /// cannot draw what nobody predicted, and "the charset you cannot
-    /// enumerate" — a chat window, a name entry field, user-generated content —
+    /// enumerate" (a chat window, a name entry field, user-generated content)
     /// is the workload this engine wins. So subsetting is opt-in, off by
     /// default, the full face is a one-click revert, and a project that subsets
     /// is told plainly what it gave up. It is the right answer for a
@@ -91,7 +91,7 @@ namespace OneText
         /// The layout tables are the thing to get right, and the reason this is
         /// a binding rather than a hand-rolled table rewriter: GSUB and GPOS
         /// entries reference glyph ids, so renumbering glyphs without rewriting
-        /// them silently breaks ligatures, marks and kerning — and Arabic stops
+        /// them silently breaks ligatures, marks and kerning, and Arabic stops
         /// joining, which is the failure that only shows up in the one language
         /// nobody on the team reads. hb-subset does this correctly; the test
         /// beside this file is the proof rather than the hope.
@@ -196,7 +196,7 @@ namespace OneText
         }
 
         /// <summary>
-        /// Convenience: subset to the characters a charset asset names — which
+        /// Convenience: subset to the characters a charset asset names, which
         /// is the same asset prewarming already uses, and the reason most of
         /// this milestone was already built.
         /// </summary>

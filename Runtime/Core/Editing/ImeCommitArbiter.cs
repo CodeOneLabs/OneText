@@ -4,8 +4,8 @@ namespace OneText
     /// Decides who owns a composition once the input method lets go of it.
     ///
     /// A composition ends in one of two ways, and which one you get depends on
-    /// the platform, the IME and — for the bug reports that made this milestone
-    /// — on whether the field kept focus. Either the platform delivers the
+    /// the platform, the IME and, for the bug reports that made this milestone,
+    /// on whether the field kept focus. Either the platform delivers the
     /// composed text a second time as ordinary character events, or it delivers
     /// nothing at all and the last thing the user typed disappears. A field
     /// that assumes the first loses characters; a field that assumes the second
@@ -14,11 +14,11 @@ namespace OneText
     /// Two directions, one grace window:
     ///
     /// <list type="bullet">
-    /// <item><see cref="AwaitPlatformCommit"/> — the composition cleared on its
+    /// <item><see cref="AwaitPlatformCommit"/>: the composition cleared on its
     /// own. If characters arrive before the window closes, they are the commit
     /// and nothing else happens. If none do, <see cref="Tick"/> hands the text
     /// back and the field inserts it.</item>
-    /// <item><see cref="SuppressEchoOf"/> — the field committed the composition
+    /// <item><see cref="SuppressEchoOf"/>: the field committed the composition
     /// itself, because focus was leaving and nobody else would. Characters that
     /// arrive afterwards are the platform's echo of the same text and are
     /// swallowed, one matching character at a time.</item>
@@ -99,7 +99,7 @@ namespace OneText
             {
                 case Mode.AwaitingPlatform:
                     // Something arrived, so the platform is delivering after
-                    // all. Let it through and stand down — even if it is not
+                    // all. Let it through and stand down, even if it is not
                     // the text we were holding, because a character after a
                     // composition means the composition was committed, and
                     // inserting our copy on top of it is the duplicate bug.
@@ -124,7 +124,7 @@ namespace OneText
 
         /// <summary>
         /// Advances the grace window by one update. Returns the text the field
-        /// must insert itself — the platform never sent it — or null.
+        /// must insert itself (the platform never sent it), or null.
         /// </summary>
         public string Tick()
         {

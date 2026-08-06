@@ -11,8 +11,8 @@ namespace OneText.Tests
     /// tailoring.
     ///
     /// These are the loudest complaints from the Korean, Japanese and Chinese
-    /// communities, and they are all spec-driven — JLREQ, KLREQ, CLREQ, the
-    /// UAX #14 tailoring section — which means the tests can be about what the
+    /// communities, and they are all spec-driven (JLREQ, KLREQ, CLREQ, the
+    /// UAX #14 tailoring section), which means the tests can be about what the
     /// specs say rather than about what looks right to whoever wrote the code.
     /// The degenerate cases come from the bug trackers.
     /// </summary>
@@ -117,11 +117,11 @@ namespace OneText.Tests
             int covered = 0;
             foreach (var line in result.Lines) covered += line.TextLength;
             Assert.AreEqual(text.Length, covered,
-                "wrapping lost characters — the kinsoku walk consumed text it should have kept");
+                "wrapping lost characters: the kinsoku walk consumed text it should have kept");
 
             foreach (var line in result.Lines)
                 Assert.Greater(line.TextLength, 0,
-                    "a zero-length line — the walk backwards made no progress");
+                    "a zero-length line: the walk backwards made no progress");
         }
 
         [Test]
@@ -131,7 +131,7 @@ namespace OneText.Tests
             // walk backwards that resolves nothing is not a smaller fault than
             // the one it was avoiding, it is the same fault one line later plus
             // a short line. Here the run of forbidden marks is wider than the
-            // box, so wherever this line ends the next one starts on a 。 — and
+            // box, so wherever this line ends the next one starts on a 。, and
             // the right answer is to stop paying for it.
             const string text = "aaa。。。。。。a";
 
@@ -164,7 +164,7 @@ namespace OneText.Tests
         {
             // The emergency break used to ignore kinsoku outright, so a 。 that
             // happened to fall one character past the box start became a line
-            // start — the exact fault the tailoring exists to prevent, arriving
+            // start: the exact fault the tailoring exists to prevent, arriving
             // through the one path that never asked. Walking back one character
             // is 追い出し, and it costs one character.
             //
@@ -310,7 +310,7 @@ namespace OneText.Tests
                 "an opening mark after a closing one gives up its leading blank");
             Assert.AreEqual(0f,
                 AsianTypography.CompressionFor('あ', '）', '（'), 0.001f,
-                "the first of the pair keeps its width — otherwise the gap closes twice");
+                "the first of the pair keeps its width; otherwise the gap closes twice");
             Assert.AreEqual(0f,
                 AsianTypography.CompressionFor('あ', '）', 'い'), 0.001f,
                 "a closing mark between letters keeps its width");
@@ -407,7 +407,7 @@ namespace OneText.Tests
         {
             // 行頭・行末の約物, the half of the rule that needs to know where the
             // lines are. A 。 last on a line has its blank against the right
-            // margin — invisible, and half an em of width the wrapper counted.
+            // margin: invisible, and half an em of width the wrapper counted.
             // An opening bracket first on a line has its blank against the left
             // margin, where it reads as an indent nobody asked for.
             using var font = FontData.Load(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)));
@@ -433,7 +433,7 @@ namespace OneText.Tests
         {
             // A mark has one blank half to surrender. A 」 that is both
             // preceded by another closing mark *and* last on its line gives up
-            // half an em, not a whole one — the two halves of the rule are a
+            // half an em, not a whole one; the two halves of the rule are a
             // maximum, not a sum, and adding them would pull the last glyph
             // into the one before it.
             using var font = FontData.Load(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)));
@@ -499,7 +499,7 @@ namespace OneText.Tests
         {
             // Either member of a pair is accepted and both resolve to the
             // correct one, so nobody has to remember which spelling the engine
-            // wants — which is the difference between a feature and a trap.
+            // wants, which is the difference between a feature and a trap.
             Assert.AreEqual(expected, KoreanJosa.Resolve(word, written));
         }
 
@@ -523,7 +523,7 @@ namespace OneText.Tests
         [TestCase("1", "으로", "로")] // 일 ends in ㄹ, so the exception applies
         public void Josa_ReadsNumbersAloud(string number, string written, string expected)
         {
-            // "아이템 3을 선택" — the particle follows how the number is read,
+            // "아이템 3을 선택": the particle follows how the number is read,
             // not how it is written, which is the case interpolated strings hit
             // constantly.
             Assert.AreEqual(expected, KoreanJosa.Resolve(number, written));
@@ -550,7 +550,7 @@ namespace OneText.Tests
         public void JosaTag_ResolvesAtParseTime()
         {
             // The point of the tag over a formatter: it works on a string that
-            // was interpolated at runtime, with no C# call anywhere — which is
+            // was interpolated at runtime, with no C# call anywhere, which is
             // the case a localisation table produces.
             var result = new RichTextResult();
             RichTextParser.Parse("사과<josa=을> 먹었다", result);
@@ -649,7 +649,7 @@ namespace OneText.Tests
         {
             // A real sentence has names, numbers and loanwords no dictionary
             // holds. A segmenter that gives up at the first unknown word
-            // produces one unbreakable line — the failure being fixed.
+            // produces one unbreakable line: the failure being fixed.
             var words = DictionaryLineBreaker.BuiltInThai();
             DictionaryLineBreaker.SetWordList("Thai", words);
             try
@@ -686,7 +686,7 @@ namespace OneText.Tests
             Assert.AreEqual(1f, words.Coverage("สวัสดีครับ"), 0.001f,
                 "a fully known sentence should report full coverage");
             Assert.Less(words.Coverage("สวัสดีฬฬฬ"), 1f,
-                "coverage must fall when the dictionary does not know the words — that number " +
+                "coverage must fall when the dictionary does not know the words; that number " +
                 "is how a team checks Thai wrapping without reading Thai");
         }
 
@@ -739,7 +739,7 @@ namespace OneText.Tests
         {
             // The Han unification fix. 直 is one codepoint whose correct shape
             // differs between Japanese and Chinese readers, and without this
-            // the fallback *order* decides which they get — so a Japanese
+            // the fallback *order* decides which they get, so a Japanese
             // player sees Chinese glyph shapes because somebody listed the
             // Chinese font first. The test face carries 直 for exactly this;
             // two instances of it stand in for two regional fonts.
@@ -771,7 +771,7 @@ namespace OneText.Tests
             // And the locale must not reach past the characters it has an
             // opinion about. A CJK font covers ASCII too, so letting the
             // language decide every codepoint would silently move a Japanese
-            // label's Latin text, digits and punctuation into the CJK face —
+            // label's Latin text, digits and punctuation into the CJK face:
             // a whole-label font swap dressed up as a Han-unification fix.
             Assert.AreSame(first, stack.Resolve('A', false, false,
                 FontStack.Presentation.Any, "ja"),
@@ -784,7 +784,7 @@ namespace OneText.Tests
             // The strong half of the claim, and the one no real-world test face
             // could carry: 直 is one codepoint whose correct shape differs
             // between Japanese and Chinese readers, and OpenType locl is how a
-            // font offers both. LoclRegional.ttf is authored for this — the
+            // font offers both. LoclRegional.ttf is authored for this: the
             // regional forms are not in its cmap at all, so the only way to
             // reach them is for the language tag to have driven the feature.
             using var font = FontData.Load(File.ReadAllBytes(Path.GetFullPath(LoclFontPath)));
@@ -807,7 +807,7 @@ namespace OneText.Tests
             Assert.AreNotEqual(neutral, chinese,
                 "a Chinese label did not get the Chinese form");
             Assert.AreNotEqual(japanese, chinese,
-                "both locales got the same glyph — the feature ran, but not per language");
+                "both locales got the same glyph: the feature ran, but not per language");
 
             // A locale the feature says nothing about falls back to the default
             // form rather than to whichever regional one happens to be first.

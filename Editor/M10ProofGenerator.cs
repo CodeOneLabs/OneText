@@ -13,8 +13,8 @@ namespace OneText.Editor
     /// emergency break, and locale-driven glyph selection through `locl`.
     ///
     /// Each panel is a before/after of one rule, because each of them is a
-    /// claim about a picture — half an em of white space at a margin, a 。 at
-    /// the start of a line, a Han character with the wrong regional shape — and
+    /// claim about a picture (half an em of white space at a margin, a 。 at
+    /// the start of a line, a Han character with the wrong regional shape), and
     /// a passing test says the number moved without saying it looks right.
     /// The boxes are drawn behind the text on purpose: line-edge compression is
     /// invisible without the margin it is measured against.
@@ -57,7 +57,7 @@ namespace OneText.Editor
         /// <summary>
         /// 行頭・行末の約物. The same paragraph in the same box twice. On the
         /// right, marks that land at a margin give up the blank half nobody
-        /// would see — so the text edge is flush, and the width the wrapper no
+        /// would see, so the text edge is flush, and the width the wrapper no
         /// longer counts is width the next character can have.
         /// </summary>
         private static void RenderLineEdge(string path)
@@ -75,7 +75,7 @@ namespace OneText.Editor
             Box(scene, right);
 
             // One toggle, because the line-edge rule is part of 約物詰め rather
-            // than a second setting on top of it — a project that wants typeset
+            // than a second setting on top of it; a project that wants typeset
             // CJK wants both halves, and one that does not wants neither.
             foreach (var (rect, compress) in new[] { (left, false), (right, true) })
             {
@@ -86,7 +86,7 @@ namespace OneText.Editor
 
             // The line-start half on its own, at a size where half an em is not
             // a matter of opinion. Off, the line is indented by a bracket
-            // nobody asked to indent it with — and every line in a paragraph
+            // nobody asked to indent it with, and every line in a paragraph
             // that happens to begin with one is indented differently from its
             // neighbours, which is what the eye actually catches.
             Caption(scene, "a line that begins with a bracket", new Rect(60f, 420f, 620f, 40f));
@@ -104,7 +104,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// 追い出し on the emergency break. A box too narrow for any legal break
-        /// opportunity, so every line comes from the emergency path — where
+        /// opportunity, so every line comes from the emergency path, where
         /// kinsoku used to have no vote at all, and a 。 could open a line.
         /// </summary>
         private static void RenderEmergencyBreak(string path)
@@ -113,7 +113,7 @@ namespace OneText.Editor
             var scene = new Scene(W, H);
 
             // The emergency path only runs when no legal break opportunity
-            // fits, which in pure CJK is almost never — a break is allowed
+            // fits, which in pure CJK is almost never; a break is allowed
             // between any two ideographs. It is an order number, a URL or an ID
             // that gets there: one unbreakable run, and a 。 waiting on the far
             // side of it. The box is measured rather than guessed, so the panel

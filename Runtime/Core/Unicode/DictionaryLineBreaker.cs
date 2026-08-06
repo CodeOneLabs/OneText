@@ -15,7 +15,7 @@ namespace OneText.Unicode
     /// knowing the words.
     ///
     /// So: a trie, longest match, and the standard fallback. The algorithm is
-    /// small; the data is the work, and the data is deliberately separable —
+    /// small; the data is the work, and the data is deliberately separable:
     /// <see cref="WordList"/> takes any newline-separated list, so the ICU
     /// dictionaries (permissively licensed, ~200 KB for Thai) drop straight in.
     /// What ships built in is a starter list, and a project that needs correct
@@ -27,8 +27,8 @@ namespace OneText.Unicode
         /// <summary>
         /// A trie over UTF-16 code units, stored as a dictionary of dictionaries.
         ///
-        /// Not the most compact structure available — a packed DAWG would be
-        /// far smaller — but the lookup is what matters here and this one is
+        /// Not the most compact structure available (a packed DAWG would be
+        /// far smaller), but the lookup is what matters here and this one is
         /// obviously correct. Compaction is worth doing when someone has
         /// measured a real dictionary in a real build.
         /// </summary>
@@ -69,7 +69,7 @@ namespace OneText.Unicode
         }
 
         /// <summary>
-        /// Loads a newline-separated word list — the format ICU's dictionaries
+        /// Loads a newline-separated word list, the format ICU's dictionaries
         /// ship in, so theirs can be used unmodified. Lines starting with '#'
         /// are comments and anything after a tab is ignored, which is how those
         /// files carry per-word weights.
@@ -109,7 +109,7 @@ namespace OneText.Unicode
         /// characters matched over characters tried.
         ///
         /// Worth having because the honest failure mode of a dictionary
-        /// breaker is not a crash — it is wrapping that is subtly wrong in a
+        /// breaker is not a crash; it is wrapping that is subtly wrong in a
         /// language the team does not read. A number makes that checkable.
         /// </summary>
         public float Coverage(string sample)
@@ -146,7 +146,7 @@ namespace OneText.Unicode
         ///
         /// Called from <see cref="Apply"/> rather than a static constructor, so
         /// a project that replaces the Thai list before drawing anything is not
-        /// paying to build one it throws away — and so that "Thai works out of
+        /// paying to build one it throws away, and so that "Thai works out of
         /// the box" is true rather than an instruction in a README.
         /// </summary>
         public static void EnsureDefaults()
@@ -176,7 +176,7 @@ namespace OneText.Unicode
         }
 
         /// <summary>
-        /// Registers the word list for a script — "Thai", "Lao", "Khmer",
+        /// Registers the word list for a script: "Thai", "Lao", "Khmer",
         /// "Myanmar". Replaces any previous list, so loading the full ICU
         /// dictionary over the built-in starter is one call.
         /// </summary>
@@ -245,7 +245,7 @@ namespace OneText.Unicode
         ///
         /// The fallback matters more than it looks. A real sentence contains
         /// names, numbers and loanwords no dictionary has, and a segmenter that
-        /// gives up at the first unknown word produces one unbreakable line —
+        /// gives up at the first unknown word produces one unbreakable line,
         /// which is exactly the failure being fixed.
         /// </summary>
         private static void Segment(string text, int start, int end, WordList words,
@@ -258,8 +258,8 @@ namespace OneText.Unicode
                 if (length <= 0) { i++; continue; }
 
                 i += length;
-                // A break after the word, never before the run's first character
-                // — that boundary belongs to whatever came before it.
+                // A break after the word, never before the run's first character:
+                // that boundary belongs to whatever came before it.
                 if (i > start && i < end && opportunities[i] == LineBreaker.Opportunity.None)
                     opportunities[i] = LineBreaker.Opportunity.Allowed;
             }

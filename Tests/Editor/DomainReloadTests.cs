@@ -18,7 +18,7 @@ namespace OneText.Tests
     /// of live graphics, a hidden watcher GameObject and persistent
     /// <c>NativeArray</c>s. Every one of those points at something that
     /// <em>does</em> die at the session boundary, and the symptom of getting it
-    /// wrong is not an exception — it is blank text, or quads drawn from a
+    /// wrong is not an exception; it is blank text, or quads drawn from a
     /// texture that no longer exists, in the second session only.
     ///
     /// So the test is the ritual: enter, draw, exit, enter, draw again, and
@@ -57,7 +57,7 @@ namespace OneText.Tests
 
             // Hold the shared atlas open for the whole test. Without this the
             // last label's OnDestroy releases it at every play-mode exit and the
-            // next session gets a brand-new one — which is the easy case. The
+            // next session gets a brand-new one, which is the easy case. The
             // hard case, and the one Domain Reload off creates, is a static that
             // is still holding the previous session's engine objects.
             var held = SharedGlyphAtlas.Acquire();
@@ -80,7 +80,7 @@ namespace OneText.Tests
                     label.FontSize = 32f;
 
                     // Drive the mesh build directly. A batch-mode editor never
-                    // renders a canvas, so waiting for a frame would wait forever —
+                    // renders a canvas, so waiting for a frame would wait forever,
                     // and it is the mesh build, not the frame, that lays out the text
                     // and rasterizes it into the atlas.
                     yield return null;
@@ -96,7 +96,7 @@ namespace OneText.Tests
                     Assert.IsTrue(SharedGlyphAtlas.Exists,
                         $"session {session}: no shared atlas after drawing text");
                     Assert.IsTrue(SharedGlyphAtlas.Atlas.IsUsable,
-                        $"session {session}: the atlas survived the session boundary but its texture did not — " +
+                        $"session {session}: the atlas survived the session boundary but its texture did not; " +
                         "every glyph drawn from it is blank");
                     Assert.Greater(SharedGlyphAtlas.Atlas.GetStats().TileCount, 0,
                         $"session {session}: no glyphs were rasterized");
@@ -114,7 +114,7 @@ namespace OneText.Tests
                     // reference that carries session N's engine objects into
                     // session N+1.
                     Assert.IsTrue(held.IsUsable,
-                        $"the atlas acquired before session {session} lost its texture when the session ended — " +
+                        $"the atlas acquired before session {session} lost its texture when the session ended; " +
                         "anything still holding it now draws nothing");
                 }
             }

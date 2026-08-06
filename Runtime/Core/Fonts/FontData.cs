@@ -10,7 +10,7 @@ namespace OneText
 {
     /// <summary>
     /// A font loaded from raw bytes (TTF/OTF/TTC), holding the native
-    /// HarfBuzz blob/face/font handles. Fonts load from memory only —
+    /// HarfBuzz blob/face/font handles. Fonts load from memory only:
     /// no file I/O at runtime.
     /// </summary>
     public sealed class FontData : IDisposable
@@ -29,7 +29,7 @@ namespace OneText
         // owned by this instance. Keyed by managed thread id, which the runtime
         // recycles: a thread pool reuses a bounded set of ids, so the table
         // stays small. Code that spawns a fresh dedicated thread per unit of
-        // work would grow it without bound — one more reason worker threads
+        // work would grow it without bound, one more reason worker threads
         // should be pooled.
         private ConcurrentDictionary<int, FontData> _threadHandles;
 
@@ -98,7 +98,7 @@ namespace OneText
             // HarfBuzz's own rule for sharing: an object may be read from any
             // number of threads once it can no longer be modified. The face is
             // the expensive, shared half of a font, and nothing here ever edits
-            // it after load — say so, so concurrent shaping is legal rather than
+            // it after load; say so, so concurrent shaping is legal rather than
             // merely lucky.
             HarfBuzzApi.hb_face_make_immutable(data.Face);
             data.ReadMetrics();
@@ -111,7 +111,7 @@ namespace OneText
         /// The face is immutable and safe to share; an <c>hb_font_t</c> is not.
         /// It carries the variation coordinates and a lazily-populated shaping
         /// cache, so two threads shaping through one handle can read each
-        /// other's axis settings — the failure is not a crash but a word that
+        /// other's axis settings; the failure is not a crash but a word that
         /// comes out at the wrong weight, in a build, once. Handles are created
         /// on demand, cached per thread, and disposed with the font that owns
         /// them; on the thread that loaded the font this returns the font
@@ -119,7 +119,7 @@ namespace OneText
         ///
         /// Variants get their own handles too. A variant is where the axes
         /// actually live, so it is the instance most likely to be shaped from
-        /// several threads at once — treating it as a leaf would leave the one
+        /// several threads at once; treating it as a leaf would leave the one
         /// case this exists for unprotected.
         ///
         /// The atlas keys tiles by handle, so glyphs baked from a worker thread
@@ -206,7 +206,7 @@ namespace OneText
                 : 0u;
 
         /// <summary>
-        /// Feature tags the font registers in GSUB or GPOS — "liga", "locl",
+        /// Feature tags the font registers in GSUB or GPOS: "liga", "locl",
         /// "kern". What HarfBuzz can apply to this face, not what it applied to
         /// a particular glyph, which OpenType does not report.
         /// </summary>
@@ -280,7 +280,7 @@ namespace OneText
         ///
         /// They are set aside rather than destroyed. A worker may be inside
         /// <c>hb_shape</c> with one at this very moment, and
-        /// <c>hb_font_destroy</c> under it is a native use-after-free — a crash
+        /// <c>hb_font_destroy</c> under it is a native use-after-free, a crash
         /// with no managed stack, which is the worst possible way to learn that
         /// a label changed weight while a background layout was running. They
         /// cost one small native object each and are freed when the font is.

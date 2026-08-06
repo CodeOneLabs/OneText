@@ -2,7 +2,7 @@
 """Fetches the fonts the every-codepoint coverage test needs.
 
 The test asks a question no unit test can: does every assigned codepoint in
-Unicode survive the pipeline — shaped, rasterized, placed in the atlas — without
+Unicode survive the pipeline (shaped, rasterized, placed in the atlas) without
 throwing, hanging, or coming out as tofu where the font had a glyph. Answering it
 needs fonts covering all of Unicode, which is about 200 MB. That does not belong
 in a repository somebody clones to fix a typo, so it lives here as a fetch
@@ -29,8 +29,8 @@ RAW = "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/font
 
 # Noto's CJK and emoji fonts are not in the per-script repository above: they are
 # too big for it and are released separately. CJK matters more than all the rest
-# combined — about 120,000 of Unicode's ~155,000 assigned codepoints are unified
-# Han — so a run without it is not a coverage run at all.
+# combined (about 120,000 of Unicode's ~155,000 assigned codepoints are unified
+# Han), so a run without it is not a coverage run at all.
 EXTRAS = [
     ("NotoSansCJKjp-Regular.otf",
      "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf"),

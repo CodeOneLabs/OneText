@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Builds CffShapes.otf, the test face for the PostScript/CFF outline path.
 
-Both other test fonts are TrueType, so hb-draw's cubic callback — and every
-line of flattening that depends on it — was never rendered by a test. Rather
+Both other test fonts are TrueType, so hb-draw's cubic callback (and every
+line of flattening that depends on it) was never rendered by a test. Rather
 than vendor someone else's .otf and inherit its licence and provenance, this
 authors a small face containing exactly the shapes that go wrong:
 

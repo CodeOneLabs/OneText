@@ -20,7 +20,7 @@ namespace OneText.Tests
     /// The compound benchmark can say a scenario costs 19 KB a frame but not
     /// where it comes from: the only instrument the editor offers it is a heap
     /// delta that resolves a 4 KB page, and attributing bytes to a call with one
-    /// is not merely imprecise but unsound — <c>GC.GetTotalMemory</c> reports the
+    /// is not merely imprecise but unsound: <c>GC.GetTotalMemory</c> reports the
     /// whole process heap, so anything the editor does on another thread lands
     /// in the window. Attempts to fix that by repetition produced a reading
     /// where an unchanged-text populate allocated twice what a full rebuild did,
@@ -28,7 +28,7 @@ namespace OneText.Tests
     ///
     /// So attribution is done here instead, with the profiler's own GC.Alloc
     /// recorder: it counts allocation calls the runtime actually made rather
-    /// than inferring them from heap movement. The count is the useful number —
+    /// than inferring them from heap movement. The count is the useful number:
     /// zero means a path allocates nothing, and any other value names a path
     /// worth opening. Bytes stay with the benchmark, which measures a whole
     /// frame and can afford a coarse gauge.
@@ -88,7 +88,7 @@ namespace OneText.Tests
         /// Allocation calls per iteration, from the profiler's own counter.
         ///
         /// Reflection allocates on every <c>Invoke</c> whatever the label does,
-        /// so a populate stage cannot be read on its own — every figure here is
+        /// so a populate stage cannot be read on its own; every figure here is
         /// net of a baseline running the same scaffolding without the work.
         /// </summary>
         private static double AllocationsPerCall(int iterations, Action work)
@@ -211,11 +211,18 @@ namespace OneText.Tests
                 shaper.Shape(font, Sample, 0, Sample.Length, Shaper.Direction.LeftToRight, glyphs, null);
             }
 
-            Assert.That(() =>
+            // The measured delegate is part of what has to be warm: its first
+            // invocation JIT-compiles the lambda body, and the recorder blames
+            // that one-time allocation on shaping. Bisected per-step, the run
+            // itself is clean from the second invocation on, forever.
+            TestDelegate warmedRun = () =>
             {
                 glyphs.Clear();
                 shaper.Shape(font, Sample, 0, Sample.Length, Shaper.Direction.LeftToRight, glyphs, null);
-            }, Is.Not.AllocatingGCMemory(), "shaping a warmed run must not allocate");
+            };
+            warmedRun();
+
+            Assert.That(warmedRun, Is.Not.AllocatingGCMemory(), "shaping a warmed run must not allocate");
         }
 
         [Test]

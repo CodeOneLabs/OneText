@@ -9,7 +9,7 @@ using UnityEngine.UI;
 namespace OneText.Tests
 {
     /// <summary>
-    /// M14: text decorations — outline, shadow (TMP's underlay) and glow.
+    /// M14: text decorations. Outline, shadow (TMP's underlay) and glow.
     ///
     /// The interesting claim is not that a distance field can be thresholded
     /// twice; it is that doing so costs no material. In TextMesh Pro every one
@@ -21,7 +21,7 @@ namespace OneText.Tests
     /// and a plain one sitting in the same canvas.
     ///
     /// The rest is the parser, held to the same all-or-nothing rule as every
-    /// other tag, and the packing — which is only correct if what comes back out
+    /// other tag, and the packing, which is only correct if what comes back out
     /// of the mesh is what the markup asked for.
     /// </summary>
     public class DecorationTests
@@ -126,7 +126,7 @@ namespace OneText.Tests
             result = new RichTextResult();
             RichTextParser.Parse("<glow x=0.5>x</glow>", result);
             Assert.AreEqual(0, result.Decorations.Count,
-                "a glow has no x — reading it as a radius would be a guess");
+                "a glow has no x; reading it as a radius would be a guess");
         }
 
         [Test]
@@ -178,7 +178,7 @@ namespace OneText.Tests
             Assert.IsNotNull(shared);
             foreach (var label in new[] { plain, outlined, shadowed, glowing })
                 Assert.AreSame(shared, label.materialForRendering,
-                    "a decoration forked the material, which forks the batch — the one thing " +
+                    "a decoration forked the material, which forks the batch: the one thing " +
                     "this design exists to avoid");
         }
 
@@ -203,7 +203,7 @@ namespace OneText.Tests
         public void MixedCanvas_KeepsOneVertexLayout()
         {
             // uGUI batches by material and by vertex layout. The materials are
-            // checked above; this is the other half — a decorated label whose
+            // checked above; this is the other half: a decorated label whose
             // mesh carried a channel the plain one did not would break the batch
             // just as thoroughly, and would do it invisibly.
             var canvas = NewCanvas();
@@ -276,7 +276,7 @@ namespace OneText.Tests
         {
             // Without the tile's u bounds the offset sample walks sideways out
             // of its tile and into whatever glyph the atlas shelf packed beside
-            // it — a ghost of an unrelated letter, drawn as this one's shadow.
+            // it: a ghost of an unrelated letter, drawn as this one's shadow.
             var label = NewLabel("<shadow>cast</shadow>");
             var mesh = Draw(label);
 
@@ -353,7 +353,7 @@ namespace OneText.Tests
             // edge would draw something visibly worse than nothing, so the
             // channels are written empty and the shader never looks.
             // 'A' is the authored test face's colour glyph; 'D' is its
-            // monochrome one, which is the point of drawing both — the
+            // monochrome one, which is the point of drawing both: the
             // monochrome glyph in the same run keeps its shadow.
             var label = NewLabel("<shadow>AD</shadow>", ColorFontPath);
             var mesh = Draw(label);

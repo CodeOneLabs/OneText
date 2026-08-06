@@ -22,17 +22,17 @@ namespace OneText.Tests
     /// Nothing here needs a font that covers the text. Segmentation, the unit
     /// table and the callbacks are all decided from the text and the shaper's
     /// cluster values, so the assertions hold whether the glyph came out of a
-    /// Thai font or came out as .notdef — which is also why they are a
+    /// Thai font or came out as .notdef, which is also why they are a
     /// regression test rather than a rendering opinion.
     /// </summary>
     public class TypewriterTests
     {
         private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
 
-        /// <summary>한글 as jamo — six code points, two syllable blocks.</summary>
+        /// <summary>한글 as jamo: six code points, two syllable blocks.</summary>
         private const string JamoHangeul = "\u1112\u1161\u11AB\u1100\u1173\u11AF";
 
-        /// <summary>Man + woman + girl, joined — eight UTF-16 units, one picture.</summary>
+        /// <summary>Man + woman + girl, joined: eight UTF-16 units, one picture.</summary>
         private const string ZwjFamily =
             "\U0001F468\u200D\U0001F469\u200D\U0001F467";
 
@@ -83,7 +83,7 @@ namespace OneText.Tests
         [Test]
         public void Granularity_Korean_StepsOncePerSyllable()
         {
-            // Written as jamo — three code points a reader calls one syllable.
+            // Written as jamo: three code points a reader calls one syllable.
             // The grapheme rules (GB6-GB8) already join these, so all three
             // modes must agree: whatever else changes, Korean does not get a
             // third of a syllable per step under any of them.
@@ -114,8 +114,8 @@ namespace OneText.Tests
                 "the leading vowel must arrive with its consonant");
 
             // No unit may begin at a consonant whose leading vowel is the
-            // character before it — stated over a whole sentence, so this keeps
-            // holding if the rule is ever rewritten.
+            // character before it (stated over a whole sentence, so this keeps
+            // holding if the rule is ever rewritten).
             var sentence = NewLabel("ไปโรงเรียนแล้ว");
             sentence.RevealGranularity = RevealGranularity.Cluster;
             for (int u = 1; u < sentence.RevealUnitCount; u++)
@@ -134,7 +134,7 @@ namespace OneText.Tests
         {
             // Khmer ក្ម and Myanmar က္မ: an invisible stacker followed by the
             // subscript consonant it exists to introduce. The assertion is
-            // about the unit and deliberately not about how it got there —
+            // about the unit and deliberately not about how it got there;
             // UAX #29's conjunct rule already joins some of these, and the
             // engine is right to. Either way, a step that shows a bare stacker
             // has drawn a mark with nothing under it.
@@ -149,7 +149,7 @@ namespace OneText.Tests
         [Test]
         public void Granularity_Syllable_RefusesToStartOnAMarkThatCannotStartOne()
         {
-            // がっこう。はい — the sokuon and the full stop are graphemes and
+            // In がっこう。はい, the sokuon and the full stop are graphemes and
             // are not steps: nobody puts a typing sound on 。
             var label = NewLabel("がっこう。はい");
             Assert.AreEqual(7, label.GraphemeCount);
@@ -187,7 +187,7 @@ namespace OneText.Tests
             label.MaxVisibleGraphemes = label.GraphemeCount;
 
             CollectionAssert.AreEqual(new[] { 0, 1 }, fired,
-                "two syllables, two sounds — not six, and not three per syllable");
+                "two syllables, two sounds; not six, and not three per syllable");
         }
 
         [Test]
@@ -428,7 +428,7 @@ namespace OneText.Tests
             label.MaxVisibleGraphemes = label.GraphemeCount;
             Assert.AreEqual(1, complete);
 
-            // Rewound, so the next finish is a new finish — a pooled label
+            // Rewound, so the next finish is a new finish; a pooled label
             // retyping a second line must fire it again.
             label.MaxVisibleGraphemes = 2;
             label.MaxVisibleGraphemes = label.GraphemeCount;

@@ -96,7 +96,7 @@ namespace OneText.Unicode
 
         /// <summary>
         /// The rule that decided the boundary before <paramref name="index"/>,
-        /// by its name in UAX #14 — "LB13", "LB30a" — or null when the index is
+        /// by its name in UAX #14 ("LB13", "LB30a"), or null when the index is
         /// not a boundary between two items.
         ///
         /// Diagnostics only, and deliberately a second pass rather than
@@ -121,7 +121,7 @@ namespace OneText.Unicode
                 return rule;
             }
             // Inside a grapheme that LB9 folded away: no rule applies, which is
-            // itself the answer — the mark went with its base.
+            // itself the answer: the mark went with its base.
             return "LB9";
         }
 

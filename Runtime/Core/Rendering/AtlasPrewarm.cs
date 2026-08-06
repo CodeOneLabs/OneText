@@ -12,7 +12,7 @@ namespace OneText
         /// <summary>Tiles rasterized by this pass.</summary>
         public int Baked;
 
-        /// <summary>Pairs already in the atlas — nothing to do.</summary>
+        /// <summary>Pairs already in the atlas: nothing to do.</summary>
         public int AlreadyResident;
 
         /// <summary>Characters no font in the stack covers.</summary>
@@ -39,14 +39,14 @@ namespace OneText
     ///
     /// Each character is shaped on its own and clustered exactly the way a
     /// label clusters it, so the tiles land under the keys labels will look up.
-    /// Characters whose tile depends on their neighbours — the joined forms of
-    /// Arabic and other cursive scripts — cannot be prewarmed this way and are
+    /// Characters whose tile depends on their neighbours, the joined forms of
+    /// Arabic and other cursive scripts, cannot be prewarmed this way and are
     /// left to the live path; isolated glyphs (Latin, CJK, Hangul, Kana), which
     /// is where the atlas pressure actually is, all warm correctly.
     ///
     /// A prewarm pass stops when the atlas reaches <c>fillLimit</c> and reports
     /// what did not fit. Filling the atlas past that point would evict the
-    /// glyphs prewarmed a moment earlier — the very thrash prewarming exists to
+    /// glyphs prewarmed a moment earlier, the very thrash prewarming exists to
     /// prevent.
     /// </summary>
     public static class AtlasPrewarm
@@ -64,7 +64,7 @@ namespace OneText
                 return report;
 
             // Evicting during a prewarm means the pass has started overwriting
-            // its own work — the exact thrash prewarming exists to prevent, and
+            // its own work, the exact thrash prewarming exists to prevent, and
             // a truer "full" signal than occupancy, which a small atlas never
             // reaches because it recycles instead.
             int evictionsAtStart = atlas.GetStats().Evictions;

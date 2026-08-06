@@ -2,15 +2,15 @@
 """Builds LoclRegional.ttf, the test face for locale-driven glyph selection.
 
 M10 passes a BCP 47 tag through to HarfBuzz so OpenType `locl` can pick the
-regional form of a shared codepoint — the Han unification fix, from the
+regional form of a shared codepoint: the Han unification fix, from the
 shaping side rather than the fallback side. But every other test face is a
 real-world font with no `locl` table, so what the suite could check was only
 that a language tag does not corrupt ordinary text. That is the weaker half of
 the claim: it says a tag is harmless, not that it works.
 
-This face makes the strong half testable. U+76F4 (直) — the codepoint the
+This face makes the strong half testable. U+76F4 (直), the codepoint the
 Japanese and Chinese communities argue about, and the one the fallback test
-already uses — is drawn three ways, and `locl` selects between them:
+already uses, is drawn three ways, and `locl` selects between them:
 
   han       the default form, for a label with no locale and for every
             language the feature says nothing about
@@ -32,7 +32,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 UPEM = 1000
 
 # Three bars, one per regional form. Different heights so the glyphs differ as
-# outlines and not only as IDs — a substitution that fired but drew the same
+# outlines and not only as IDs; a substitution that fired but drew the same
 # picture would be indistinguishable from one that never fired.
 BARS = {
     "han": (100, 900, 200, 700),

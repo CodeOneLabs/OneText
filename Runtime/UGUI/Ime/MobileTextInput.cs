@@ -9,7 +9,7 @@ namespace OneText.UGUI
     /// the user has installed, and hands back a finished string.
     ///
     /// So there is nothing to compose here and nothing to underline. The field
-    /// mirrors the buffer instead — which is why
+    /// mirrors the buffer instead, which is why
     /// <see cref="TextEditingModel.SetExternalText"/> exists and reports
     /// whether the value actually changed, rather than firing an event once per
     /// poll for text that did not.

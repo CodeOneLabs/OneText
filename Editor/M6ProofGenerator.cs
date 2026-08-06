@@ -8,7 +8,7 @@ namespace OneText.Editor
 {
     /// <summary>
     /// Batch-mode visual proof for M6: how the atlas packs, what a compaction
-    /// does to the packing, and — the part that matters — that text rendered
+    /// does to the packing, and (the part that matters) that text rendered
     /// after a compaction is pixel-identical to text rendered before it.
     /// Run: Unity -batchmode -quit -projectPath &lt;dev&gt; -executeMethod
     ///      OneText.Editor.M6ProofGenerator.Generate -oneOut &lt;dir&gt;
@@ -183,7 +183,7 @@ namespace OneText.Editor
                 maxDelta = Mathf.Max(maxDelta, delta);
             }
             Debug.Log($"[m6] after {stats.Evictions} evictions and {stats.Compactions} compactions: " +
-                $"{differing} of {a.Length} pixels differ (max delta {maxDelta}) — 0 means the repack is invisible");
+                $"{differing} of {a.Length} pixels differ (max delta {maxDelta}); 0 means the repack is invisible");
 
             Object.DestroyImmediate(first);
             Object.DestroyImmediate(second);
@@ -195,7 +195,7 @@ namespace OneText.Editor
 
         /// <summary>
         /// The number the whole milestone is about: how many CJK glyphs a
-        /// budget holds. Uses a system Korean font when one is present — it is
+        /// budget holds. Uses a system Korean font when one is present; it is
         /// a measurement, not a dependency.
         /// </summary>
         private static void CjkCapacity()

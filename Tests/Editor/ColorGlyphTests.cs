@@ -11,8 +11,8 @@ namespace OneText.Tests
     /// M8: colour glyphs.
     ///
     /// This is the pure-differentiation half of the milestone. TextMesh Pro
-    /// cannot render a multi-codepoint emoji sequence at all — a ZWJ family, a
-    /// flag, a skin tone comes out as separate glyphs — and the community
+    /// cannot render a multi-codepoint emoji sequence at all (a ZWJ family, a
+    /// flag, a skin tone comes out as separate glyphs), and the community
     /// answer is a hand-maintained sprite sheet. The shaping half was already
     /// done for us by UAX #29 and HarfBuzz; what is tested here is the colour
     /// half: reading CBDT bitmaps and COLRv0 layers out of a font and getting
@@ -73,7 +73,7 @@ namespace OneText.Tests
 
             // 'A' is a red square (palette 0) with a blue triangle (palette 1)
             // drawn over it. Both colours have to be present, and the blue has
-            // to be on top where they overlap — layer order is the thing a
+            // to be on top where they overlap; layer order is the thing a
             // careless implementation reverses.
             bool sawRed = false, sawBlue = false;
             foreach (var texel in decoded.Pixels)
@@ -225,7 +225,7 @@ namespace OneText.Tests
             Assert.AreEqual(2, atlas.GetStats().TileCount);
 
             Assert.IsFalse(ColorGlyphs.UsesTextColor(font, GlyphOf(font, 'A')),
-                "a glyph with no sentinel layer must not be keyed by colour — that would " +
+                "a glyph with no sentinel layer must not be keyed by colour; that would " +
                 "cost a cache miss per label colour for nothing");
         }
 
@@ -253,7 +253,7 @@ namespace OneText.Tests
             Assert.AreEqual(first.UvRect, again.UvRect);
             Assert.AreEqual(1, atlas.GetStats().TileCount);
 
-            // Overflow a small atlas, then check the survivors still resolve —
+            // Overflow a small atlas, then check the survivors still resolve:
             // the same "no permanent blanking" rule the SDF atlas follows.
             for (int i = 2; i < 400; i++) atlas.GetOrAdd(i, decoded);
             var stats = atlas.GetStats();
@@ -306,7 +306,7 @@ namespace OneText.Tests
         {
             // The atlas packs tiles flush and samples bilinear, so a tile's edge
             // texel is a neighbour's. Leaving an evicted tile's pixels behind
-            // means a later tap can pick up something no longer in the atlas —
+            // means a later tap can pick up something no longer in the atlas,
             // and the uv rect is inset by half a texel for the same reason.
             using var font = LoadFont(ColorFontPath);
             using var atlas = new ColorGlyphAtlas(256, 1);
@@ -322,7 +322,7 @@ namespace OneText.Tests
             for (int i = 2; i < 400; i++) atlas.GetOrAdd(i, decoded);
             Assert.IsFalse(atlas.Contains(1), "the test needs the first tile evicted");
 
-            // Whatever is at that spot now belongs to whoever owns it — what
+            // Whatever is at that spot now belongs to whoever owns it; what
             // must not happen is the evicted tile's pixels surviving untouched
             // under a rect nothing references.
             Assert.Greater(atlas.GetStats().Evictions, 0);
@@ -472,7 +472,7 @@ namespace OneText.Tests
         public void RepeatedSprites_AreEachDrawn()
         {
             // Two <sprite=0> placeholders compare equal as styles, and the
-            // itemizer merges equal styles — so a row of identical icons became
+            // itemizer merges equal styles, so a row of identical icons became
             // one icon on a short line. A sprite must never merge with its
             // neighbour, identical or not.
             var created = new List<Object>();
@@ -632,7 +632,7 @@ namespace OneText.Tests
             var plainInColor = new TextLayoutResult();
             engine.Layout("A", TextLayoutSettings.Default(FontStack.Single(color), 32f), plainInColor);
             Assert.AreEqual(plainInColor.Width, emoji.Width, 0.01f,
-                "the variation selector took width of its own — it must be invisible");
+                "the variation selector took width of its own; it must be invisible");
         }
 
         [Test]
@@ -658,7 +658,7 @@ namespace OneText.Tests
             shaper.Shape(font, "AB", shaped);
 
             Assert.AreEqual(1, shaped.Count,
-                "two codepoints did not ligate — the font's GSUB is not being applied");
+                "two codepoints did not ligate: the font's GSUB is not being applied");
 
             using var fonts = FontStack.Single(font);
             using var engine = new TextLayoutEngine();

@@ -34,7 +34,7 @@ namespace OneText.UGUI
         /// The text being composed right now. False when nothing is.
         /// <paramref name="caret"/> is -1 when the backend cannot report one,
         /// and <paramref name="clauseLength"/> is 0 when it reports no
-        /// converting clause — which, on every backend Unity ships today, is
+        /// converting clause, which, on every backend Unity ships today, is
         /// always.
         /// </summary>
         bool TryGetComposition(out string text, out int caret, out int clauseStart, out int clauseLength);
@@ -43,8 +43,8 @@ namespace OneText.UGUI
     /// <summary>
     /// Picks the input method backend for the project this is running in.
     ///
-    /// The Input System backend cannot be referenced from here — its assembly
-    /// only exists when the package is installed — so it registers itself with
+    /// The Input System backend cannot be referenced from here (its assembly
+    /// only exists when the package is installed), so it registers itself with
     /// <see cref="Register"/> from an assembly that is compiled out entirely
     /// when the package is absent. The legacy backend is the fallback, and a
     /// field with neither still edits: it just cannot compose.

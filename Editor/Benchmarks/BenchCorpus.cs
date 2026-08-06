@@ -80,7 +80,7 @@ namespace OneText.Benchmarks
             }
         }
 
-        /// <summary>Every character this corpus can produce from its fixed pool — a prewarm charset.</summary>
+        /// <summary>Every character this corpus can produce from its fixed pool: a prewarm charset.</summary>
         public List<int> CommonCodepoints()
         {
             var seen = new HashSet<int>();

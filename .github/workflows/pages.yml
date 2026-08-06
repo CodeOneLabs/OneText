@@ -2,8 +2,8 @@
 #
 # Not the "main branch /docs folder" setting, which would be simpler: this
 # repository already has a Docs/ directory, and on a case-insensitive
-# filesystem — which is every macOS checkout, including the one this is
-# developed on — a docs/ folder beside it is the same folder. Publishing from
+# filesystem, which is every macOS checkout including the one this is
+# developed on, a docs/ folder beside it is the same folder. Publishing from
 # an arbitrary directory needs a workflow, so here it is.
 name: pages
 

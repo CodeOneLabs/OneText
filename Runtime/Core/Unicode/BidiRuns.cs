@@ -25,7 +25,7 @@ namespace OneText.Unicode
 
         /// <summary>
         /// Computes runs in <em>logical</em> order, covering the range without
-        /// gaps — line breaking works in logical order, and each line reorders
+        /// gaps; line breaking works in logical order, and each line reorders
         /// its own runs visually afterwards.
         /// </summary>
         /// <param name="text">Text containing the paragraph.</param>

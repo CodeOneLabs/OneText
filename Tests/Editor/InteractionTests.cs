@@ -208,7 +208,7 @@ namespace OneText.Tests
             Assert.AreEqual("one two", display);
             Assert.AreEqual(2, links.Count);
 
-            // Innermost first, because that is the order they close in — and
+            // Innermost first, because that is the order they close in, and
             // the order hit-testing wants: it returns the first link containing
             // the point, and for nested links the specific one is the answer.
             Assert.AreEqual("b", links[0].Id);

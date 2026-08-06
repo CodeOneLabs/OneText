@@ -10,7 +10,7 @@ namespace OneText.Tests
     /// <summary>
     /// M8: named styles.
     ///
-    /// The claim being tested is not "a style can set a colour" — it is that a
+    /// The claim being tested is not "a style can set a colour"; it is that a
     /// label holds a <em>reference</em>. Everything worth having follows from
     /// that: editing an asset updates every label, theming is a style swap
     /// rather than a walk over the scene, and a runtime font change cannot
@@ -166,7 +166,7 @@ namespace OneText.Tests
 
                 used.SetColor(Color.magenta);
                 Assert.AreEqual(1, probe.Notifications,
-                    "editing a style did not reach the label referencing it — which is the " +
+                    "editing a style did not reach the label referencing it, which is the " +
                     "whole reason labels store a reference rather than a copy");
             }
             finally
@@ -191,7 +191,7 @@ namespace OneText.Tests
             {
                 basis.SetColor(Color.yellow);
                 Assert.AreEqual(1, probe.Notifications,
-                    "a label using a derived style must follow its base — that is what the " +
+                    "a label using a derived style must follow its base; that is what the " +
                     "one level of inheritance is for");
             }
             finally

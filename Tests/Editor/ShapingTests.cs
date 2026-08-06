@@ -40,7 +40,7 @@ namespace OneText.Tests
             var glyphs = Shape(font, "AV");
             Assert.AreEqual(2, glyphs.Count);
             Assert.That(glyphs.All(g => g.XAdvance > 0));
-            Assert.That(glyphs.All(g => g.GlyphId != 0), "'.notdef' produced — cmap lookup failed");
+            Assert.That(glyphs.All(g => g.GlyphId != 0), "'.notdef' produced: cmap lookup failed");
         }
 
         [Test]
@@ -53,7 +53,7 @@ namespace OneText.Tests
             var joined = Shape(font, "ببب");
             var uniqueIds = isolated.Concat(joined).Select(g => g.GlyphId).Distinct().Count();
             Assert.GreaterOrEqual(uniqueIds, 4,
-                "Expected distinct isolated/initial/medial/final forms — GSUB not applied?");
+                "Expected distinct isolated/initial/medial/final forms: GSUB not applied?");
         }
 
         [Test]

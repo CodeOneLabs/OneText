@@ -10,10 +10,10 @@ namespace OneText.Tests
     /// M12: text editing that survives an input method.
     ///
     /// The cases are the bug reports. Korean users have been filing the same
-    /// three against Unity's own input field for a decade — the last syllable
+    /// three against Unity's own input field for a decade (the last syllable
     /// disappears when focus moves, backspace eats the text behind the
     /// composition, Enter submits the form while the user was only confirming a
-    /// candidate — and the reason they survive is that nobody can write a
+    /// candidate), and the reason they survive is that nobody can write a
     /// regression test for them without a Korean IME attached to the machine.
     /// So the field's editing state is a plain object, and the IME is an
     /// interface. Both are driven here at compile speed.
@@ -22,8 +22,8 @@ namespace OneText.Tests
     {
         private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
 
-        // "안녕" typed, then "하" being composed: ᄒ, 하, 한 — the states a Hangul
-        // IME actually walks through as three keys are pressed.
+        // "안녕" typed, then "하" being composed: ᄒ, 하, 한 (the states a Hangul
+        // IME actually walks through as three keys are pressed).
         private const string Hangul_H = "ㅎ";      // ㅎ
         private const string Hangul_HA = "하";     // 하
         private const string Hangul_HAN = "한";    // 한

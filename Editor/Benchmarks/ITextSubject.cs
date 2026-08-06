@@ -5,7 +5,7 @@ namespace OneText.Benchmarks
     /// <summary>
     /// A text system under test. The scenarios drive this interface and never
     /// mention a concrete implementation, so the same scene definition measures
-    /// OneText and TextMeshPro under identical conditions — and so the
+    /// OneText and TextMeshPro under identical conditions, and so the
     /// TextMeshPro adapter can live outside the package, where the dependency
     /// belongs.
     /// </summary>
@@ -27,7 +27,7 @@ namespace OneText.Benchmarks
         void SetText(object label, string text);
 
         /// <summary>
-        /// Runs whatever the system does once per frame outside its labels —
+        /// Runs whatever the system does once per frame outside its labels:
         /// for OneText, the single shared atlas upload.
         /// </summary>
         void EndFrame();
@@ -43,7 +43,7 @@ namespace OneText.Benchmarks
 
     /// <summary>
     /// A system that can rasterize a known character set before the run.
-    /// Both systems get the same charset and the same chance to use it —
+    /// Both systems get the same charset and the same chance to use it;
     /// prewarming one side only would be the obvious way to rig this.
     /// </summary>
     public interface IPrewarmable

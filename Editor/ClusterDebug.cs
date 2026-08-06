@@ -77,7 +77,7 @@ namespace OneText.Editor
             Debug.Log("CLUSTERDBG done");
         }
 
-        /// <summary>One label, one word, nothing else — isolates the render path.</summary>
+        /// <summary>One label, one word, nothing else: isolates the render path.</summary>
         private static void RenderSolo(string outDir)
         {
             const int W = 700, H = 300;

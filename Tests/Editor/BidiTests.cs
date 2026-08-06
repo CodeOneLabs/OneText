@@ -76,7 +76,7 @@ namespace OneText.Tests
         [Test]
         public void MixedDirection_Sanity()
         {
-            // "abc ALEF-BET-GIMEL 123" — Hebrew segment reversed, digits at level 2.
+            // "abc ALEF-BET-GIMEL 123": Hebrew segment reversed, digits at level 2.
             var cps = new List<int> { 'a', ' ', 0x05D0, 0x05D1, ' ', '1', '2' };
             var levels = new byte[cps.Count];
             var removed = new bool[cps.Count];
@@ -89,7 +89,7 @@ namespace OneText.Tests
             Assert.AreEqual(1, levels[2]);
             Assert.AreEqual(1, levels[3]);
             Assert.AreEqual(2, levels[5], "digits after RTL should be level 2");
-            // Visual: a _ [12 _ heb1 heb0] — the whole RTL segment reverses,
+            // Visual: a _ [12 _ heb1 heb0]; the whole RTL segment reverses,
             // digits stay LTR inside it: 0 1 5 6 4 3 2.
             Assert.AreEqual(6, visual.IndexOf(2), "hebrew letters must swap visually");
             Assert.AreEqual(5, visual.IndexOf(3));

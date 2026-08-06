@@ -8,7 +8,7 @@ namespace OneText.Tests
     /// <summary>
     /// Clustering decides which glyphs share a tile by their ink boxes, and it
     /// asks for one per glyph per line. Those boxes now come from the font's
-    /// own tables instead of a flattened outline — cheap, but only correct if
+    /// own tables instead of a flattened outline: cheap, but only correct if
     /// the box still contains the ink it is standing in for.
     /// </summary>
     public class InkBoundsTests
@@ -61,7 +61,7 @@ namespace OneText.Tests
                         $"glyph {glyph.GlyphId}: disagreement about whether it has ink");
                     if (!hasInk) continue;
 
-                    // The stored box may be looser than the ink — a cluster that
+                    // The stored box may be looser than the ink: a cluster that
                     // merges slightly too eagerly costs cache reuse, never a
                     // seam. Tighter than the ink is the failure that matters.
                     // One unit of slack: the flattening is itself approximate.

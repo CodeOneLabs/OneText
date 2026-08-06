@@ -13,8 +13,8 @@ namespace OneText
     /// the same reason: in TextMesh Pro every one of these lives on a material,
     /// so a heading with an outline and a body without it are two draw calls and
     /// a fallback glyph silently loses the effect. Here the parameters ride in
-    /// vertex channels the mesh already carries — see the channel budget in
-    /// <c>OneTextLabel.AddVert</c> — so a decorated and an undecorated label
+    /// vertex channels the mesh already carries (see the channel budget in
+    /// <c>OneTextLabel.AddVert</c>), so a decorated and an undecorated label
     /// batch together and an emoji in the middle of an outlined word does not
     /// break the run.
     ///
@@ -25,7 +25,7 @@ namespace OneText
     /// field reads a flat "far outside" and an outline would simply stop, so
     /// the cap is the honest limit rather than an arbitrary one. Reaches are
     /// texels at the tile's own density, and tiles are rasterized at the size
-    /// they are drawn at — so a decoration keeps its proportions when the font
+    /// they are drawn at, so a decoration keeps its proportions when the font
     /// size changes, which a measurement in pixels would not.
     /// </summary>
     [Serializable]
@@ -34,7 +34,7 @@ namespace OneText
         /// <summary>
         /// Which parts this value actually says something about. A part that is
         /// not set inherits, exactly as an unset <see cref="OneTextStyle"/>
-        /// field does — and for the same reason: "black outline of width 0" and
+        /// field does, and for the same reason: "black outline of width 0" and
         /// "no opinion about outlines" have to be tellable apart.
         /// </summary>
         [Flags]
@@ -78,7 +78,7 @@ namespace OneText
         /// <summary>How far the glow reaches past the ink, in reaches, 0..1.</summary>
         public float GlowRadius;
 
-        /// <summary>Nothing drawn around the glyph — what a plain label carries.</summary>
+        /// <summary>Nothing drawn around the glyph: what a plain label carries.</summary>
         public static TextDecoration None => default;
 
         /// <summary>True if no part is set, or every set part is invisible.</summary>
@@ -123,7 +123,7 @@ namespace OneText
         /// sets win whole, parts it does not set come through untouched.
         ///
         /// Whole parts rather than field by field, because half-merging is how
-        /// you get a glow with one style's colour and another's radius — a
+        /// you get a glow with one style's colour and another's radius, a
         /// result neither author asked for and neither can find in the markup.
         /// </summary>
         public TextDecoration Over(in TextDecoration under)
@@ -170,7 +170,7 @@ namespace OneText
         ///
         /// Two and not three. Three fits the mantissa, but an interpolator that
         /// returns the constant it was handed off by one unit in the last place
-        /// — which at that magnitude is a whole unit — makes the low field
+        /// (which at that magnitude is a whole unit) makes the low field
         /// borrow from the middle one, and a colour channel jumps by 255. At two
         /// bytes the same error is 1/256 of a unit and the shader's round()
         /// swallows it whole.
@@ -183,7 +183,7 @@ namespace OneText
 
         /// <summary>
         /// A -<paramref name="range"/>..<paramref name="range"/> parameter as a
-        /// byte, biased so that zero lands on 128 exactly — a shadow written
+        /// byte, biased so that zero lands on 128 exactly: a shadow written
         /// with no vertical offset must have none, not half a texel of one.
         /// </summary>
         public static byte QuantizeSigned(float value, float range)

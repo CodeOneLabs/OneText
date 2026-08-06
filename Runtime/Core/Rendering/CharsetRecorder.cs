@@ -27,7 +27,7 @@ namespace OneText
 
         public static IReadOnlyCollection<int> Codepoints => s_codepoints;
 
-        /// <summary>Density buckets seen, not raw font sizes — that is what the atlas keys on.</summary>
+        /// <summary>Density buckets seen, not raw font sizes: that is what the atlas keys on.</summary>
         public static IReadOnlyCollection<int> PixelsPerEm => s_sizes;
 
         /// <summary>Records the characters of a string drawn at a given em size.</summary>

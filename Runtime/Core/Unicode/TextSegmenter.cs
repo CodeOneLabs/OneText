@@ -319,7 +319,7 @@ namespace OneText.Unicode
             // SB6: a period before a digit is a decimal point, not a full stop.
             if (b == SentenceBreakClass.ATerm && a == SentenceBreakClass.Numeric) return false;
 
-            // SB7: U.S. — an initial's period followed by another capital.
+            // SB7: U.S. (an initial's period followed by another capital).
             if (b == SentenceBreakClass.ATerm && a == SentenceBreakClass.Upper &&
                 (bb == SentenceBreakClass.Upper || bb == SentenceBreakClass.Lower)) return false;
 
@@ -341,7 +341,7 @@ namespace OneText.Unicode
                  IsParagraphSeparator(a))) return false;
 
             // SB10, SB11: the sentence ends after the terminator's spaces, not
-            // between them — so a run of spaces stays with the sentence it closes.
+            // between them, so a run of spaces stays with the sentence it closes.
             if (term != SentenceBreakClass.Other)
             {
                 if (a == SentenceBreakClass.Sp || IsParagraphSeparator(a)) return false;

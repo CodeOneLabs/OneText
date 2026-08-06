@@ -1,6 +1,6 @@
 name: Tests
 
-# Runs the EditMode suite — the Unicode conformance files (UAX #9/#14/#29),
+# Runs the EditMode suite: the Unicode conformance files (UAX #9/#14/#29),
 # shaping, layout, interaction, and the performance budgets in
 # Tests/Editor/PerformanceTests.cs. Those budgets are what catches a
 # throughput regression before it ships.
@@ -22,7 +22,7 @@ jobs:
         # Windows editor because the natives are per-platform: a Linux runner
         # exercises libHarfBuzzSharp.so and would never notice if the Windows
         # DLL were missing, mis-tagged, or named something the Windows loader
-        # will not look for — which is a mistake this package has already made
+        # will not look for, which is a mistake this package has already made
         # once. The host's own binary is the only one any run actually loads,
         # which is why NativesTests checks the rest of the matrix statically.
         #
@@ -30,7 +30,7 @@ jobs:
         # documents package testing as Linux-only, so this may simply not work
         # yet, and a job nobody has ever seen go green must not be the thing
         # that blocks a pull request. It is here to be made to work, not to be
-        # trusted — see Docs/NATIVES.md.
+        # trusted. See Docs/NATIVES.md.
         include:
           - unityVersion: 2021.3.45f1
             os: ubuntu-latest
