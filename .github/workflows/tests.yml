@@ -180,8 +180,14 @@ jobs:
 
       - name: Create host project with the smoke scene sources
         run: |
-          mkdir -p CI/Assets/Smoke/Resources/SmokeFonts CI/Assets/Editor CI/Packages CI/ProjectSettings
-          cat > CI/Packages/manifest.json <<'JSON'
+          # The trailing tilde is what stops the recursion: the manifest points
+          # the package at the repository root (file:../..), so a plain CI/
+          # directory would be imported right back into the package as assets,
+          # and the first run died in an infinite import loop over CI/Temp.
+          # A hidden folder is a normal place to open a project from, but the
+          # asset database never looks inside it.
+          mkdir -p CI~/Assets/Smoke/Resources/SmokeFonts CI~/Assets/Editor CI~/Packages CI~/ProjectSettings
+          cat > CI~/Packages/manifest.json <<'JSON'
           {
             "dependencies": {
               "com.unity.burst": "1.8.4",
@@ -192,11 +198,11 @@ jobs:
             }
           }
           JSON
-          cp "Tools/Smoke~/SmokeSelfTest.cs" CI/Assets/Smoke/
-          cp "Tools/Smoke~/SmokeBuildCI.cs"  CI/Assets/Editor/
+          cp "Tools/Smoke~/SmokeSelfTest.cs" "CI~/Assets/Smoke/"
+          cp "Tools/Smoke~/SmokeBuildCI.cs"  "CI~/Assets/Editor/"
           # The two fonts the repository ships; .bytes so Unity keeps them whole.
-          cp Tests/Fonts/NotoSans.ttf       CI/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes
-          cp Tests/Fonts/NotoSansArabic.ttf CI/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes
+          cp Tests/Fonts/NotoSans.ttf       "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes"
+          cp Tests/Fonts/NotoSansArabic.ttf "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes"
 
       - name: Cache the downloaded smoke fonts
         uses: actions/cache@v4
@@ -213,11 +219,11 @@ jobs:
           fetch NotoSansThai.bytes       "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansThai/hinted/ttf/NotoSansThai-Regular.ttf"
           fetch NotoSansKorean.bytes     "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf"
           fetch NotoColorEmoji.bytes     "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
-          cp smoke-fonts/*.bytes CI/Assets/Smoke/Resources/SmokeFonts/
+          cp smoke-fonts/*.bytes "CI~/Assets/Smoke/Resources/SmokeFonts/"
 
       - uses: actions/cache@v4
         with:
-          path: CI/Library
+          path: CI~/Library
           key: Library-smoke-windows-${{ hashFiles('**/*.cs') }}
           restore-keys: Library-smoke-windows-
 
@@ -227,7 +233,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: CI
+          projectPath: CI~
           unityVersion: 6000.0.77f1
           targetPlatform: StandaloneWindows64
           buildMethod: SmokeBuildCI.Windows
@@ -237,7 +243,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-smoke-player
-          path: CI/build/windows
+          path: CI~/build/windows
           retention-days: 3
 
   windows-smoke-run:
