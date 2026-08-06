@@ -68,8 +68,12 @@ jobs:
       - name: Create host project
         shell: bash # the Windows runner defaults to PowerShell, which has no heredoc
         run: |
-          mkdir -p CI/Assets CI/Packages CI/ProjectSettings
-          cat > CI/Packages/manifest.json <<'JSON'
+          # CI~ with a trailing tilde, for the same reason the smoke job uses
+          # it: the package is this repository's root, so a plain CI/ folder
+          # becomes package content the moment it exists, and the 6000 asset
+          # pipeline import-loops on a project that contains itself.
+          mkdir -p CI~/Assets CI~/Packages CI~/ProjectSettings
+          cat > CI~/Packages/manifest.json <<'JSON'
           {
             "dependencies": {
               "com.unity.burst": "1.8.4",
@@ -84,7 +88,7 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: CI/Library
+          path: CI~/Library
           key: Library-${{ matrix.os }}-${{ matrix.unityVersion }}-${{ hashFiles('**/*.cs') }}
           restore-keys: Library-${{ matrix.os }}-${{ matrix.unityVersion }}-
 
@@ -96,7 +100,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: CI
+          projectPath: CI~
           unityVersion: ${{ matrix.unityVersion }}
           testMode: editmode
           artifactsPath: test-results
@@ -131,8 +135,12 @@ jobs:
 
       - name: Create host project
         run: |
-          mkdir -p CI/Assets CI/Packages CI/ProjectSettings
-          cat > CI/Packages/manifest.json <<'JSON'
+          # CI~ with a trailing tilde, for the same reason the smoke job uses
+          # it: the package is this repository's root, so a plain CI/ folder
+          # becomes package content the moment it exists, and the 6000 asset
+          # pipeline import-loops on a project that contains itself.
+          mkdir -p CI~/Assets CI~/Packages CI~/ProjectSettings
+          cat > CI~/Packages/manifest.json <<'JSON'
           {
             "dependencies": {
               "com.unity.burst": "1.8.4",
@@ -151,7 +159,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: CI
+          projectPath: CI~
           unityVersion: ${{ matrix.unityVersion }}
           testMode: playmode
           artifactsPath: playmode-results
