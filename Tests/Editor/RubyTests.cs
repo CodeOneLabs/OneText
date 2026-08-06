@@ -21,12 +21,22 @@ namespace OneText.Tests
     /// </summary>
     public class RubyTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
         private const string JapaneseFontPath =
             "Packages/com.onetext.core/Tests/CoverageFonts~/NotoSansCJKjp-Regular.otf";
 
-        private static FontData LoadFont(string packagePath) =>
-            FontData.Load(File.ReadAllBytes(Path.GetFullPath(packagePath)));
+        private static FontData LoadFont(string packagePath)
+        {
+            // The Japanese face is one of the coverage fonts, which are a
+            // download rather than repository content. Without it there is no
+            // ruby to measure, and a test that cannot run is not a test that
+            // failed: say so, the way EmojiSequenceTests does.
+            string full = Path.GetFullPath(packagePath);
+            if (!File.Exists(full))
+                Assert.Inconclusive($"No {Path.GetFileName(packagePath)}. " +
+                                    "Run: python3 Tools/fetch_coverage_fonts.py");
+            return FontData.Load(File.ReadAllBytes(full));
+        }
 
         private static RichTextResult Parse(string source)
         {

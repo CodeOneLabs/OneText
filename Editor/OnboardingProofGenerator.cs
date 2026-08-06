@@ -16,8 +16,8 @@ namespace OneText.Editor
     /// </summary>
     public static class OnboardingProofGenerator
     {
-        private const string SourceFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string SourceFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
         private const string WorkFolder = "Assets/OneTextOnboarding";
 
         public static void Generate()

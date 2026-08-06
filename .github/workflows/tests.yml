@@ -15,10 +15,15 @@ name: Tests
 # than failing, so a green CI run is a weaker claim than a green local run;
 # the golden tier is a pre-push tool, not a gate.
 
+# Manual only. A full run spends a Unity activation per job and the better part
+# of a quarter hour, and a run triggered by a push during a working session is
+# usually superseded by the next push before it finishes; the run history was
+# mostly cancelled runs. So it goes when someone asks for it:
+#
+#   gh workflow run Tests --ref <branch>
+#
+# Ask before opening a pull request and before a release. Nothing else asks.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -215,8 +220,8 @@ jobs:
           cp "Tools/Smoke~/SmokeSelfTest.cs" "CI~/Assets/Smoke/"
           cp "Tools/Smoke~/SmokeBuildCI.cs"  "CI~/Assets/Editor/"
           # The two fonts the repository ships; .bytes so Unity keeps them whole.
-          cp Tests/Fonts/NotoSans.ttf       "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes"
-          cp Tests/Fonts/NotoSansArabic.ttf "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes"
+          cp Tests/Fonts~/NotoSans.ttf       "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes"
+          cp Tests/Fonts~/NotoSansArabic.ttf "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes"
 
       - name: Cache the downloaded smoke fonts
         uses: actions/cache@v4

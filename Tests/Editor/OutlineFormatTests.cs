@@ -16,8 +16,8 @@ namespace OneText.Tests
     /// </summary>
     public class OutlineFormatTests
     {
-        private const string CffFontPath = "Packages/com.onetext.core/Tests/Fonts/CffShapes.otf";
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string CffFontPath = "Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private static FontData LoadFont(string packagePath) =>
             FontData.Load(File.ReadAllBytes(Path.GetFullPath(packagePath)));

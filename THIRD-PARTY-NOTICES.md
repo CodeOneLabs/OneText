@@ -35,12 +35,12 @@ https://freetype.org
 
 Break property tables in `Runtime/Core/Unicode/*.g.cs` are generated from the
 UCD (version 17.0.0) by the scripts in `Tools/`, and the conformance test files
-in `Tests/UnicodeData/` are shipped verbatim. Both are © Unicode, Inc., under
+in `Tests/UnicodeData~/` are shipped verbatim. Both are © Unicode, Inc., under
 the Unicode License v3. https://www.unicode.org/license.txt
 
 ## Noto fonts (test data)
 
-`Tests/Fonts/` contains Noto Sans, Noto Sans Arabic and the Noto Sans variable
+`Tests/Fonts~/` contains Noto Sans, Noto Sans Arabic and the Noto Sans variable
 font, used only by the test suite. They are licensed under the SIL Open Font
-License 1.1; the license text is in `Tests/Fonts/OFL.txt`.
+License 1.1; the license text is in `Tests/Fonts~/OFL.txt`.
 https://github.com/notofonts

@@ -82,7 +82,7 @@ jobs:
           cc "$B/smoke.c" -o "$RUNNER_TEMP/smoke" -ldl
 
           echo "== the vendored binary, which is what crashes the editor"
-          "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/vendored.so" Tests/Fonts/NotoSans.ttf \
+          "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/vendored.so" Tests/Fonts~/NotoSans.ttf \
                                "$RUNNER_TEMP/libfakehb.so" && vendored=0 || vendored=$?
           echo "   exit $vendored"
           [ "$vendored" = 0 ] && { echo "::error::the harness no longer detects the bug"; exit 1; }
@@ -90,7 +90,7 @@ jobs:
           echo
           echo "== the one built here"
           "$RUNNER_TEMP/smoke" Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so \
-                               Tests/Fonts/NotoSans.ttf "$RUNNER_TEMP/libfakehb.so"
+                               Tests/Fonts~/NotoSans.ttf "$RUNNER_TEMP/libfakehb.so"
           echo
           ldd Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so
           readelf -d Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so | grep -E 'SYMBOLIC|FLAGS|NEEDED|SONAME'

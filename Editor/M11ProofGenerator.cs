@@ -22,8 +22,8 @@ namespace OneText.Editor
     /// </summary>
     public static class M11ProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         // Not vendored and not required, as in M10: a system CJK face, for the
         // rows whose point is a script the test fonts do not cover.

@@ -17,8 +17,8 @@ namespace OneText.Editor
     /// </summary>
     public static class M5ProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         public static void Generate()
         {

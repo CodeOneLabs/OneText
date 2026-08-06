@@ -20,7 +20,7 @@ namespace OneText.Editor
     /// </summary>
     public static class M12ProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
         private const string KoreanFont = "/System/Library/Fonts/AppleSDGothicNeo.ttc";
         private const string JapaneseFont = "/System/Library/Fonts/Hiragino Sans GB.ttc";
 

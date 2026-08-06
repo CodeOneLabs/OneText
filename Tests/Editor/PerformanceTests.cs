@@ -19,8 +19,8 @@ namespace OneText.Tests
     /// </summary>
     public class PerformanceTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         private static FontData LoadFont(string packagePath) =>
             FontData.Load(File.ReadAllBytes(Path.GetFullPath(packagePath)));

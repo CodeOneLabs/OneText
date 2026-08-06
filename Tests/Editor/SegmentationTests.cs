@@ -13,7 +13,7 @@ namespace OneText.Tests
     /// </summary>
     public class SegmentationTests
     {
-        private const string DataDir = "Packages/com.onetext.core/Tests/UnicodeData/";
+        private const string DataDir = "Packages/com.onetext.core/Tests/UnicodeData~/";
 
         /// <summary>
         /// Parses a test line such as "÷ 0020 × 0308 ÷ 0041 ÷" into the sample

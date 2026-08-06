@@ -24,7 +24,7 @@ namespace OneText.Tests
     /// </summary>
     public class RasterizerCostTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         // CJK is where tiles are largest and the job has the most to do, so it is
         // the case that decides whether deferral is worth its hazards. Not

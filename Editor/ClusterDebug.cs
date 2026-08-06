@@ -12,7 +12,7 @@ namespace OneText.Editor
     /// </summary>
     public static class ClusterDebug
     {
-        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         public static void Run()
         {

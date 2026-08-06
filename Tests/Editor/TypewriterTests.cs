@@ -27,7 +27,7 @@ namespace OneText.Tests
     /// </summary>
     public class TypewriterTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         /// <summary>한글 as jamo: six code points, two syllable blocks.</summary>
         private const string JamoHangeul = "\u1112\u1161\u11AB\u1100\u1173\u11AF";
