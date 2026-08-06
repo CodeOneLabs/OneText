@@ -4,6 +4,16 @@ name: Tests
 # shaping, layout, interaction, and the performance budgets in
 # Tests/Editor/PerformanceTests.cs. Those budgets are what catches a
 # throughput regression before it ships.
+#
+# Two things in the suite deliberately do not assert here. The golden-image
+# tests (Tests/Editor/GoldenImageTests.cs) compare renders against committed
+# PNGs and skip unless the runner's graphics API, adapter and colour space
+# match the stamp in Tests/Golden~/renderer.txt, because Metal and a Linux
+# software GL disagree about antialiased edges and that disagreement is not a
+# fact about this package. And the coverage-font tests skip when
+# Tests/CoverageFonts~ has not been fetched. Both report as skipped rather
+# than failing, so a green CI run is a weaker claim than a green local run;
+# the golden tier is a pre-push tool, not a gate.
 
 on:
   push:
@@ -91,3 +101,4 @@ jobs:
         with:
           name: test-results-${{ matrix.unityVersion }}-${{ matrix.os }}
           path: test-results
+
