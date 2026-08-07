@@ -104,6 +104,12 @@ namespace OneText.UGUI
         private FontStack _fonts;
         private readonly List<FontData> _ownedFonts = new List<FontData>();
         private TextLayoutEngine _engine;
+        // NonSerialized because a domain reload resets the atlas's static
+        // refcount to zero while serialization would resurrect this as true:
+        // the label would skip re-acquiring, and its OnDestroy would then
+        // release a reference the new domain never counted, destroying the
+        // shared material under every other live label.
+        [System.NonSerialized]
         private bool _atlasHeld; // this label's reference to the shared atlas
         private readonly List<FontVariation> _variations = new List<FontVariation>();
         private readonly List<FontVariation> _styleVariations = new List<FontVariation>();
@@ -342,6 +348,7 @@ namespace OneText.UGUI
                 _parseEscapes = value;
                 InvalidateText();
             }
+        }
 
         /// <summary>
         /// Render this label through a multi-channel distance field (MSDF)
@@ -469,6 +476,14 @@ namespace OneText.UGUI
             // And a style is a reference, so editing the asset has to reach the
             // labels pointing at it.
             StyleInvalidation.Register(this);
+            // The atlas reference is what keeps the shared material alive, and
+            // it has to be taken here, not at the first mesh rebuild: between
+            // enable and that rebuild, destroying the last label that held a
+            // reference would destroy the material, and this label would then
+            // re-assign it from inside the graphic rebuild loop — which uGUI
+            // rejects with a "Trying to add ... for graphic rebuild while we
+            // are already inside a graphic rebuild loop" error, every rebuild.
+            HoldAtlas();
             EnsureMaterial();
             // A label that comes on screen with a typewriter configured types
             // itself. Without this a prefab whose text was authored in the
@@ -850,13 +865,24 @@ namespace OneText.UGUI
             if (_fonts?.Primary == null || !_fonts.Primary.IsValid) return false;
 
             _engine ??= new TextLayoutEngine();
-            if (!_atlasHeld)
-            {
-                SharedGlyphAtlas.Acquire();
-                _atlasHeld = true;
-            }
+            // Normally already held from OnEnable; this covers layout queries
+            // against a label that has never been enabled.
+            HoldAtlas();
 
             return EnsureMaterial();
+        }
+
+        /// <summary>
+        /// Takes this label's reference to the shared atlas, once. Paired with
+        /// the release in <see cref="OnDestroy"/>, and deliberately not
+        /// released on disable so that toggling the only label in a scene does
+        /// not churn the atlas.
+        /// </summary>
+        private void HoldAtlas()
+        {
+            if (_atlasHeld) return;
+            SharedGlyphAtlas.Acquire();
+            _atlasHeld = true;
         }
 
         /// <summary>
@@ -865,9 +891,11 @@ namespace OneText.UGUI
         ///
         /// Assigning a material marks the graphic dirty, and uGUI logs an error
         /// for anything that asks to be rebuilt while it is already rebuilding,
-        /// so this runs when the label enables or changes canvas, and the
-        /// call from inside mesh generation only covers the case where the
-        /// material is still missing (it cannot dirty what has not drawn yet).
+        /// so this runs when the label enables or changes canvas — with the
+        /// atlas reference already held from <see cref="OnEnable"/>, the shared
+        /// material cannot be destroyed and recreated under an enabled label,
+        /// so by the time mesh generation calls this the assignment has always
+        /// already happened and is skipped.
         /// </summary>
         private bool EnsureMaterial()
         {
