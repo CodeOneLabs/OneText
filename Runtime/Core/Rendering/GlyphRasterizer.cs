@@ -68,6 +68,57 @@ namespace OneText
         /// </summary>
         public static bool Cull = true;
 
+        /// <summary>
+        /// The floor, in texels, that a multi-channel texel's median has to
+        /// stay clear of the outline by when the true distance says it is
+        /// solidly inside the ink. Zero turns error correction off and restores
+        /// the raw median.
+        ///
+        /// What it fixes and why the test can be this cheap is written on the
+        /// job's <c>Correct</c>. One texel is chosen to sit just outside the
+        /// widest antialiasing band the shader asks for, which is what decides
+        /// whether a sagging median dims solid ink; a corner's own
+        /// reconstruction moves the isoline by a fraction of a texel and is
+        /// nowhere near it. Raising it corrects more aggressively, and past
+        /// about two texels it starts flattening the fields of thin strokes
+        /// into the single-channel one.
+        ///
+        /// Only the multi-channel path reads this, and changing it bumps
+        /// <see cref="Generation"/>: tiles baked with the correction and tiles
+        /// baked without it are different pictures, so the atlas must not serve
+        /// one for the other.
+        /// </summary>
+        public static float MsdfErrorCorrectionTexels
+        {
+            get => s_msdfErrorCorrectionTexels;
+            set
+            {
+                if (value == s_msdfErrorCorrectionTexels) return;
+                s_msdfErrorCorrectionTexels = value;
+                Generation++;
+            }
+        }
+
+        private static float s_msdfErrorCorrectionTexels = 0.5f;
+
+        /// <summary>
+        /// Counts changes to the settings that decide a tile's texels, the way
+        /// <see cref="OutlineExtractor.Generation"/> counts the ones that decide
+        /// an outline's shape. The atlas keys entries by both.
+        ///
+        /// Everything a bake reads out of a mutable static belongs here, not
+        /// just this file's own settings: a tile baked under one value and a
+        /// tile baked under another are different pictures, and an atlas that
+        /// kept serving the old ones makes the setting look inert.
+        /// </summary>
+        public static int Generation { get; private set; }
+
+        /// <summary>
+        /// Records that a bake-time setting outside this file has changed; see
+        /// <see cref="Generation"/> for why that has to invalidate the atlas.
+        /// </summary>
+        internal static void BumpGeneration() => Generation++;
+
         private static readonly GlyphOutline s_outline = new GlyphOutline();
 
         public static RasterizedGlyph Rasterize(FontData font, uint glyphId, float pixelsPerUnit,

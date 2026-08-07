@@ -29,6 +29,50 @@ namespace OneText
     /// still lays out correctly; tags whose visual this component cannot draw
     /// simply draw nothing extra.
     /// </summary>
+    /// <summary>
+    /// How many atlas texels a world mesh asks for per em, as a multiple of
+    /// what its point size implies. The value is the multiplier.
+    ///
+    /// A UI label needs nothing like this: its font size is in screen pixels,
+    /// so the density it asks for is the density it gets. World text has no
+    /// such number — a sign at thirty points is thirty points whether the
+    /// camera is two metres away or twenty, and the component cannot see which.
+    /// Left to the point size alone, a nameplate the player walks up to is a
+    /// tile magnified ten times, which is a rounded, melted 'A' through the
+    /// single-channel field and, before the corrections in this milestone, a
+    /// torn one through the multi-channel field.
+    ///
+    /// <see cref="Medium"/> is the default because world text is usually
+    /// approached: doubling the density costs four times the atlas area for
+    /// those tiles and is the difference between text that survives being
+    /// walked up to and text that does not. Drop to <see cref="Performance"/>
+    /// for signage that stays at a distance, where the extra texels buy
+    /// nothing the camera can see.
+    /// </summary>
+    public enum TextQuality
+    {
+        /// <summary>The point size as-is: what a UI label of the same size gets.</summary>
+        Performance = 1,
+
+        /// <summary>Twice the density, for text the camera can approach.</summary>
+        Medium = 2,
+
+        /// <summary>
+        /// Four times, for text meant to be read close up, and the last rung
+        /// there is.
+        ///
+        /// Nothing above it would reliably do anything: the atlas density
+        /// ladder stops at 256 pixels per em, so past about 64 points this
+        /// already asks for more than exists and a larger multiplier would
+        /// change the setting without changing the picture. If four times is
+        /// not enough, the variable is the magnification rather than the
+        /// multiplier — no fixed number can follow a camera — and the answer is
+        /// a denser ladder or a density chosen from the screen, not another
+        /// member here.
+        /// </summary>
+        High = 4,
+    }
+
     [ExecuteAlways]
     [RequireComponent(typeof(RectTransform))]
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
@@ -73,6 +117,13 @@ namespace OneText
                  "atlas memory. World text is often magnified, so this earns its cost here " +
                  "more readily than on a UI label.")]
         [SerializeField] private bool _precise;
+
+        [Tooltip("Atlas texels per em, as a multiple of what the point size asks for. " +
+                 "World text has no screen size until a camera picks one, so this is how " +
+                 "you say the player will get close to it. Medium (2x) by default; " +
+                 "Performance (1x) matches a UI label of the same size, High (4x) is for " +
+                 "text read close up. Costs the square of itself in atlas area.")]
+        [SerializeField] private TextQuality _quality = TextQuality.Medium;
 
         [Tooltip("BCP 47 language tag: ja, ko, zh-Hans. Empty means the project default.")]
         [SerializeField] private string _language = "";
@@ -145,6 +196,13 @@ namespace OneText
         {
             get => _fontSize;
             set { _fontSize = value; _dirty = true; }
+        }
+
+        /// <inheritdoc cref="TextQuality"/>
+        public TextQuality Quality
+        {
+            get => _quality;
+            set { _quality = value; _dirty = true; }
         }
 
         /// <summary>See <c>OneTextLabel.AutoSize</c>: same behaviour, same fit.</summary>
@@ -759,18 +817,39 @@ namespace OneText
                 // scaled spans both went in converted.
                 float runSize = run.FontSize > 0f ? run.FontSize : UnitFontSize;
                 float scale = runSize / font.UnitsPerEm;
+
+                // Back to points for anything that picks an atlas density.
+                // `runSize` is in local units — a tenth of the point size — and
+                // every density argument below is a pixels-per-em, so handing
+                // them the unit size asks a 55-point mesh for five and a half
+                // pixels per em and gets the smallest bucket there is. Every
+                // world mesh baked at 24 ppem regardless of its size, which at
+                // magnification is the melted look the single-channel field
+                // gives and the torn one the multi-channel field gives.
+                //
+                // Points, not screen pixels, because points are what the
+                // convention this component ports from means: a TMP world text
+                // at size 36 and a UI label at size 36 ask for the same density
+                // here, which is the promise the class comment makes.
+                //
+                // Times the quality multiplier, because that promise is also
+                // the whole of what the point size can say: a label's size is
+                // in screen pixels and a mesh's is not, so the multiplier is
+                // where a world text gets to say it will be approached. See
+                // <see cref="TextQuality"/>.
+                float runPixelsPerEm = runSize / PointsToUnits * (int)_quality;
                 var runColor = run.Style.HasColor ? run.Style.Color : new Color32(255, 255, 255, 255);
                 var color = Multiply(runColor, tint);
                 var frame = FrameOf(run, vertical, scale);
 
                 if (ColorGlyphs.IsColorFont(font))
                 {
-                    EmitColorRun(run, font, runSize, frame, color, atlas);
+                    EmitColorRun(run, font, runPixelsPerEm, frame, color, atlas);
                     continue;
                 }
 
                 float unitsPerTilePixel = font.UnitsPerEm /
-                    (float)GlyphAtlas.QuantizePixelsPerEm(runSize);
+                    (float)GlyphAtlas.QuantizePixelsPerEm(runPixelsPerEm);
                 float maxClusterUnits = 1000f * unitsPerTilePixel;
                 float mergeGapUnits = GlyphClusters.DefaultMergeGapUnits(font);
 
@@ -785,10 +864,10 @@ namespace OneText
                         _clusters, _positioned, maxClusterUnits, mergeGapUnits);
                 }
 
-                atlas.PrepareClusters(font, runSize, _positioned, _clusters);
+                atlas.PrepareClusters(font, runPixelsPerEm, _positioned, _clusters);
                 foreach (var cluster in _clusters)
                 {
-                    var loc = atlas.GetOrAddCluster(font, runSize,
+                    var loc = atlas.GetOrAddCluster(font, runPixelsPerEm,
                         _positioned, cluster.Start, cluster.Count, cluster.Hash);
                     if (!loc.HasPixels) continue;
 
@@ -800,11 +879,16 @@ namespace OneText
             }
         }
 
-        private void EmitColorRun(in TextRun run, FontData font, float runSize,
+        /// <param name="pixelsPerEm">
+        /// The run's density in points, already converted out of local units by
+        /// the caller; everything this method does with it is choose a tile
+        /// resolution, and the geometry comes from the frame.
+        /// </param>
+        private void EmitColorRun(in TextRun run, FontData font, float pixelsPerEm,
             in RunFrame frame, Color32 color, GlyphAtlas sdfAtlas)
         {
             var colorAtlas = SharedGlyphAtlas.ColorAtlas;
-            int ppem = GlyphAtlas.QuantizePixelsPerEm(runSize);
+            int ppem = GlyphAtlas.QuantizePixelsPerEm(pixelsPerEm);
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
 
             float pen = 0f;
@@ -838,7 +922,7 @@ namespace OneText
                     continue;
                 }
 
-                var sdf = sdfAtlas.GetOrAdd(font, glyph.GlyphId, runSize);
+                var sdf = sdfAtlas.GetOrAdd(font, glyph.GlyphId, pixelsPerEm);
                 if (!sdf.HasPixels) continue;
                 frame.Place(along, glyph.YOffset, sdf.OriginUnits, sdf.SizeUnits,
                     out var sdfPosition, out var sdfSize, out float sdfRotation);

@@ -4,6 +4,23 @@
 
 ### Added
 
+- **`OneTextMesh.Quality`: how dense a tile world text asks for.** Performance,
+  Medium and High, whose values are the multiplier itself — 1, 2 and 4 times
+  the density the point size implies — defaulting to Medium.
+
+  A UI label needs nothing like this: its font size is in screen pixels, so
+  the density it asks for is the density it gets. World text has no such
+  number. A sign at thirty points is thirty points whether the camera is two
+  metres away or twenty, and the component cannot see which; left to the point
+  size alone, a nameplate the player walks up to is a tile magnified ten
+  times. Measured on the reported scene — an auto-sized mesh that fitted to
+  thirty points, so a 28 ppem tile filling the view — the crossbar of an 'A'
+  was under two texels thick, and no amount of correctness in the field can
+  put a junction into two texels. Medium clears it.
+
+  Medium rather than Performance by default because world text is usually
+  approached, and the cost is atlas area for those tiles only.
+
 - **Lowercase TMP names on `OneTextLabel`, so a migrating project still
   compiles.** `text`, `fontSize`, `richText`, `enableAutoSizing`,
   `fontSizeMin`, `fontSizeMax`, `maxVisibleCharacters` and `SetText(string)`
@@ -55,6 +72,124 @@
   `TMP_FontAsset` or a `using TMP = TMPro;` alias is reported with the
   identifier and the line before the button is pressed, rather than through a
   wall of compile errors after.
+
+### Fixed
+
+- **The whisker under a sharp vertex: the antialiasing width came off the
+  median.** A distance field has unit gradient, so one screen pixel is a fixed
+  step in field value and `fwidth` recovers it. The median does not: outside a
+  corner it is the larger of two half-planes, so along the bisector of a
+  twenty-degree vertex it falls at about a sixth of that rate, and it has a
+  kink exactly on the bisector where the two swap. `fwidth` is a two-by-two
+  quad difference, so on the kink it reports several times the real gradient;
+  the band widens by that much, and because the field is also falling slowly
+  there, the widened band reaches far down the bisector. That is the thin
+  tapering spike below the point of an 'A' or a 'W' — not ink the field ever
+  claimed (every texel of it measures within half a texel of the outline) but
+  antialiasing spread along a direction the median is flat in.
+
+  The width now comes off alpha, the ordinary single-channel field, which is
+  smooth where the median kinks, shares the encoding, and arrived in the same
+  fetch. The single-channel path is unchanged: there the two are one number.
+
+- **A cluster's seam between two glyphs interpolated channels that meant
+  different things.** Glyphs are coloured independently, so red is one edge
+  inside one of them and an unrelated edge inside the other. The union picks a
+  winner per texel, so across the texel where the winner changes the two
+  triples are not comparable, and what bilinear puts between them belongs to
+  neither — a spike hanging in the gap between the feet of two adjacent
+  letters. The rasterizer now records which glyph won each texel and the
+  interpolation pass flattens the seam, which costs nothing: a gap between two
+  glyphs has no corner to keep sharp. World text meets this on every run,
+  since it clusters everything.
+
+- **World text baked every tile at the smallest density there is.**
+  `OneTextMesh` passes a run's size to the atlas to choose a density, and that
+  size is in local units — a tenth of the point size, by the TextMesh Pro
+  convention the component ports from — while every one of those calls wants a
+  pixels-per-em. A 55-point mesh therefore asked for five and a half pixels an
+  em and got the smallest bucket on the ladder, 24 ppem, and so did every
+  other world text in every project regardless of its size. Converted back to
+  points at the one place the density is derived.
+
+- **A cluster of glyphs took the wrong multi-channel field between them.**
+  Rasterizing several glyphs into one tile resolves each as its own group and
+  unions them, and the union was a per-channel minimum. That is wrong twice:
+  the median of three minima is not the minimum of three medians, and a
+  pseudo-distance means something only near the corner it was extended from —
+  carried into another glyph's territory it is a half-plane that stopped
+  bounding anything, and a minimum lets it win there. The nearest group now
+  wins with all three of its channels at once, chosen by the same true
+  distance the union of the shapes is defined by, so an edge buried inside
+  another glyph's ink still cannot carve into it. Measured on four 'A's baked
+  as one cluster at 48 ppem, ink up to 2.5 texels clear of the outline went
+  back to the 1.5 a single glyph produces; on screen, the bitten stroke edges
+  a magnified world mesh showed. World text hits this on every run, since it
+  clusters everything; labels only where glyphs join.
+
+- **MSDF error correction: the median can no longer contradict the field it
+  is a reconstruction of.** The classic multi-channel artifact — two parts of
+  a glyph whose channels cross, so the median is decided by an edge that has
+  nothing to do with this texel — was deferred in M14 as "not yet a problem
+  at the sizes `precise` is for". It is a problem: the CFF specimen's long
+  shallow S-curve grows a detached block of ink four texels clear of the
+  outline, in the padding ring the shader is entitled to read as empty.
+
+  Every texel now checks the median against the true distance alpha already
+  carries, under two rules. Where the two disagree about which *side* of the
+  outline the texel is on, the true distance wins: that is the detached
+  block. And where the truth places a texel solidly inside the ink but the
+  median has drifted back to within a texel of the outline, the true distance
+  wins again: that is the sag a crossbar junction leaves, which never crosses
+  over and so shows up as a grey mark rather than a hole. Both are per-texel
+  tests and not the neighbourhood search msdfgen runs, because msdfgen has to
+  approximate the true distance from the same three channels it is checking
+  and here it is already exact and free.
+
+  The second rule does overrule a legitimate reconstruction — inside a reflex
+  corner the median is the union of two half-planes and the truth is the cone
+  to the corner point, and they differ by design. It is allowed to because
+  nothing reads the median deeper than the 0.5 isoline: the face thresholds
+  there, the outline threshold only moves outward, the glow is a falloff on
+  (0.5 - d), and the shadow reads alpha. An inward threshold — a faux-bold
+  dilate, an inner outline — would end that, and the rule would have to learn
+  the difference; the reasoning is written out beside the code.
+
+  `GlyphRasterizer.MsdfErrorCorrectionTexels` sets the allowance and zero
+  turns it off; changing it bumps the new `GlyphRasterizer.Generation`, which
+  the atlas keys tiles by, and `MsdfEdgeColoring.CornerAngleDegrees` now bumps
+  it too — it decides the bytes of every multi-channel tile and was
+  invalidating nothing.
+
+- **MSDF error correction, the half that lives between texels.** The rules
+  above are per-texel, and the artifact a magnified tile actually shows is
+  not. Across an 'A' crossbar junction at 64 ppem, green falls and blue rises
+  and the two swap rank partway between one texel and the next; the median
+  follows the swap down to the outline while the true distance says a texel of
+  solid ink — and both endpoint texels are inside tolerance the whole time.
+  The median of three linear functions is piecewise linear with a kink at
+  every crossing, and the kink is free to point the wrong way.
+
+  So a second pass tests the crossings themselves: for every neighbouring
+  pair, each channel pair is solved for where it swaps, and the median there
+  is compared against the true distance interpolated to the same place. A
+  texel whose crossing dives is flattened to its own median — not replaced by
+  the true distance, which was tried and measured worse, because replacing it
+  puts a step between the corrected texel and its neighbours and the
+  interpolation across the step is a new artifact in place of the old one.
+  Flattening moves the value nowhere; it removes only the disagreement that
+  let the rank swap happen.
+
+  Measured on the reported case — a 64 ppem 'A' drawn at 3x, which is an
+  ordinary thing to ask of a distance field and which the single-channel path
+  does cleanly — the darkest pixel inside solid ink goes from 0.937 to 0.988,
+  and the count of dimmed pixels from 5 to 1. At 1x and at 6x it is 1.000.
+
+  Known limit, measured rather than assumed: neither rule reaches anything
+  within its own allowance of the outline, so a sub-texel residue survives at
+  the sharpest junctions.
+
+### Added
 
 - **Auto-size: the label can now pick its own font size.** `AutoSize` on a
   `OneTextLabel` chooses the largest size in `[AutoSizeMin, AutoSizeMax]` at

@@ -95,10 +95,12 @@ real user would file each one:
 1. **COLRv1.** Deferred in M8 as "a paint graph deserves a milestone rather
    than a half-implementation". Newer emoji and icon fonts lean on it more
    every year.
-2. **MSDF error correction.** The classic multi-channel artifact where two
-   unrelated parts of a glyph disagree: documented in M14 as not yet a
-   problem at the sizes `precise` is for, and the first bug report a
-   `precise` user will send when it is.
+2. ~~**MSDF error correction.**~~ Done, both halves: the per-texel rules
+   folded into the rasterize job, and the pass over neighbouring pairs that
+   catches a median which is right at every texel and dives between two of
+   them. See the changelog. What is left is a sub-texel residue at the
+   sharpest junctions, inside the allowance either rule is willing to act on;
+   it is bounded and tunable rather than open-ended.
 3. **Tate-chū-yoko (縦中横).** Two or three digits set horizontally inside a
    vertical column: a nested layout with em-fitting rules, excluded from
    M15 by scope. The visual-novel market that wants vertical text wants this

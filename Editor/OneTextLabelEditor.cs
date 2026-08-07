@@ -664,14 +664,19 @@ namespace OneText.Editor
         }
 
         /// <summary>
-        /// The preview clock, advanced from INSIDE the player loop rather than
-        /// from <see cref="EditorApplication.update"/>. Driving the clock from
-        /// outside and then forcing canvas updates and repaints piece by piece
-        /// left views showing stale batches until a play-mode session had
-        /// warmed something up; running the real loop (update, canvas pass,
-        /// render, the same frame play mode runs) is the sequence every part
-        /// of the editor already knows how to show. Each iteration queues the
-        /// next, so the loop sustains itself until the driver is destroyed.
+        /// The preview clock. The queued player loop keeps <c>Update</c>
+        /// ticking outside play mode and repaints the Game view, but it does
+        /// NOT run the canvas pass: in edit mode <c>willRenderCanvases</c>
+        /// never fires from that loop, so a label dirtied by the clock stays
+        /// dirty — the clock advances while every quad, and the inspector's
+        /// first-quad readout with it, stands still. The rebuild has to be
+        /// forced by hand each tick, the same call <see cref="StopPreview"/>
+        /// already needed to snap the mesh back to zero. (The stale frames
+        /// this driver was once rewritten to escape were never the update
+        /// mechanism at all: they were the shared material being destroyed and
+        /// re-assigned mid-rebuild, gone since labels hold the atlas from
+        /// enable.) Each iteration queues the next, so the loop sustains
+        /// itself until the driver is destroyed.
         /// </summary>
         [ExecuteAlways]
         private sealed class PreviewDriver : MonoBehaviour
@@ -687,6 +692,9 @@ namespace OneText.Editor
                 double now = EditorApplication.timeSinceStartup;
                 Label.AnimationTime += (float)(now - _last);
                 _last = now;
+                // The rebuild the dirty flag is waiting for; nothing else runs
+                // it in edit mode.
+                Canvas.ForceUpdateCanvases();
                 EditorApplication.QueuePlayerLoopUpdate();
                 // The queued loop repaints game views on its own. Scene views
                 // need asking, and ONLY scene views: repainting every editor

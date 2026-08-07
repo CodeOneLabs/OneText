@@ -174,6 +174,17 @@ Shader "OneText/SDF"
                 return Median(UNITY_SAMPLE_TEX2DARRAY(_MsdfTex, s).rgb);
             }
 
+            /// The median and the true distance from one fetch: x is what the
+            /// coverage threshold reads, y is what its WIDTH is measured on.
+            /// They have to be different fields, and that is not an optimisation
+            /// but the whole reason a corner renders correctly; see the frag.
+            float2 MsdfFieldAndWidth(float2 uv, float2 tileMin, float2 tileMax, float layer)
+            {
+                float3 s = float3(clamp(uv, tileMin, tileMax), layer);
+                float4 field = UNITY_SAMPLE_TEX2DARRAY(_MsdfTex, s);
+                return float2(Median(field.rgb), field.a);
+            }
+
             /// Alpha of a precise tile: the ordinary single-channel field, which
             /// the rasterizer gets for free (every edge is in two channels, so
             /// the nearest edge overall is the nearest in some channel).
@@ -226,10 +237,37 @@ Shader "OneText/SDF"
 
                 float2 tileMin = float2(i.bounds.y, i.uv.w);
                 float2 tileMax = float2(i.bounds.z, i.bounds.x);
-                float d = precise > 0.5
-                    ? MsdfField(i.uv.xy, tileMin, tileMax, i.uv.z)
-                    : Field(i.uv.xy, tileMin, tileMax, i.uv.z);
-                float aa = max(fwidth(d), 1e-4);
+                // x thresholds, y sets the width of the band it is thresholded
+                // over. For the single-channel field they are the same number.
+                float2 field = precise > 0.5
+                    ? MsdfFieldAndWidth(i.uv.xy, tileMin, tileMax, i.uv.z)
+                    : Field(i.uv.xy, tileMin, tileMax, i.uv.z).xx;
+                float d = field.x;
+
+                // The antialiasing width comes off the TRUE distance, never off
+                // the median, and this is the difference between a sharp corner
+                // and a whisker hanging off it.
+                //
+                // A distance field has unit gradient, so one screen pixel is a
+                // fixed step in field value and fwidth recovers it. The median
+                // does not: it is the larger of two half-planes outside a
+                // corner, so along the bisector of a twenty-degree vertex it
+                // falls at about sin(10 deg) — a sixth of the rate — and it has
+                // a kink exactly on the bisector where the two swap. fwidth is
+                // a two-by-two quad difference, so on the kink it reports
+                // several times the real gradient, the band widens by that
+                // much, and because the field is also falling slowly there the
+                // widened band reaches far down the bisector. That is the thin
+                // tapering spike below the point of an 'A' or a 'W': not ink
+                // the field ever claimed — every texel of it is within half a
+                // texel of the outline — but antialiasing spread along a
+                // direction the median is flat in.
+                //
+                // Alpha is the ordinary single-channel field over the same
+                // encoding, so its fwidth is the right screen-space width for
+                // the median's isoline as well, and it is smooth where the
+                // median kinks. It costs nothing: it arrived in the same fetch.
+                float aa = max(fwidth(field.y), 1e-4);
                 float faceA = i.color.a * smoothstep(0.5 - aa, 0.5 + aa, d);
 
                 // Every byte a decoration could be visible through is the low

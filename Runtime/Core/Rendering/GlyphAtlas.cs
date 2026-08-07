@@ -255,6 +255,7 @@ namespace OneText
             private readonly int _ppem;
             private readonly int _generation; // variable-font instance
             private readonly int _outline;    // flattening tolerance in force when baked
+            private readonly int _raster;     // rasterizer settings in force when baked
 
             /// <summary>
             /// Single- or multi-channel field. Redundant while the two live in
@@ -273,15 +274,16 @@ namespace OneText
                 _ppem = ppem;
                 _generation = font.Generation;
                 _outline = OutlineExtractor.Generation;
+                _raster = GlyphRasterizer.Generation;
                 _precise = precise;
             }
 
             public bool Equals(Key o) => _font == o._font && _id == o._id &&
                 _ppem == o._ppem && _generation == o._generation && _outline == o._outline &&
-                _precise == o._precise;
+                _raster == o._raster && _precise == o._precise;
 
             public override int GetHashCode() =>
-                HashCode.Combine(_font, _id, _ppem, _generation, _outline, _precise);
+                HashCode.Combine(_font, _id, _ppem, _generation, _outline, _raster, _precise);
         }
 
         private sealed class Entry

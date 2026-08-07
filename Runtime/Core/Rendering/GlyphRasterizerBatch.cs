@@ -121,6 +121,7 @@ namespace OneText
             {
                 Grow(ref s_flags, totalPoints);
                 Grow(ref s_orientation, totalContours);
+                Grow(ref s_winners, totalTexels);
                 if (s_flagBytes.Length < totalPoints)
                     s_flagBytes = new byte[Mathf.NextPowerOfTwo(totalPoints)];
             }
@@ -201,8 +202,42 @@ namespace OneText
                     TileCount = s_descs.Count,
                     SpreadPixels = SpreadPixels,
                     Cull = Cull,
+                    ErrorCorrectionTexels = MsdfErrorCorrectionTexels,
                     Output = s_output,
+                    WinningGroup = s_winners,
                 }.Schedule(totalTexels, 128).Complete();
+
+                // The half that needs neighbours, and so cannot ride inside the
+                // job above: a median that is right at every texel it is stored
+                // in and dives between two of them. Two passes, because a
+                // texel's verdict is read off neighbours that must still hold
+                // their original values while it is being decided.
+                if (MsdfErrorCorrectionTexels > 0f)
+                {
+                    Grow(ref s_marks, totalTexels);
+                    // One sweep, not iterated. A second was tried and moved
+                    // nothing measurable: flattening a texel to its own median
+                    // does not shift its value, so it cannot open a crossing
+                    // that was not already there, and there is no second round
+                    // of damage to chase.
+                    new MsdfMarkJob
+                    {
+                        Field = s_output,
+                        WinningGroup = s_winners,
+                        Tiles = s_tiles,
+                        TileEnds = s_tileEnds,
+                        TileCount = s_descs.Count,
+                        SpreadPixels = SpreadPixels,
+                        FloorTexels = MsdfErrorCorrectionTexels,
+                        Marks = s_marks,
+                    }.Schedule(totalTexels, 128).Complete();
+
+                    new MsdfFlattenJob
+                    {
+                        Marks = s_marks,
+                        Field = s_output,
+                    }.Schedule(totalTexels, 128).Complete();
+                }
             }
             else
             {
@@ -266,6 +301,15 @@ namespace OneText
         private static NativeArray<byte> s_flags;
         private static NativeArray<float> s_orientation;
 
+        // One byte a texel, the interpolation pass's verdict between its two
+        // halves. Persistent like every other buffer here: a text system that
+        // allocates per frame hands the player a collection pause eventually.
+        private static NativeArray<byte> s_marks;
+
+        // The source glyph that won each texel, so the interpolation pass can
+        // find the seams between them.
+        private static NativeArray<byte> s_winners;
+
         private static void WriteOrientation(int first, int last, float area)
         {
             float orientation = area >= 0f ? 1f : -1f;
@@ -301,6 +345,8 @@ namespace OneText
             Release(ref s_output);
             Release(ref s_flags);
             Release(ref s_orientation);
+            Release(ref s_marks);
+            Release(ref s_winners);
             s_pixels = System.Array.Empty<byte>();
             s_flagBytes = System.Array.Empty<byte>();
         }

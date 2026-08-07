@@ -26,6 +26,9 @@ namespace OneText.Tests
     {
         private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
 
+        private const string VariableFontPath =
+            "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+
         private readonly List<Object> _created = new List<Object>();
 
         [TearDown]
@@ -245,6 +248,376 @@ namespace OneText.Tests
             Assert.Less(preciseWrong, plainWrong,
                 $"median reconstruction was no sharper than one channel " +
                 $"({preciseWrong} wrong against {plainWrong})");
+        }
+
+        // --------------------------------------------------- error correction
+
+        /// <summary>
+        /// Texels where the median says one side of the outline and the true
+        /// distance in alpha says the other, counted past a guard band so the
+        /// sub-texel disagreement either side of the boundary is not mistaken
+        /// for the artifact. This is the clash, measured: nothing else can put
+        /// the two fields on opposite sides of a texel centre.
+        /// </summary>
+        private static int WrongSideTexels(in RasterizedGlyph tile, byte[] pixels, float guardTexels)
+        {
+            // A byte is 2 * SpreadPixels / 255 texels of distance; the encoding
+            // is 0.5 - d / (2 * spread), so 127.5 is the outline.
+            float guardBytes = guardTexels * 255f / (2f * GlyphRasterizer.SpreadPixels);
+            int wrong = 0;
+            for (int y = 0; y < tile.Height; y++)
+            for (int x = 0; x < tile.Width; x++)
+            {
+                float median = Median(
+                    Texel(tile, pixels, x, y, 0),
+                    Texel(tile, pixels, x, y, 1),
+                    Texel(tile, pixels, x, y, 2));
+                float truth = Texel(tile, pixels, x, y, 3);
+                if (Mathf.Abs(truth - 127.5f) <= guardBytes) continue;
+                if (median > 127.5f != truth > 127.5f) wrong++;
+            }
+            return wrong;
+        }
+
+        private static RasterizedGlyph BakeGlyph(FontData font, string text, float ppem,
+            float correctionTexels, out byte[] pixels)
+        {
+            float was = GlyphRasterizer.MsdfErrorCorrectionTexels;
+            GlyphRasterizer.MsdfErrorCorrectionTexels = correctionTexels;
+            try
+            {
+                var tile = GlyphRasterizer.Rasterize(font, FirstGlyph(font, text),
+                    ppem / font.UnitsPerEm, precise: true);
+                pixels = tile.CopyPixels();
+                return tile;
+            }
+            finally
+            {
+                GlyphRasterizer.MsdfErrorCorrectionTexels = was;
+            }
+        }
+
+        /// <summary>
+        /// The shape that actually clashes, found by sweeping every glyph of
+        /// every test face at three sizes: the CFF specimen's long shallow
+        /// S-curve, whose two ends run nearly parallel a few texels apart. It is
+        /// also the only one — the whole of NotoSans and NotoSansVariable came
+        /// back clean, which is what M14 meant by "not yet a problem at the
+        /// sizes precise is for" and why this went unnoticed until now.
+        /// </summary>
+        private const string CffFontPath = "Packages/com.onetext.core/Tests/Fonts/CffShapes.otf";
+
+        [Test]
+        public void WithoutErrorCorrection_TheShallowCurveGrowsInkThatIsNotThere()
+        {
+            // The bug, before the fix, and the half of the pair that would stop
+            // meaning anything if the correction were moved somewhere it always
+            // ran. The median claims ink four texels clear of the outline: a
+            // detached white block hanging off the tail of the S, in the padding
+            // ring the shader is entitled to read as empty.
+            using var font = LoadFont(CffFontPath);
+            var tile = BakeGlyph(font, "S", 48f, 0f, out var pixels);
+
+            Assert.Greater(WrongSideTexels(tile, pixels, 0.5f), 0,
+                "the clash is gone from the specimen that had one: either the " +
+                "colouring changed or the measurement is not measuring the median");
+        }
+
+        [Test]
+        public void ErrorCorrection_LeavesNoTexelOnTheWrongSideOfTheOutline()
+        {
+            // And after. Zero, not fewer: the correction makes the same sign
+            // check this does, so every texel it declined to fix is one inside
+            // its guard band, and the count past that band has to come out empty.
+            using var font = LoadFont(CffFontPath);
+
+            foreach (var glyph in new[] { "O", "Q", "S", "I" })
+            foreach (float ppem in new[] { 24f, 48f, 128f })
+            {
+                var tile = BakeGlyph(font, glyph, ppem, 0.5f, out var pixels);
+                Assert.AreEqual(0, WrongSideTexels(tile, pixels, 0.5f),
+                    $"'{glyph}' at {ppem} ppem still contradicts its own alpha");
+            }
+        }
+
+        /// <summary>
+        /// One byte of the encoding, in texels of distance. The field is
+        /// 0.5 - d / (2 * spread) over 255 levels, so this converts back.
+        /// </summary>
+        private static float BytesToTexels =>
+            2f * GlyphRasterizer.SpreadPixels / 255f;
+
+        /// <summary>
+        /// The worst SAG: how far shallower than the true distance the median
+        /// reads, at texels the true distance says are solidly inside the ink.
+        /// Not a sign test — the median never crosses the outline here. This is
+        /// what dims the middle of a stroke to grey.
+        /// </summary>
+        private static float WorstSagTexels(in RasterizedGlyph tile, byte[] pixels,
+            float depthTexels)
+        {
+            float deep = 127.5f + depthTexels / BytesToTexels;
+            float worst = 0f;
+            for (int y = 0; y < tile.Height; y++)
+            for (int x = 0; x < tile.Width; x++)
+            {
+                float truth = Texel(tile, pixels, x, y, 3);
+                if (truth < deep) continue;
+                float median = Median(
+                    Texel(tile, pixels, x, y, 0),
+                    Texel(tile, pixels, x, y, 1),
+                    Texel(tile, pixels, x, y, 2));
+                worst = Mathf.Max(worst, (truth - median) * BytesToTexels);
+            }
+            return worst;
+        }
+
+        [Test]
+        public void WithoutErrorCorrection_TheCrossbarAndApexSagInsideTheInk()
+        {
+            // The artifact the user actually reported, measured before the fix.
+            // Where a crossbar meets a diagonal, every channel is measuring
+            // against a line extended past a run end that stopped bounding the
+            // shape, so the median reads a couple of texels shallower than the
+            // truth. It never crosses the outline, which is why the sign test
+            // that catches the CFF block finds nothing here; on screen it is a
+            // grey mark in the middle of solid ink.
+            using var font = LoadFont(LatinFontPath);
+
+            foreach (var glyph in new[] { "A", "W", "K" })
+            {
+                var tile = BakeGlyph(font, glyph, 128f, 0f, out var pixels);
+                Assert.Greater(WorstSagTexels(tile, pixels, 2f), 1f,
+                    $"'{glyph}' no longer sags: the measurement or the colouring changed");
+            }
+        }
+
+        /// <summary>
+        /// The shallowest the median reads, in texels inside the outline, over
+        /// the texels the true distance places at least <paramref name="depthTexels"/>
+        /// in. Negative means the median put a texel of solid ink outside the
+        /// shape altogether.
+        /// </summary>
+        private static float ShallowestMedianTexels(in RasterizedGlyph tile, byte[] pixels,
+            float depthTexels)
+        {
+            float deep = 127.5f + depthTexels / BytesToTexels;
+            float shallowest = float.MaxValue;
+            for (int y = 0; y < tile.Height; y++)
+            for (int x = 0; x < tile.Width; x++)
+            {
+                if (Texel(tile, pixels, x, y, 3) < deep) continue;
+                float median = Median(
+                    Texel(tile, pixels, x, y, 0),
+                    Texel(tile, pixels, x, y, 1),
+                    Texel(tile, pixels, x, y, 2));
+                shallowest = Mathf.Min(shallowest, (median - 127.5f) * BytesToTexels);
+            }
+            return shallowest;
+        }
+
+        [Test]
+        public void ErrorCorrection_KeepsTheMedianClearOfTheOutlineInsideSolidInk()
+        {
+            // And after. Stated the way the correction is: a texel the true
+            // distance places solidly inside the ink has a median at least the
+            // allowance clear of the outline, so no antialiasing band the
+            // shader picks can reach it and dim it.
+            //
+            // 64 ppem is in the list on purpose. It is the size the report came
+            // from, and a deviation-based rule could not have covered it: an 'A'
+            // crossbar there is four texels thick, so its centre is two texels
+            // in, and the guard band that would protect corner reconstruction
+            // from such a rule reaches further than that.
+            using var font = LoadFont(LatinFontPath);
+            const float allowance = 1f;
+
+            foreach (var glyph in new[] { "A", "W", "K", "a", "e", "R", "B", "M" })
+            foreach (float ppem in new[] { 64f, 128f, 256f })
+            {
+                var tile = BakeGlyph(font, glyph, ppem, allowance, out var pixels);
+                float shallowest = ShallowestMedianTexels(tile, pixels, allowance + 0.5f);
+                Assert.GreaterOrEqual(shallowest, allowance - BytesToTexels,
+                    $"'{glyph}' at {ppem} ppem: solid ink whose median reads " +
+                    $"{shallowest:F2} texels from the outline");
+            }
+        }
+
+        /// <summary>
+        /// The worst the median dips BETWEEN texel centres, in texels inside the
+        /// outline, over the sub-texel positions the true field places solidly
+        /// inside the ink. The per-texel measurements above cannot see this: the
+        /// dip lives at a channel crossing, where the median of three linear
+        /// functions kinks, and both endpoints can be perfectly in tolerance.
+        /// </summary>
+        private static float WorstInterpolatedDipTexels(in RasterizedGlyph tile, byte[] pixels,
+            float depthTexels)
+        {
+            const int Sub = 12;
+            float worst = float.MaxValue;
+            for (int iy = Sub; iy < (tile.Height - 2) * Sub; iy++)
+            for (int ix = Sub; ix < (tile.Width - 2) * Sub; ix++)
+            {
+                float u = ix / (float)Sub, v = iy / (float)Sub;
+                float truth = (SampleBilinear(tile, pixels, u, v, 3) - 127.5f) * BytesToTexels;
+                if (truth < depthTexels) continue;
+                float median = Median(
+                    SampleBilinear(tile, pixels, u, v, 0),
+                    SampleBilinear(tile, pixels, u, v, 1),
+                    SampleBilinear(tile, pixels, u, v, 2));
+                worst = Mathf.Min(worst, (median - 127.5f) * BytesToTexels);
+            }
+            return worst;
+        }
+
+        private static float SampleBilinear(in RasterizedGlyph tile, byte[] pixels,
+            float u, float v, int channel)
+        {
+            int x = Mathf.FloorToInt(u), y = Mathf.FloorToInt(v);
+            float fx = u - x, fy = v - y;
+            float bottom = Mathf.Lerp(Texel(tile, pixels, x, y, channel),
+                Texel(tile, pixels, x + 1, y, channel), fx);
+            float top = Mathf.Lerp(Texel(tile, pixels, x, y + 1, channel),
+                Texel(tile, pixels, x + 1, y + 1, channel), fx);
+            return Mathf.Lerp(bottom, top, fy);
+        }
+
+        [Test]
+        public void WithoutTheInterpolationPass_TheMedianDivesBetweenTexels()
+        {
+            // The artifact a per-texel rule cannot reach, and the one a magnified
+            // tile actually shows. Across an 'A' crossbar junction two channels
+            // swap rank partway between two texels; the median follows the swap
+            // down to the outline while the truth says a texel of solid ink, and
+            // both endpoints are inside tolerance the whole time.
+            using var font = LoadFont(LatinFontPath);
+            var tile = BakeGlyph(font, "A", 64f, 0f, out var pixels);
+
+            Assert.Less(WorstInterpolatedDipTexels(tile, pixels, 1f), 0.5f,
+                "the dip between texels is gone from the specimen that had one: " +
+                "either the colouring changed or the measurement moved");
+        }
+
+        [Test]
+        public void TheInterpolationPass_KeepsTheMedianOutOfTheNotchBetweenTexels()
+        {
+            // And after. Stated where it failed: not at texel centres, which the
+            // per-texel rule already covers, but everywhere bilinear can put a
+            // sample, which is what a magnified tile samples.
+            using var font = LoadFont(LatinFontPath);
+            const float allowance = 0.5f;
+
+            // Measured a guard band inside the pass's own domain rather than at
+            // its edge. The pass acts on crossings where the true distance is
+            // strictly past floor + guard, so a sample sitting exactly on that
+            // boundary is one it is entitled to leave alone, and asserting over
+            // it would be asserting a promise nobody made.
+            foreach (var glyph in new[] { "A", "W", "K", "M", "e", "R" })
+            foreach (float ppem in new[] { 48f, 64f, 96f })
+            {
+                var tile = BakeGlyph(font, glyph, ppem, allowance, out var pixels);
+                float dip = WorstInterpolatedDipTexels(tile, pixels, 2f * allowance + 0.5f);
+                Assert.GreaterOrEqual(dip, allowance - 2f * BytesToTexels,
+                    $"'{glyph}' at {ppem} ppem: solid ink whose reconstructed median " +
+                    $"dives to {dip:F2} texels from the outline");
+            }
+        }
+
+        [Test]
+        public void ErrorCorrection_NeverTouchesTheBandWhereCornersAreReconstructed()
+        {
+            // The cost of the fix, bounded where it matters. Within about a
+            // texel of the outline the median is SUPPOSED to disagree with the
+            // true distance: that disagreement is what bilinear reconstruction
+            // turns into a sharp corner, and overruling it there would trade the
+            // whole point of `precise` against a grey mark. So every texel the
+            // correction rewrites has to be one no nearby pixel's coverage is
+            // decided by — deep inside the ink, or (for the sign rule) a clear
+            // reach outside it.
+            const float allowance = 1f;
+            foreach (var path in new[] { LatinFontPath, VariableFontPath })
+            {
+                using var font = LoadFont(path);
+                foreach (var glyph in new[] { "a", "A", "e", "g", "s", "R", "B", "W", "M" })
+                foreach (float ppem in new[] { 24f, 48f, 128f })
+                {
+                    var tile = BakeGlyph(font, glyph, ppem, 0f, out var raw);
+                    BakeGlyph(font, glyph, ppem, allowance, out var corrected);
+
+                    for (int i = 0; i < raw.Length; i += 4)
+                    {
+                        if (raw[i] == corrected[i] && raw[i + 1] == corrected[i + 1] &&
+                            raw[i + 2] == corrected[i + 2]) continue;
+
+                        Assert.AreEqual(raw[i + 3], corrected[i + 3],
+                            "the correction rewrote the true distance in alpha");
+                        // Read back from the byte, while the rule fired on the
+                        // float behind it, so one level of the encoding has to
+                        // be allowed for or a texel at the exact boundary flakes.
+                        float truth = (raw[i + 3] - 127.5f) * BytesToTexels;
+                        Assert.Greater(Mathf.Abs(truth), allowance - BytesToTexels,
+                            $"'{glyph}' at {ppem} ppem: a texel {truth:F2} texels from the " +
+                            "outline was rewritten, inside the band corners are made of");
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void ErrorCorrection_DoesNotTouchAShapeWithNothingWrongWithIt()
+        {
+            // The cost of the fix, bounded. A square is all right angles and a
+            // circle is all curve, and the correction has no business firing on
+            // either; if it does, it is rounding off corners that were correct
+            // and the guard band is too small.
+            foreach (var shape in new[] { Square(40f), Circle(30f, 96) })
+            {
+                float was = GlyphRasterizer.MsdfErrorCorrectionTexels;
+                byte[] corrected, raw;
+                try
+                {
+                    GlyphRasterizer.MsdfErrorCorrectionTexels = 0.5f;
+                    Bake(shape, precise: true, out corrected);
+                    GlyphRasterizer.MsdfErrorCorrectionTexels = 0f;
+                    Bake(shape, precise: true, out raw);
+                }
+                finally
+                {
+                    GlyphRasterizer.MsdfErrorCorrectionTexels = was;
+                }
+
+                CollectionAssert.AreEqual(raw, corrected,
+                    "error correction rewrote a texel of a shape that had no clash");
+            }
+        }
+
+        [Test]
+        public void ChangingTheCorrection_IsANewCacheKey()
+        {
+            // Tiles baked with the correction and tiles baked without it are
+            // different pictures of the same glyph at the same size, so an atlas
+            // that kept serving the old ones would make the setting look inert.
+            float was = GlyphRasterizer.MsdfErrorCorrectionTexels;
+            try
+            {
+                int before = GlyphRasterizer.Generation;
+                GlyphRasterizer.MsdfErrorCorrectionTexels = was + 0.25f;
+                Assert.AreNotEqual(before, GlyphRasterizer.Generation);
+
+                using var font = LoadFont(LatinFontPath);
+                using var atlas = new GlyphAtlas(Small, precise: true);
+                uint gid = FirstGlyph(font, "A");
+                atlas.GetOrAdd(font, gid, 64f);
+                Assert.IsTrue(atlas.Contains(font, gid, 64f));
+
+                GlyphRasterizer.MsdfErrorCorrectionTexels = was;
+                Assert.IsFalse(atlas.Contains(font, gid, 64f),
+                    "the atlas answered with a tile baked under the other setting");
+            }
+            finally
+            {
+                GlyphRasterizer.MsdfErrorCorrectionTexels = was;
+            }
         }
 
         // ------------------------------------------------------------- caching

@@ -212,6 +212,94 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void Quality_Is_The_Multiplier_Its_Name_Implies()
+        {
+            // The values are the arithmetic: EmitTextRuns casts the enum to int
+            // and multiplies. Renaming a member is free; renumbering one is a
+            // silent change to every world text in every project.
+            Assert.AreEqual(1, (int)TextQuality.Performance);
+            Assert.AreEqual(2, (int)TextQuality.Medium);
+            Assert.AreEqual(4, (int)TextQuality.High);
+        }
+
+        [Test]
+        public void A_New_Mesh_Asks_For_Medium()
+        {
+            // World text is usually approached, and the point size cannot say
+            // so: this default is the component's answer to that, so it is part
+            // of the contract rather than a tuning knob's resting place.
+            var text = Create();
+            Assert.AreEqual(TextQuality.Medium, text.Quality);
+            Destroy(text);
+        }
+
+        [Test]
+        public void The_Density_Ladder_Is_Where_Quality_Stops()
+        {
+            // High is the last rung, and the wall behind it is the atlas's own
+            // ladder rather than the enum: past 256 pixels per em there is no
+            // bucket to land on. Worth pinning, because it is the reason not to
+            // add another member — above the ceiling a bigger multiplier changes
+            // the setting without changing the picture.
+            const int Top = 256;
+
+            // A hundred and twenty-eight points is where Medium alone already
+            // reaches the top, so asking for four times instead of two buys the
+            // same tile and Quality has stopped meaning anything at all.
+            Assert.AreEqual(Top, GlyphAtlas.QuantizePixelsPerEm(128f * (int)TextQuality.Medium));
+            Assert.AreEqual(Top, GlyphAtlas.QuantizePixelsPerEm(128f * (int)TextQuality.High),
+                "past the ladder every setting lands on its top");
+
+            // Below that the rungs are real, which is the case world text is in:
+            // small in points, large on screen.
+            Assert.Greater(GlyphAtlas.QuantizePixelsPerEm(30f * (int)TextQuality.High),
+                GlyphAtlas.QuantizePixelsPerEm(30f * (int)TextQuality.Medium));
+            Assert.Greater(GlyphAtlas.QuantizePixelsPerEm(30f * (int)TextQuality.Medium),
+                GlyphAtlas.QuantizePixelsPerEm(30f * (int)TextQuality.Performance));
+        }
+
+        [Test]
+        public void Raising_Quality_Bakes_A_Denser_Tile()
+        {
+            // The claim in atlas pixels. A point size is all a world mesh has to
+            // ask a density with, and it is not a screen size — so the multiplier
+            // has to actually reach the atlas, not merely be stored.
+            //
+            // Forty points so neither end lands on the bucket ladder's floor:
+            // Performance asks for 40 and High for 160, four times the texels an
+            // em wide and sixteen times the area.
+            // Measured off the mesh's own uv rect rather than the shared
+            // atlas's totals: the atlas outlives a test and may already hold
+            // these glyphs, which would make a before-and-after difference
+            // report zero and prove nothing.
+            float TileTexels(TextQuality quality)
+            {
+                var text = Create(40f, 12f);
+                text.FontSize = 40f;
+                text.Quality = quality;
+                text.Text = "A";
+                text.ForceRebuild();
+
+                var bounds = new List<Vector4>();
+                MeshOf(text).GetUVs(2, bounds);
+                Assert.Greater(bounds.Count, 0, "no quad to measure");
+                // uv2.yz are the tile's u-min and u-max in atlas space.
+                float width = (bounds[0].z - bounds[0].y) * SharedGlyphAtlas.Atlas.Texture.width;
+                Destroy(text);
+                return width;
+            }
+
+            float low = TileTexels(TextQuality.Performance);
+            float high = TileTexels(TextQuality.High);
+
+            Assert.Greater(low, 0f, "the low-quality bake produced no tile");
+            Assert.Greater(high, low * 3f,
+                $"High baked a tile {high:F0} texels wide against Performance's {low:F0}: " +
+                "four times the density has to be about four times the texels across, so " +
+                "the multiplier is not reaching the atlas");
+        }
+
+        [Test]
         public void The_Mesh_Component_Shares_The_Label_Atlas()
         {
             var text = Create();

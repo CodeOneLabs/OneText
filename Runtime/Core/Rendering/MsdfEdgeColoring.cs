@@ -57,8 +57,24 @@ namespace OneText
         /// corner costs sharpness (it renders as the single-channel field
         /// would); inventing one costs nothing but a colour change where the
         /// two edges agree.
+        ///
+        /// Setting this bumps <see cref="GlyphRasterizer.Generation"/>: it
+        /// decides which joins become run boundaries, so it decides the bytes of
+        /// every multi-channel tile, and tiles baked under two values of it are
+        /// not interchangeable.
         /// </summary>
-        public static float CornerAngleDegrees = 30f;
+        public static float CornerAngleDegrees
+        {
+            get => s_cornerAngleDegrees;
+            set
+            {
+                if (value == s_cornerAngleDegrees) return;
+                s_cornerAngleDegrees = value;
+                GlyphRasterizer.BumpGeneration();
+            }
+        }
+
+        private static float s_cornerAngleDegrees = 30f;
 
         // Yellow, cyan, magenta: R|G, G|B, R|B.
         private static readonly byte[] s_palette =

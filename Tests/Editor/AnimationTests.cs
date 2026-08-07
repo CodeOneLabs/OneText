@@ -170,6 +170,36 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void AdvancingTheClock_RebuildsThroughTheCanvas()
+        {
+            // Every other test here calls Rebuild directly, which is why all of
+            // them can pass while the inspector's preview shows a frozen frame:
+            // the preview reaches the mesh through the dirty flag and the
+            // canvas update, and that plumbing is what this pins. Setting
+            // AnimationTime must be enough — no SetAllDirty, no direct Rebuild
+            // — for the canvas pass to re-emit moved quads, because that is
+            // the whole per-tick sequence the editor's preview driver runs.
+            var label = NewLabel("<wave>moving</wave>");
+            Canvas.ForceUpdateCanvases();
+
+            label.AnimationTime = 0.1f;
+            Canvas.ForceUpdateCanvases();
+            var before = new List<TextQuad>(label.DrawnQuads);
+
+            label.AnimationTime = 0.37f;
+            Canvas.ForceUpdateCanvases();
+            var after = new List<TextQuad>(label.DrawnQuads);
+
+            Assert.Greater(before.Count, 0, "nothing drawn through the canvas pass");
+            Assert.AreEqual(before.Count, after.Count);
+            int moved = 0;
+            for (int i = 0; i < before.Count; i++)
+                if (before[i].Position != after[i].Position) moved++;
+            Assert.Greater(moved, 0,
+                "the clock advanced but the canvas pass re-emitted the old frame");
+        }
+
+        [Test]
         public void Animation_IsAPureFunctionOfTime()
         {
             // Two labels showing the same text must animate identically, and
