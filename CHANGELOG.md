@@ -4,6 +4,58 @@
 
 ### Added
 
+- **Lowercase TMP names on `OneTextLabel`, so a migrating project still
+  compiles.** `text`, `fontSize`, `richText`, `enableAutoSizing`,
+  `fontSizeMin`, `fontSizeMax`, `maxVisibleCharacters` and `SetText(string)`
+  are aliases and nothing but aliases: each forwards to the PascalCase
+  property that is the real API, none holds state, and every one is hidden
+  from completion, so new code written against this class still reads
+  OneText's own names.
+
+  The reason is arithmetic. A project leaving TextMesh Pro has `label.text =`
+  written in four hundred places, and whether those lines still compile on the
+  afternoon somebody tries the swap decides whether the swap gets tried at
+  all. `maxVisibleCharacters` is the one that is close rather than exact: it
+  forwards to `MaxVisibleGraphemes`, and OneText counts grapheme clusters
+  where TMP counted UTF-16 characters, so a flag emoji is one step here and
+  four there. That is the right behaviour, and it is documented on the alias.
+
+  `lineSpacing` and `alignment` are deliberately absent. TMP's line spacing is
+  an offset and OneText's is a multiplier, so an alias would compile, run, and
+  silently re-lay every paragraph in the project — a compile error is the
+  better outcome, and it is the one you get. TMP's alignment names an enum
+  that does not exist here. There are no no-op stubs either: a
+  `ForceMeshUpdate` that does nothing is a bug report about a stale mesh,
+  filed six months later.
+
+- **A TMPro script rewriter, in the Hub's new Onboarding tab.** Scans every
+  `.cs` file under `Assets` — packages are left alone — and offers the four
+  renames that are mechanical: `TextMeshProUGUI` and `TMP_Text` to
+  `OneTextLabel`, `TMP_InputField` to `OneTextInputField`, `TextMeshPro` to
+  `OneTextMesh`, and `using TMPro;` to the namespaces those live in. The diff
+  is on screen before anything is written, files are ticked one at a time, and
+  Apply asks git whether the targets hold uncommitted work first — saying so
+  plainly when git cannot be asked at all, because "I do not know" and "clean"
+  are different answers.
+
+  It is text processing and holds no reference to a TMPro type, which is what
+  makes it work in the project that needs it most: the one where the package
+  was removed an hour ago and nothing compiles, so no rename refactor will
+  run.
+
+  The scanner is a lexer rather than a regular expression, and that is the
+  whole safety argument. A project's own text is full of the words `TMP_Text`
+  and `TextMeshPro` — in dialogue, in log messages, in a verbatim Windows
+  path, in a block commented out last year — and a pattern with word
+  boundaries in it cannot tell any of those from code. Strings of all four
+  kinds, character literals and both comment forms come out byte for byte
+  identical, and a member access (`x.text`) is never touched.
+
+  What it cannot finish, it names. A file mentioning `TMP_Dropdown`,
+  `TMP_FontAsset` or a `using TMP = TMPro;` alias is reported with the
+  identifier and the line before the button is pressed, rather than through a
+  wall of compile errors after.
+
 - **Auto-size: the label can now pick its own font size.** `AutoSize` on a
   `OneTextLabel` chooses the largest size in `[AutoSizeMin, AutoSizeMax]` at
   which the whole block fits the rect, by bisection over real layouts —

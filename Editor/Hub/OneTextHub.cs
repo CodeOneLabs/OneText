@@ -38,6 +38,7 @@ namespace OneText.Editor
             Gallery,
             Doctor,
             Forensics,
+            Onboarding,
         }
 
         private const string SectionKey = "OneText.Hub.Section";
@@ -116,6 +117,7 @@ namespace OneText.Editor
             _sections.Add(new HubGalleryTab());
             _sections.Add(new HubDoctorTab());
             _sections.Add(new HubForensicsTab());
+            _sections.Add(new HubOnboardingTab());
         }
 
         private void CreateGUI()

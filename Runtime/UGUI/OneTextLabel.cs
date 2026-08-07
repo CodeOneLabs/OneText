@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.ComponentModel;
 using OneText.Unicode;
 using UnityEngine;
 using UnityEngine.Events;
@@ -2900,5 +2901,93 @@ namespace OneText.UGUI
             vh.AddVert(new Vector3(x, y), c, uvA, decoration.Colors, vmax, decoration.Shape,
                 s_Normal, s_Tangent);
         }
+
+        // ====================================================================
+        // TMP parity — begin
+        //
+        // Aliases, and nothing but aliases. A project migrating off TextMesh
+        // Pro has `label.text = …` written across hundreds of call sites, and
+        // the difference between a package you can try in an afternoon and one
+        // you cannot is whether those lines still compile. Each member below
+        // forwards to the PascalCase property that is the real API; none of
+        // them holds state, and none of them is in IntelliSense, so new code
+        // written against this class still reads OneText's own names.
+        //
+        // What is deliberately *not* here is as much of the point. `lineSpacing`
+        // is missing because TMP's is an offset in font units and OneText's is
+        // a multiplier: an alias would compile, run, and silently change every
+        // paragraph in the project. `alignment` is missing because TMP's
+        // enum type does not exist here, so there is nothing honest to forward
+        // to. And there are no no-op stubs — a ForceMeshUpdate that does
+        // nothing is a bug report about a stale mesh, filed six months later.
+        // ====================================================================
+
+        /// <summary>TMP-migration parity alias for <see cref="Text"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public string text
+        {
+            get => Text;
+            set => Text = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="FontSize"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float fontSize
+        {
+            get => FontSize;
+            set => FontSize = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="RichText"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool richText
+        {
+            get => RichText;
+            set => RichText = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="AutoSize"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool enableAutoSizing
+        {
+            get => AutoSize;
+            set => AutoSize = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="AutoSizeMin"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float fontSizeMin
+        {
+            get => AutoSizeMin;
+            set => AutoSizeMin = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="AutoSizeMax"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float fontSizeMax
+        {
+            get => AutoSizeMax;
+            set => AutoSizeMax = value;
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for <see cref="MaxVisibleGraphemes"/>.
+        /// Close but not identical: OneText counts grapheme clusters, not
+        /// UTF-16 characters, so a line of Hangul or a flag emoji reveals in
+        /// fewer steps here than it did there. Same behaviour for Latin, and
+        /// the right behaviour everywhere else.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public int maxVisibleCharacters
+        {
+            get => MaxVisibleGraphemes;
+            set => MaxVisibleGraphemes = value;
+        }
+
+        /// <summary>TMP-migration parity alias for assigning <see cref="Text"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SetText(string value) => Text = value;
+
+        // TMP parity — end
     }
 }
