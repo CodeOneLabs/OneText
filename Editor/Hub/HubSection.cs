@@ -13,7 +13,7 @@ namespace OneText.Editor
     /// when that state changes. There is no binding system here on purpose:
     /// the data behind these panels is a project scan or a live atlas, not a
     /// serialized object, and "clear and compose again" is both the cheapest
-    /// thing to get right and the only thing that works the same on 2021.3 and
+    /// thing to get right and the only thing that works the same on 2022.3 and
     /// on Unity 6.
     /// </summary>
     public abstract class HubSection

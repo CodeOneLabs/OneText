@@ -64,7 +64,7 @@ Everything in this milestone is infrastructure or verification, and every
 item is one the roadmap has already promised somewhere.
 
 1. **A remote, and CI's first green run.** The UCD conformance suites on
-   2021.3 and Unity 6, `NativesTests`, and the `[perf]` lines: actually
+   2022.3 and Unity 6, `NativesTests`, and the `[perf]` lines: actually
    running, on machines that are not this one. Until then, 454 passing tests
    are a claim, not a record.
 2. **The browser demo, the open half of M13.** The wasm native shipped;
@@ -144,7 +144,7 @@ record and by nothing else.
   version of TMP or UniText measured and the scenario, and the comparison
   harness stays reproducible.
 - **Every Unicode algorithm ships with its full UCD conformance run** in CI,
-  on 2021.3 and Unity 6, with real numbers logged as `[perf]` lines on every
+  on 2022.3 and Unity 6, with real numbers logged as `[perf]` lines on every
   run.
 - **The clean-room policy** (`CONTRIBUTING.md`) stays absolute: competitors
   are measured as built packages and read as public documentation, never as

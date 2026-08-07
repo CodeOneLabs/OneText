@@ -40,7 +40,7 @@ benchmark a machine), and every one of them logs its real number, so `[perf]`
 lines in the run output are the trend record. When a change moves those
 numbers, say so in the PR.
 
-CI (`.github/workflows/tests.yml`) runs the same suite on 2021.3 and Unity 6.
+CI (`.github/workflows/tests.yml`) runs the same suite on 2022.3 and Unity 6.
 It needs `UNITY_LICENSE` (plus `UNITY_EMAIL` / `UNITY_PASSWORD`) as repository
 secrets; a free personal license is enough. See the
 [game-ci activation docs](https://game.ci/docs/github/activation).

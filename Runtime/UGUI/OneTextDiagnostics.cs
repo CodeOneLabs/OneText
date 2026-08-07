@@ -216,20 +216,12 @@ namespace OneText.UGUI
 
         private static string Megabytes(long bytes) => (bytes / (1024f * 1024f)).ToString("0.#") + " MB";
 
-        // The unsorted overloads arrived in 2022.2 and this package supports
-        // 2021.3; the older calls sort their results, which costs more than the
-        // overlay's half-second refresh should pay when it can be avoided.
-#if UNITY_2022_2_OR_NEWER
+        // Unsorted deliberately: the sorting overloads pay for an order nothing
+        // here reads, and the overlay repeats this every half second.
         private static OneTextDiagnostics FindExisting() =>
             FindAnyObjectByType<OneTextDiagnostics>();
 
         private static OneTextLabel[] AllLabels() =>
             FindObjectsByType<OneTextLabel>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-#else
-        private static OneTextDiagnostics FindExisting() =>
-            FindObjectOfType<OneTextDiagnostics>();
-
-        private static OneTextLabel[] AllLabels() => FindObjectsOfType<OneTextLabel>();
-#endif
     }
 }

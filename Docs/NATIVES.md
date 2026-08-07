@@ -34,10 +34,9 @@ Linux ships x64 only, because that is the only Linux target Unity's standalone
 player builds for.
 
 Windows ARM64 is tagged `StandaloneWindows64` with `CPU: ARM64`, which is a
-Unity-6-era concept. The package still claims 2021.3 LTS, and no 2021.3 editor
-has imported these files; if an older editor cannot tell the two Win64
-binaries apart by CPU it will refuse the build, and that would be the first
-thing to try removing.
+Unity-6-era concept. The package's floor is 2022.3; if an older editor cannot
+tell the two Win64 binaries apart by CPU it will refuse the build, and that
+would be the first thing to try removing.
 
 ## What was checked before committing
 

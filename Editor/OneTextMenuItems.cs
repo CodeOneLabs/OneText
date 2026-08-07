@@ -86,7 +86,7 @@ namespace OneText.Editor
             if (context != null && context.GetComponentInParent<Canvas>() != null)
                 return context.transform;
 
-            var canvas = Object.FindObjectOfType<Canvas>();
+            var canvas = Object.FindFirstObjectByType<Canvas>();
             if (canvas == null)
             {
                 var canvasGo = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas),
@@ -101,7 +101,7 @@ namespace OneText.Editor
 
         private static void EnsureEventSystem()
         {
-            if (Object.FindObjectOfType<EventSystem>() != null) return;
+            if (Object.FindAnyObjectByType<EventSystem>() != null) return;
             var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
             Undo.RegisterCreatedObjectUndo(go, "Create EventSystem");
         }

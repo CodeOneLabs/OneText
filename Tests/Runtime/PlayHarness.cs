@@ -156,16 +156,10 @@ namespace OneText.Tests.Play
         /// <summary>Quads the label actually handed the canvas renderer.</summary>
         public static int DrawnQuads(OneTextLabel label)
         {
-#if UNITY_2022_2_OR_NEWER
             // Asks the renderer, not the label: a label that builds quads but
-            // never uploads them would fool the property below.
+            // never uploads them would fool the label's own ledger.
             var mesh = label.canvasRenderer.GetMesh();
             return mesh == null ? 0 : mesh.vertexCount / 4;
-#else
-            // CanvasRenderer.GetMesh arrived in 2022.2; on 2021.3 the label's
-            // own ledger is the closest observable thing.
-            return label.DrawnQuads == null ? 0 : label.DrawnQuads.Count;
-#endif
         }
 
         /// <summary>
