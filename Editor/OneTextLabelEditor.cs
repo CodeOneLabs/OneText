@@ -30,7 +30,7 @@ namespace OneText.Editor
         private SerializedProperty _writingMode;
         private SerializedProperty _language, _kinsoku, _cjkLatinSpacing, _punctuationCompression;
         private SerializedProperty _rubyScale;
-        private SerializedProperty _richText, _precise, _linkClicked, _graphemeRevealed;
+        private SerializedProperty _richText, _parseEscapes, _precise, _linkClicked, _graphemeRevealed;
         private SerializedProperty _animateProperty, _maxVisibleGraphemes;
         private SerializedProperty _revealGranularity, _charactersPerSecond, _punctuationDelays;
         private SerializedProperty _characterRevealed, _revealComplete;
@@ -71,6 +71,7 @@ namespace OneText.Editor
             _punctuationCompression = serializedObject.FindProperty("_punctuationCompression");
             _rubyScale = serializedObject.FindProperty("_rubyScale");
             _richText = serializedObject.FindProperty("_richText");
+            _parseEscapes = serializedObject.FindProperty("_parseEscapes");
             _precise = serializedObject.FindProperty("_precise");
             _linkClicked = serializedObject.FindProperty("_linkClicked");
             _graphemeRevealed = serializedObject.FindProperty("_graphemeRevealed");
@@ -98,6 +99,9 @@ namespace OneText.Editor
             EditorGUILayout.PropertyField(_richText, new GUIContent("Rich text",
                 "Parse markup tags. Off, angle brackets are just text."));
             if (_richText.boolValue) DrawMarkupHelp();
+            EditorGUILayout.PropertyField(_parseEscapes, new GUIContent("Parse escapes",
+                "Turn \\n, \\t, \\uXXXX and friends into the characters they " +
+                "name. Unknown escapes stay literal."));
 
             EditorGUILayout.Space(6f);
             int tab = EditorPrefs.GetInt(TabPref, 0);

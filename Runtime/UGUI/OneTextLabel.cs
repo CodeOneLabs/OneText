@@ -86,6 +86,11 @@ namespace OneText.UGUI
                  "literal text.")]
         [SerializeField] private bool _richText = true;
 
+        [Tooltip("Interpret backslash escapes: \\n \\t \\v \\r \\\\ \\uXXXX \\UXXXXXXXX. " +
+                 "Localization tables store a newline as the two characters \\n; this " +
+                 "turns them into the real thing. Unknown escapes stay literal.")]
+        [SerializeField] private bool _parseEscapes = true;
+
         [Tooltip("Precise (MSDF): multi-channel distance field. Use for large text or " +
                  "sharp corners/curves; costs more atlas memory (four bytes a texel instead " +
                  "of one, in an atlas of its own). Off, the label renders through the " +
@@ -109,6 +114,7 @@ namespace OneText.UGUI
         private string _displayText;
         private string _parsedFrom;
         private bool _parsedRich;
+        private bool _parsedEscapes;
 
         /// <summary>
         /// Everything the laid-out result depends on. Compared by value, so a
@@ -318,6 +324,24 @@ namespace OneText.UGUI
                 InvalidateText();
             }
         }
+
+        /// <summary>
+        /// Interpret backslash escapes (\n, \t, \v, \r, \\, \uXXXX,
+        /// \UXXXXXXXX) before anything else looks at the text. On by default:
+        /// localization data stores a newline as the two characters "\n", and
+        /// TextMesh Pro resolves them, so a string out of either would
+        /// otherwise print the backslash. An input field turns this off along
+        /// with markup: text the user typed is text.
+        /// </summary>
+        public bool ParseEscapes
+        {
+            get => _parseEscapes;
+            set
+            {
+                if (_parseEscapes == value) return;
+                _parseEscapes = value;
+                InvalidateText();
+            }
 
         /// <summary>
         /// Render this label through a multi-channel distance field (MSDF)
@@ -672,13 +696,19 @@ namespace OneText.UGUI
 
         private void EnsureDisplayText()
         {
-            if (_parsedFrom == _text && _displayText != null && _parsedRich == _richText) return;
+            if (_parsedFrom == _text && _displayText != null && _parsedRich == _richText &&
+                _parsedEscapes == _parseEscapes) return;
             _parsedFrom = _text;
             _parsedRich = _richText;
+            _parsedEscapes = _parseEscapes;
 
-            if (_richText && RichTextParser.MightHaveMarkup(_text))
+            // Escapes resolve before markup so every index the parser hands
+            // out refers to the text the engine will actually see.
+            var source = _parseEscapes ? EscapeParser.Unescape(_text) : _text;
+
+            if (_richText && RichTextParser.MightHaveMarkup(source))
             {
-                RichTextParser.Parse(_text, _markup, NamedStyleIndex, NamedFontIndex, NamedSpriteIndex);
+                RichTextParser.Parse(source, _markup, NamedStyleIndex, NamedFontIndex, NamedSpriteIndex);
                 _displayText = _markup.Text;
                 _links.Clear();
                 _links.AddRange(_markup.Links);
@@ -687,7 +717,7 @@ namespace OneText.UGUI
             {
                 _markup.Clear();
                 _links.Clear();
-                _displayText = _text ?? string.Empty;
+                _displayText = source ?? string.Empty;
             }
         }
 

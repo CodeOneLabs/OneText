@@ -642,6 +642,8 @@ namespace OneText.UGUI
             // Whatever the user types is text, not markup: a name with an angle
             // bracket in it must not turn half the field bold.
             _textComponent.RichText = false;
+            // Same for escapes: a typed "\n" is a backslash and an n.
+            _textComponent.ParseEscapes = false;
             // And a field is horizontal, the same way and for the same reason:
             // the field owns this label, and editing in a column (a caret that
             // moves down, arrow keys that mean the other axis, an IME candidate
