@@ -24,6 +24,7 @@ namespace OneText.Editor
         private static readonly string[] s_tabs = { "Style", "Layout", "Animation", "Interaction" };
 
         private SerializedProperty _text, _fontAssetProperty, _fallbackFonts, _fontSize;
+        private SerializedProperty _autoSize, _autoSizeMin, _autoSizeMax;
         private SerializedProperty _style, _namedStyles, _namedFonts, _sprites;
         private SerializedProperty _alignment, _verticalAlignment, _wrap, _overflow, _lineSpacing;
         private SerializedProperty _writingMode;
@@ -51,6 +52,9 @@ namespace OneText.Editor
             _fontAssetProperty = serializedObject.FindProperty("_font");
             _fallbackFonts = serializedObject.FindProperty("_fallbackFonts");
             _fontSize = serializedObject.FindProperty("_fontSize");
+            _autoSize = serializedObject.FindProperty("_autoSize");
+            _autoSizeMin = serializedObject.FindProperty("_autoSizeMin");
+            _autoSizeMax = serializedObject.FindProperty("_autoSizeMax");
             _style = serializedObject.FindProperty("_style");
             _namedStyles = serializedObject.FindProperty("_namedStyles");
             _namedFonts = serializedObject.FindProperty("_namedFonts");
@@ -139,7 +143,19 @@ namespace OneText.Editor
             }
             EditorGUILayout.PropertyField(_fallbackFonts, new GUIContent("Extra fallbacks",
                 "Fonts tried, in order, for characters the main font does not cover."), true);
-            EditorGUILayout.PropertyField(_fontSize, new GUIContent("Size"));
+            using (new EditorGUI.DisabledScope(_autoSize.boolValue))
+                EditorGUILayout.PropertyField(_fontSize, new GUIContent("Size"));
+            EditorGUILayout.PropertyField(_autoSize, new GUIContent("Auto size",
+                "Pick the largest size between Min and Max at which the whole text fits " +
+                "the rect. Size above is ignored while this is on."));
+            if (_autoSize.boolValue)
+            {
+                using (new EditorGUI.IndentLevelScope())
+                {
+                    EditorGUILayout.PropertyField(_autoSizeMin, new GUIContent("Min"));
+                    EditorGUILayout.PropertyField(_autoSizeMax, new GUIContent("Max"));
+                }
+            }
             DrawVariationAxes();
 
             EditorGUILayout.Space(4f);

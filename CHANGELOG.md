@@ -4,6 +4,22 @@
 
 ### Added
 
+- **Auto-size: the label can now pick its own font size.** `AutoSize` on a
+  `OneTextLabel` chooses the largest size in `[AutoSizeMin, AutoSizeMax]` at
+  which the whole block fits the rect, by bisection over real layouts —
+  fitting is monotonic, so ten measures bracket the answer to half a point,
+  and the result snaps down to the half-point grid so the search cannot churn
+  one atlas ppem bucket per fractional answer. The fit measures with overflow
+  disabled (truncation makes every size "fit", which would leave the search
+  nothing to compare) and judges both axes, so an unbreakable word that
+  overflows the wrap side shrinks the text exactly as a stack of lines
+  overflowing the block side does. Vertical labels fit against their own
+  axes. The fit is part of the layout key: it re-runs when the text, the rect
+  or the bounds change and never otherwise, and `FittedFontSize` reports the
+  chosen size. `<size>` runs keep their absolute size — auto-size drives the
+  base size only, and a tagged run that must not shrink is what an absolute
+  size in markup means.
+
 - **`<u>`, `<s>` and `<mark>` now draw something.** All three parsed, set
   their flag on the style, and were then read by nothing: the parser tests
   went green while a reader saw no line and no highlight. They are geometry

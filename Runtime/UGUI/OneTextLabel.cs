@@ -63,6 +63,13 @@ namespace OneText.UGUI
         [SerializeField] private string _text = "مرحبا بالعالم";
 
         [SerializeField] private float _fontSize = 64f;
+
+        [Tooltip("Pick the largest size between Min and Max at which the whole text fits " +
+                 "the rect. The Size field above is ignored while this is on.")]
+        [SerializeField] private bool _autoSize;
+        [SerializeField] private float _autoSizeMin = 10f;
+        [SerializeField] private float _autoSizeMax = 128f;
+
         [SerializeField] private TextAlignment _alignment = TextAlignment.Start;
         [SerializeField] private VerticalAlignment _verticalAlignment = VerticalAlignment.Middle;
 
@@ -115,9 +122,12 @@ namespace OneText.UGUI
             private readonly TextWrap _wrap;
             private readonly TextOverflow _overflow;
             private readonly int _generation;
+            private readonly bool _autoSize;
+            private readonly float _autoSizeMin, _autoSizeMax;
 
             public LayoutKey(string text, float width, float height, float size, float lineSpacing,
-                TextAlignment alignment, TextWrap wrap, TextOverflow overflow, int generation)
+                TextAlignment alignment, TextWrap wrap, TextOverflow overflow, int generation,
+                bool autoSize, float autoSizeMin, float autoSizeMax)
             {
                 _text = text;
                 _width = width;
@@ -128,6 +138,9 @@ namespace OneText.UGUI
                 _wrap = wrap;
                 _overflow = overflow;
                 _generation = generation;
+                _autoSize = autoSize;
+                _autoSizeMin = autoSizeMin;
+                _autoSizeMax = autoSizeMax;
             }
 
             public bool Equals(LayoutKey other) =>
@@ -135,7 +148,9 @@ namespace OneText.UGUI
                 _width.Equals(other._width) && _height.Equals(other._height) &&
                 _size.Equals(other._size) && _lineSpacing.Equals(other._lineSpacing) &&
                 _alignment == other._alignment && _wrap == other._wrap &&
-                _overflow == other._overflow && _generation == other._generation;
+                _overflow == other._overflow && _generation == other._generation &&
+                _autoSize == other._autoSize && _autoSizeMin.Equals(other._autoSizeMin) &&
+                _autoSizeMax.Equals(other._autoSizeMax);
         }
 
         private LayoutKey _layoutKey;
@@ -187,6 +202,52 @@ namespace OneText.UGUI
         {
             get => _fontSize;
             set { _fontSize = value; SetVerticesDirty(); SetLayoutDirty(); }
+        }
+
+        /// <summary>
+        /// Fit the text to the rect by choosing the largest size in
+        /// [<see cref="AutoSizeMin"/>, <see cref="AutoSizeMax"/>] at which the
+        /// whole block fits. While on, <see cref="FontSize"/> is ignored and
+        /// <see cref="FittedFontSize"/> reports the chosen size.
+        /// </summary>
+        public bool AutoSize
+        {
+            get => _autoSize;
+            set
+            {
+                if (_autoSize == value) return;
+                _autoSize = value;
+                SetVerticesDirty();
+                SetLayoutDirty();
+            }
+        }
+
+        /// <summary>The smallest size auto-size may shrink to.</summary>
+        public float AutoSizeMin
+        {
+            get => _autoSizeMin;
+            set { _autoSizeMin = value; SetVerticesDirty(); SetLayoutDirty(); }
+        }
+
+        /// <summary>The largest size auto-size may grow to.</summary>
+        public float AutoSizeMax
+        {
+            get => _autoSizeMax;
+            set { _autoSizeMax = value; SetVerticesDirty(); SetLayoutDirty(); }
+        }
+
+        /// <summary>
+        /// The size the text is actually drawn at: the fitted size while
+        /// <see cref="AutoSize"/> is on, the effective size otherwise. Asking
+        /// lays the text out if it is stale, so the answer is always current.
+        /// </summary>
+        public float FittedFontSize
+        {
+            get
+            {
+                EnsureLayout();
+                return EffectiveFontSize;
+            }
         }
 
         public TextAlignment Alignment
@@ -542,8 +603,19 @@ namespace OneText.UGUI
             _sprites != null ? _sprites.IndexOf(spriteName) : -1;
 
         /// <summary>The label's own size, with its base style applied.</summary>
-        private float EffectiveFontSize =>
+        private float BaseFontSize =>
             _style != null && _style.Sets(OneTextStyle.Fields.Size) ? _style.FontSize : _fontSize;
+
+        /// <summary>
+        /// The size everything downstream of layout uses. While auto-size is
+        /// on this is the fitted size, which only exists once a layout has
+        /// run; the base size stands in until then so a first measure is never
+        /// zero.
+        /// </summary>
+        private float EffectiveFontSize =>
+            _autoSize && _fittedSize > 0f ? _fittedSize : BaseFontSize;
+
+        private float _fittedSize;
 
         private float EffectiveLineSpacing =>
             _style != null && _style.Sets(OneTextStyle.Fields.LineSpacing)
@@ -876,10 +948,13 @@ namespace OneText.UGUI
         }
 
         private TextLayoutSettings BuildSettings(float maxWidth, float maxHeight) =>
+            BuildSettings(maxWidth, maxHeight, EffectiveFontSize);
+
+        private TextLayoutSettings BuildSettings(float maxWidth, float maxHeight, float fontSize) =>
             new TextLayoutSettings
             {
                 Fonts = _fonts,
-                FontSize = EffectiveFontSize,
+                FontSize = fontSize,
                 MaxWidth = maxWidth,
                 MaxHeight = maxHeight,
                 Alignment = _alignment,
@@ -937,10 +1012,15 @@ namespace OneText.UGUI
             // and re-running it every frame for them is exactly the cost the
             // post-layout hook exists to avoid, so the result is kept until
             // something it actually depends on moves.
-            var key = new LayoutKey(_displayText, maxWidth, maxHeight, EffectiveFontSize,
-                EffectiveLineSpacing, _alignment, _wrap, _overflow, _layoutGeneration);
+            // Keyed by the base size, not the fitted one: the fitted size is a
+            // function of everything else in the key, so keying by it would
+            // make the cache chase its own output.
+            var key = new LayoutKey(_displayText, maxWidth, maxHeight, BaseFontSize,
+                EffectiveLineSpacing, _alignment, _wrap, _overflow, _layoutGeneration,
+                _autoSize, _autoSizeMin, _autoSizeMax);
             if (!_layoutValid || !key.Equals(_layoutKey))
             {
+                if (_autoSize) _fittedSize = FitFontSize(rect);
                 _engine.Layout(_displayText, BuildSettings(maxWidth, maxHeight), _layout);
                 _layoutKey = key;
                 _layoutValid = true;
@@ -972,6 +1052,61 @@ namespace OneText.UGUI
 
         /// <summary>True if this label is laid out down columns.</summary>
         private bool IsVertical => _writingMode == TextWritingMode.VerticalRightToLeft;
+
+        // ------------------------------------------------------------ auto-size
+
+        /// <summary>
+        /// The largest size in [min, max] at which the whole block fits the
+        /// rect. Fitting is monotonic (smaller text never fits worse), so this
+        /// is a bisection: try max, try min, then halve the bracket to half a
+        /// point and snap down to the half-point grid, which keeps the atlas
+        /// from collecting one ppem bucket per fractional answer.
+        /// </summary>
+        private float FitFontSize(Rect rect)
+        {
+            float min = Mathf.Max(1f, Mathf.Min(_autoSizeMin, _autoSizeMax));
+            float max = Mathf.Max(min, _autoSizeMax);
+            if (string.IsNullOrEmpty(_displayText)) return max;
+
+            if (FitsAt(max, rect)) return max;
+            if (!FitsAt(min, rect)) return min;
+
+            float fits = min, overflows = max;
+            while (overflows - fits > 0.5f)
+            {
+                float mid = (fits + overflows) * 0.5f;
+                if (FitsAt(mid, rect)) fits = mid;
+                else overflows = mid;
+            }
+            // Snapping down keeps the answer on the fitting side of the
+            // bracket: a size that fits still fits smaller.
+            return Mathf.Max(min, Mathf.Floor(fits * 2f) * 0.5f);
+        }
+
+        /// <summary>
+        /// Whether the text laid out at <paramref name="size"/> fits the rect.
+        /// Measured with overflow disabled: truncation makes every size "fit",
+        /// which would leave nothing for the search to compare. The wrap side
+        /// is constrained as it will be when drawn; the block side runs free
+        /// and is judged against the rect afterwards, along with the inline
+        /// side, which an unbreakable word can still push past its budget.
+        /// </summary>
+        private bool FitsAt(float size, Rect rect)
+        {
+            bool vertical = IsVertical;
+            var settings = BuildSettings(
+                vertical ? 0f : rect.width,
+                vertical ? rect.height : 0f,
+                size);
+            settings.Overflow = TextOverflow.Overflow;
+            _engine.Layout(_displayText, settings, _measure);
+
+            const float slack = 0.5f;
+            float inlineBudget = vertical ? rect.height : rect.width;
+            float blockBudget = vertical ? rect.width : rect.height;
+            return _measure.InlineExtent <= inlineBudget + slack &&
+                   _measure.BlockExtent <= blockBudget + slack;
+        }
 
         // ---------------------------------------------------------- hit testing
 
