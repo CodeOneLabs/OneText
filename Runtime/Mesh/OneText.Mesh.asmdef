@@ -1,17 +1,10 @@
 {
-    "name": "OneText.Editor",
-    "rootNamespace": "OneText.Editor",
+    "name": "OneText.Mesh",
+    "rootNamespace": "OneText",
     "references": [
-        "OneText",
-        "OneText.UGUI",
-        "OneText.Mesh",
-        "UnityEngine.UI",
-        "UnityEditor.UI",
-        "Unity.Burst"
+        "OneText"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

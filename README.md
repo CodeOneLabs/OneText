@@ -106,7 +106,10 @@ https://github.com/CodeOneLabs/OneText.git
 
 That is the whole install; the HarfBuzz/FreeType natives ship inside the
 package. Then use **GameObject > UI > OneText Label** (or add the
-`OneTextLabel` component) and assign a font. Shipping Thai, Lao,
+`OneTextLabel` component) and assign a font. For text in the world rather
+than on a canvas — nameplates, signs, diegetic UI — add the `OneTextMesh`
+component instead: same pipeline, rendered through a MeshRenderer, no Canvas
+(and no uGUI dependency at all). Shipping Thai, Lao,
 Khmer or Burmese? Import the **Word-break dictionaries** sample from the
 package's Samples tab so those scripts wrap on real word boundaries.
 

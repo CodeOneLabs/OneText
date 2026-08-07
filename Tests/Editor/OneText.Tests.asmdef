@@ -4,6 +4,7 @@
     "references": [
         "OneText",
         "OneText.UGUI",
+        "OneText.Mesh",
         "OneText.Editor",
         "UnityEngine.UI",
         "UnityEngine.TestRunner",

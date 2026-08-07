@@ -64,6 +64,22 @@ namespace OneText.Editor
             Register(root, "Create OneText Input Field");
         }
 
+        [MenuItem("GameObject/3D Object/OneText Mesh (World)", false, 2102)]
+        public static void CreateWorldText(MenuCommand command)
+        {
+            // World text lives under whatever was right-clicked (or the scene
+            // root), never under a canvas: no canvas is the point.
+            var go = new GameObject("OneText Mesh", typeof(RectTransform));
+            var parent = command.context as GameObject;
+            if (parent != null) go.transform.SetParent(parent.transform, false);
+            // TMP's world-text defaults (20×5 rect, size 36): a scene that
+            // swapped a TextMeshPro object for this one sees the same box and
+            // the same glyph height.
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(20f, 5f);
+            go.AddComponent<OneTextMesh>();
+            Register(go, "Create OneText Mesh");
+        }
+
         private static Transform EnsureCanvas(MenuCommand command)
         {
             var context = command.context as GameObject;

@@ -20,6 +20,40 @@
   base size only, and a tagged run that must not shrink is what an absolute
   size in markup means.
 
+- **World-space text: `OneTextMesh`, no Canvas required.** A new
+  `OneText.Mesh` assembly (depending only on Core — a project can ship world
+  text without uGUI) with one component: the same shaping, layout, atlas and
+  shader pipeline as the label, rendered through a MeshFilter/MeshRenderer
+  pair for nameplates, signs and diegetic UI. The rect still comes from a
+  RectTransform, so wrap, overflow, both alignments and auto-size mean what
+  they mean on a label. Font sizes are points on TextMesh Pro's world-text
+  scale — ten points to one local unit — so a TMP nameplate's numbers (size
+  36, rect 20×5) port verbatim and land the same size on screen; `<size>`
+  tags convert on the same scale, and em-relative values pass through
+  unchanged. It draws through
+  a clone of the shared SDF material with `unity_GUIZTestMode` pinned to
+  LEqual — the canvas system drives that global per canvas, nothing drives it
+  for a MeshRenderer, and world text should be occluded like world geometry.
+  Atlas uploads batch to one per frame via `Application.onBeforeRender`
+  (there is no canvas pass to ride), and each instance watches the atlas
+  versions its mesh baked, so an eviction or compaction under a built mesh
+  rebuilds it the way `AtlasInvalidation` rebuilds a label. Deliberately not
+  in this first cut, and documented on the component: reveal/animation,
+  decorations, inline sprites, style assets, interaction.
+
+- **Backslash escapes resolve, so a localized `\n` is a newline.** A CSV cell
+  or a JSON-ish string table has no way to hold a newline except as the two
+  characters `\n`, and a label handed one straight from a table printed them,
+  backslash and all — TextMesh Pro resolves these, so migrated strings arrived
+  expecting the same. `OneTextLabel` now runs an escape pass before the markup
+  parser (so every span and link index refers to the text the engine sees):
+  `\n`, `\t`, `\v`, `\r`, `\\`, `\uXXXX` and `\UXXXXXXXX`, with everything
+  else left exactly as written — a Windows path must not lose its separators
+  because `\U` started a folder name, which is also why the hex forms only
+  apply with every digit present. On by default (`Parse escapes` in the
+  inspector, `ParseEscapes` in code); an input field turns it off alongside
+  rich text, because a typed backslash is a backslash.
+
 - **`<u>`, `<s>` and `<mark>` now draw something.** All three parsed, set
   their flag on the style, and were then read by nothing: the parser tests
   went green while a reader saw no line and no highlight. They are geometry
