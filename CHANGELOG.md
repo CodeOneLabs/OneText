@@ -73,6 +73,77 @@
   identifier and the line before the button is pressed, rather than through a
   wall of compile errors after.
 
+- **Component migration: the scenes and prefabs, scanned, judged and swapped
+  in place.** The other half of leaving TextMesh Pro, in the same Onboarding
+  tab and above the script rewrite, because it is the half a project decides
+  on. Scan opens every scene in Build Settings (or every scene under `Assets`)
+  and every prefab, reads every component on every object including the
+  inactive ones, and closes them again having saved nothing. Convert then does
+  the whole scan a second time from scratch and only then destroys anything:
+  the first pass's component references stopped being valid the moment its
+  scene closed, and a migration that acted on a stale one would act on the
+  wrong object.
+
+  `TextMeshProUGUI` becomes `OneTextLabel`, `TextMeshPro` becomes
+  `OneTextMesh`, `TMP_InputField` becomes `OneTextInputField`, and
+  `UnityEngine.UI.Text` and `TextMesh` come along too — a project that left
+  uGUI text for TMP years ago and never finished has both. `TMP_Dropdown` is
+  found, counted and left exactly where it is, because there is no OneText
+  dropdown and saying so is better than a swap that loses a caption.
+
+  The two failures worth naming are the two nothing else catches. The first is
+  the reference: every serialized `ObjectReference` on every component in the
+  container is walked, and any that pointed at a component about to be
+  destroyed is re-pointed at the one replacing it and then *read back* — a
+  field still declared as a TMP type silently refuses a `OneTextLabel`, and
+  from the writing side that refusal looks exactly like success. When it does
+  not stick, the finding says which field, on which object, and to run the
+  script rewrite first. The second is the listener: the buttons a designer
+  wired in the inspector are the part of a migration nobody can reconstruct
+  from a screenshot, and a component swap destroys them silently. `On Value
+  Changed` and `On Submit` are both `UnityEvent<string>` on both sides, so
+  their persistent calls are carried across as serialized data — with the
+  target itself run through the map of what became what, since the object a
+  listener names is quite often the very label being replaced — and counted
+  again afterwards. `On End Edit` has no counterpart and is reported rather
+  than moved.
+
+  Fonts are followed back to the file. OneText rasterises from the `.ttf`, so
+  a TMP font asset is useful here for the source it names; one `OneFontAsset`
+  is made per source file however many labels share it, and a font asset baked
+  to a static atlas — which is every font asset TMP ships, including the
+  LiberationSans in a first project — is followed through the GUID it keeps
+  rather than declared missing. TMP's project-wide default and global
+  fallbacks are offered to OneText's own settings, and only ever fill a blank.
+
+  Prefabs convert before scenes, and a base prefab before anything built out
+  of it. That ordering is the difference between a migration and a mess: a
+  variant converted first records the swap as an override on a base that still
+  holds the old component, and the object ends up carrying both. Converting
+  the base first means the variant, when it opens, has simply nothing left to
+  convert — which is also why converting twice is a no-op, asserted rather
+  than hoped for.
+
+  Everything that will not survive is named before the button, not after:
+  unsupported markup that will print literally, a TMP margin OneText has no
+  concept of (the rect is the text box), alignment and overflow modes with no
+  equivalent, a line spacing that is an offset there and a multiplier here, a
+  sprite or animation tag on world text that has neither, a font asset with no
+  file behind it. Errors, warnings and notes, drawn the way Doctor draws them,
+  and available on the command line — `-executeMethod
+  OneText.Editor.ComponentMigration.RunFromCommandLine` scans, reports and
+  exits 1, so a team mid-migration can put "no TMP components left" in a
+  pipeline instead of in somebody's memory.
+
+  The TMP-reading half lives in its own assembly, gated on TMP being installed,
+  and it only reads: it fills a struct of primitives and OneText enums, and
+  every component that is destroyed and every serialized field that is written
+  is done by the ungated engine. That is deliberate. It means the dangerous
+  code is ordinary editor code that CI can test on a machine which has never
+  had TMP installed, and it means the tab still migrates `UnityEngine.UI.Text`
+  and `TextMesh` — and says plainly that TMP was not found — in a project that
+  already removed the package.
+
 ### Fixed
 
 - **The whisker under a sharp vertex: the antialiasing width came off the

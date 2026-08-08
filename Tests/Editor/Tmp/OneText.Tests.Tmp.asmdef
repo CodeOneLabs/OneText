@@ -1,0 +1,42 @@
+{
+    "name": "OneText.Tests.Tmp",
+    "rootNamespace": "OneText.Tests",
+    "references": [
+        "OneText",
+        "OneText.UGUI",
+        "OneText.Mesh",
+        "OneText.Editor",
+        "OneText.Editor.Onboarding.Tmp",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "ONETEXT_TMPRO",
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.textmeshpro",
+            "expression": "3.0.0",
+            "define": "ONETEXT_TMPRO"
+        },
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "ONETEXT_TMPRO"
+        }
+    ],
+    "noEngineReferences": false
+}

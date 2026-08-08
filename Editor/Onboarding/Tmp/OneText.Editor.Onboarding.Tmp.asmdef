@@ -1,0 +1,46 @@
+{
+    "name": "OneText.Editor.Onboarding.Tmp",
+    "rootNamespace": "OneText.Editor",
+    "references": [
+        "OneText",
+        "OneText.UGUI",
+        "OneText.Mesh",
+        "OneText.Editor",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "ONETEXT_TMPRO"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.textmeshpro",
+            "expression": "3.0.0",
+            "define": "ONETEXT_TMPRO"
+        },
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "ONETEXT_TMPRO"
+        },
+        {
+            "name": "com.unity.textmeshpro",
+            "expression": "3.2.0",
+            "define": "ONETEXT_TMP_WRAPMODE"
+        },
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "ONETEXT_TMP_WRAPMODE"
+        }
+    ],
+    "noEngineReferences": false
+}

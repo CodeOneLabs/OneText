@@ -10,16 +10,19 @@ namespace OneText.Editor
     /// <summary>
     /// Coming from TextMesh Pro, with the mechanical part done for you.
     ///
-    /// The hard part of leaving TMP was never the pixels; it is that
-    /// <c>TextMeshProUGUI</c> is written in four hundred files and a person has
-    /// to open all of them. This scans the project's own scripts, shows exactly
-    /// which lines would change and which TMP names it cannot carry over, and
-    /// rewrites the files you tick — and it does all of that as text, so it
-    /// works in a project where TMP was already removed and nothing compiles,
-    /// which is the project that needs it most.
+    /// Leaving TMP is two migrations wearing one name, and they fail in opposite
+    /// ways. The scripts are text: <c>TextMeshProUGUI</c> is written in four
+    /// hundred files, a person has to open all of them, and every line missed is
+    /// a compile error somebody will trip over within the minute. The scenes and
+    /// prefabs are data: a scene that still holds a TMP component opens, plays
+    /// and looks exactly right, and stays that way until the package leaves and
+    /// every label in it becomes a nameless missing script.
     ///
-    /// Nothing is written without the diff being on screen first, and nothing
-    /// is written over uncommitted work without saying so.
+    /// So this tab does both, in the order a project actually needs them —
+    /// components first, because the scan is free and the count is the thing
+    /// anybody deciding whether to migrate wants to know, then the script
+    /// rewrite. Nothing is written without the report being on screen first, and
+    /// nothing is written over uncommitted work without saying so.
     /// </summary>
     public sealed class HubOnboardingTab : HubSection
     {
@@ -28,6 +31,11 @@ namespace OneText.Editor
         private int _preview = -1;
         private int _scanned;
 
+        private MigrationReport _migration;
+        private bool _converted;
+        private bool _allScenes;
+        private bool _showNotes;
+
         public override OneTextHub.Tab Tab => OneTextHub.Tab.Onboarding;
 
         public override string Title => "Onboarding";
@@ -35,28 +43,310 @@ namespace OneText.Editor
         public override string Eyebrow => "Coming from TextMesh Pro?";
 
         public override string Lede =>
-            "The type names and the using, rewritten across your own scripts, with the diff on " +
-            "screen before anything is written and every TMP name it cannot carry over named up " +
-            "front. Pure text: it works even with the package already gone.";
+            "Every TMP and legacy text component in your scenes and prefabs, counted, judged and " +
+            "swapped in place — and the type names in your own scripts rewritten, with the diff " +
+            "on screen first. Everything that will not survive is named up front rather than " +
+            "found later.";
 
         public override string NavHint => "migrate off TMP";
 
         public override string NavGroup => "Migrate";
 
-        public override string BadgeText =>
-            _findings == null ? "—" : _findings.Count.ToString("n0");
+        public override string BadgeText
+        {
+            get
+            {
+                if (_migration == null && _findings == null) return "—";
+                int total = (_migration?.Targets.Count ?? 0) + (_findings?.Count ?? 0);
+                return total.ToString("n0");
+            }
+        }
 
-        public override HubTone BadgeTone =>
-            _findings == null ? HubTone.Neutral
-            : _findings.Count == 0 ? HubTone.Good
-            : HubTone.Info;
+        public override HubTone BadgeTone
+        {
+            get
+            {
+                if (_migration == null && _findings == null) return HubTone.Neutral;
+                if (_migration != null && _migration.Errors > 0) return HubTone.Bad;
+                int total = (_migration?.Targets.Count ?? 0) + (_findings?.Count ?? 0);
+                return total == 0 ? HubTone.Good : HubTone.Info;
+            }
+        }
 
         protected override void Compose(VisualElement content)
         {
+            content.Add(ComponentCard());
+            if (_migration != null && _migration.Targets.Count > 0)
+            {
+                content.Add(ContainersCard());
+                content.Add(FindingsCard());
+            }
+
             content.Add(ScanCard());
-            if (_findings == null || _findings.Count == 0) return;
-            content.Add(FilesCard());
-            content.Add(PreviewCard());
+            if (_findings != null && _findings.Count > 0)
+            {
+                content.Add(FilesCard());
+                content.Add(PreviewCard());
+            }
+
+            content.Add(CiCard());
+        }
+
+        // ------------------------------------------------------- components
+
+        private VisualElement ComponentCard()
+        {
+            var card = HubUI.MakeCard("Scenes and prefabs",
+                "TextMeshProUGUI and TextMeshPro become OneTextLabel and OneTextMesh, " +
+                "TMP_InputField becomes OneTextInputField, and UnityEngine.UI.Text and TextMesh " +
+                "come along too. Font assets are made from the .ttf behind them, once each, and " +
+                "every reference to a swapped component is re-pointed and read back.");
+
+            card.Act(HubUI.Ghost(_migration == null ? "Scan Scenes & Prefabs…" : "Scan again",
+                ScanComponents));
+            if (_migration != null && Convertible() > 0)
+                card.Act(HubUI.Primary($"Convert {Convertible():n0} component(s)", () => Convert(null)));
+
+            if (!MigrationProviders.HasTextMeshPro)
+            {
+                card.Add(HubUI.Notice(
+                    "TextMesh Pro is not in this project, so nothing here looks for it: the scan " +
+                    "covers UnityEngine.UI.Text and TextMesh only. Install TMP if you still have " +
+                    "TMP components to convert — this window will find them the moment it is back.",
+                    HubTone.Warn));
+            }
+
+            card.Add(HubUI.Pill(_allScenes ? "Every scene under Assets" : "Scenes in Build Settings",
+                _allScenes, on =>
+                {
+                    _allScenes = on;
+                    Refresh();
+                }));
+
+            if (_migration == null)
+            {
+                card.Add(HubUI.Empty("Not scanned yet",
+                    "Opens each scene and prefab, reads every component on every object — " +
+                    "inactive ones included — and closes them again. Nothing is saved, nothing " +
+                    "is dirtied, and the report says what would and would not survive.",
+                    "Scan Scenes & Prefabs…", ScanComponents, "⇄"));
+                return card.Root;
+            }
+
+            var tiles = HubUI.Box("tiles");
+            tiles.Add(HubUI.Tile("labels",
+                (_migration.CountOfKind(MigrationKind.Label)).ToString("n0"), "become OneTextLabel"));
+            tiles.Add(HubUI.Tile("world text",
+                (_migration.CountOfKind(MigrationKind.Mesh)).ToString("n0"), "become OneTextMesh"));
+            tiles.Add(HubUI.Tile("input fields",
+                (_migration.CountOfKind(MigrationKind.InputField)).ToString("n0"),
+                "become OneTextInputField"));
+            tiles.Add(HubUI.Tile("no counterpart",
+                (_migration.CountOfKind(MigrationKind.ReportOnly)).ToString("n0"), "left alone",
+                _migration.CountOfKind(MigrationKind.ReportOnly) == 0 ? HubTone.Good : HubTone.Warn));
+            card.Add(tiles);
+
+            var severity = HubUI.Box("tiles");
+            severity.Add(HubUI.Tile("containers", _migration.Containers.Count.ToString("n0"),
+                $"of {_migration.ContainersScanned:n0} opened"));
+            severity.Add(HubUI.Tile("errors", _migration.Errors.ToString("n0"),
+                "will not survive as-is", _migration.Errors == 0 ? HubTone.Good : HubTone.Bad));
+            severity.Add(HubUI.Tile("warnings", _migration.Warnings.ToString("n0"),
+                "survive, but differently",
+                _migration.Warnings == 0 ? HubTone.Good : HubTone.Warn));
+            severity.Add(HubUI.Tile("notes",
+                _migration.Count(DoctorSeverity.Info).ToString("n0"), "worth reading once"));
+            card.Add(severity);
+
+            if (_converted)
+            {
+                card.Add(HubUI.Notice(
+                    $"{_migration.Converted:n0} component(s) swapped, {_migration.FontsCreated:n0} " +
+                    $"font asset(s) created, {_migration.Relinked:n0} reference(s) re-pointed. " +
+                    "Everything still listed below is what remains after the conversion.",
+                    _migration.Errors == 0 ? HubTone.Good : HubTone.Warn));
+            }
+            else if (_migration.Targets.Count == 0)
+            {
+                card.Add(HubUI.Notice(
+                    $"Nothing to convert: none of the {_migration.ContainersScanned:n0} scenes and " +
+                    "prefabs scanned hold a text component this module knows.", HubTone.Good));
+            }
+            else
+            {
+                card.Add(HubUI.Notice(_migration.Summary(),
+                    _migration.Errors == 0 ? HubTone.Info : HubTone.Bad));
+            }
+            return card.Root;
+        }
+
+        private int Convertible()
+        {
+            if (_migration == null) return 0;
+            int n = 0;
+            foreach (var target in _migration.Targets) if (target.Convertible) n++;
+            return n;
+        }
+
+        private void ScanComponents()
+        {
+            _migration = ComponentMigration.Scan(new ComponentMigration.Options
+            {
+                AllScenes = _allScenes,
+            });
+            _converted = false;
+            Refresh();
+            Say(_migration.Summary());
+        }
+
+        /// <summary>
+        /// The containers, each with what it holds and a button that converts
+        /// only that one.
+        ///
+        /// One at a time is the option a real project uses. A migration that is
+        /// all-or-nothing across four hundred prefabs is a migration nobody
+        /// starts on a Tuesday.
+        /// </summary>
+        private VisualElement ContainersCard()
+        {
+            var card = HubUI.MakeCard("Where they are",
+                "Prefabs convert before scenes, and a base prefab before anything built out of " +
+                "it, so a variant never ends up holding both components.").Flush();
+
+            foreach (string container in _migration.Containers)
+            {
+                int targets = 0, errors = 0;
+                foreach (var target in _migration.Targets)
+                    if (target.Container == container) targets++;
+                foreach (var finding in _migration.Findings)
+                    if (finding.Container == container && finding.Severity == DoctorSeverity.Error)
+                        errors++;
+
+                var row = HubUI.Box("folder-row");
+                var name = HubUI.Mono(HubUI.Text(container, "kv__value"));
+                name.style.flexGrow = 1f;
+                row.Add(name);
+                row.Add(HubUI.Badge($"{targets:n0} component(s)", HubTone.Info));
+                if (errors > 0) row.Add(HubUI.Badge($"{errors:n0} error(s)", HubTone.Bad));
+
+                var asset = AssetDatabase.LoadAssetAtPath<Object>(container);
+                if (asset != null)
+                    row.Add(HubUI.Quiet("Show", () => EditorGUIUtility.PingObject(asset)));
+
+                string only = container;
+                if (!_converted)
+                    row.Add(HubUI.Quiet("Convert", () => Convert(new List<string> { only })));
+                card.Add(row);
+            }
+            return card.Root;
+        }
+
+        private VisualElement FindingsCard()
+        {
+            var host = new VisualElement();
+            var head = HubUI.MakeCard("What will and will not survive",
+                "Errors are things that do not come across. Warnings come across differently and " +
+                "you should look at them. Notes are arithmetic worth knowing about.");
+            head.Add(HubUI.Pill("Show notes", _showNotes, on =>
+            {
+                _showNotes = on;
+                Refresh();
+            }));
+            host.Add(head.Root);
+
+            if (_migration.Findings.Count == 0)
+            {
+                host.Add(HubUI.Notice("Nothing to report: every component maps exactly.",
+                    HubTone.Good));
+                return host;
+            }
+
+            foreach (var finding in _migration.Findings)
+            {
+                if (finding.Severity == DoctorSeverity.Info && !_showNotes) continue;
+                host.Add(Finding(finding));
+            }
+            return host;
+        }
+
+        private static VisualElement Finding(in MigrationFinding finding)
+        {
+            var tone = finding.Severity switch
+            {
+                DoctorSeverity.Error => HubTone.Bad,
+                DoctorSeverity.Warning => HubTone.Warn,
+                _ => HubTone.Neutral,
+            };
+
+            var card = HubUI.MakeCard(finding.Message, null);
+            card.TitleLabel.style.unityFontStyleAndWeight = FontStyle.Normal;
+            card.Actions.Add(HubUI.Badge(finding.Rule, tone));
+
+            card.Root.style.borderLeftWidth = 2f;
+            card.Root.style.borderLeftColor = tone switch
+            {
+                HubTone.Bad => new Color(1f, 0.482f, 0.447f),
+                HubTone.Warn => new Color(1f, 0.8f, 0.4f),
+                _ => new Color(0.839f, 0.898f, 0.867f, 0.2f),
+            };
+
+            if (!string.IsNullOrEmpty(finding.Component) || !string.IsNullOrEmpty(finding.Path))
+            {
+                card.Add(HubUI.KeyValue(finding.Component ?? "component",
+                    finding.Path ?? string.Empty));
+            }
+            if (!string.IsNullOrEmpty(finding.Sample))
+                card.Add(HubUI.KeyValue("Sample", finding.Sample));
+            if (!string.IsNullOrEmpty(finding.Container))
+            {
+                var row = HubUI.Box("row");
+                row.Add(HubUI.Mono(HubUI.Text(finding.Container, "kv__value")));
+                var asset = AssetDatabase.LoadAssetAtPath<Object>(finding.Container);
+                if (asset != null)
+                    row.Add(HubUI.Quiet("Show in project", () => EditorGUIUtility.PingObject(asset)));
+                card.Add(row);
+            }
+
+            if (card.Body.childCount == 0) card.Body.style.display = DisplayStyle.None;
+            return card.Root;
+        }
+
+        /// <summary>
+        /// Converts, after saying out loud what is about to change on disk.
+        ///
+        /// Scenes and prefabs are assets, and the undo for an asset a batch
+        /// touched is version control. So git is asked first, and when git
+        /// cannot answer that is said too, rather than quietly treated as
+        /// "clean".
+        /// </summary>
+        private void Convert(List<string> only)
+        {
+            var containers = only ?? new List<string>(_migration.Containers);
+            if (containers.Count == 0)
+            {
+                SayBadly("Nothing to convert.");
+                return;
+            }
+
+            int components = 0;
+            foreach (var target in _migration.Targets)
+                if (target.Convertible && containers.Contains(target.Container)) components++;
+
+            if (!OnboardingGit.ConfirmOverwrite("Convert components?",
+                    $"{components:n0} component(s) in {containers.Count:n0} scene(s) and prefab(s) " +
+                    "will be destroyed and replaced, and those files will be saved.",
+                    containers, "Convert"))
+                return;
+
+            _migration = ComponentMigration.Apply(new ComponentMigration.Options
+            {
+                AllScenes = _allScenes,
+                OnlyContainers = only,
+                AdoptProjectFontDefaults = true,
+            });
+            _converted = true;
+            Refresh();
+            Say($"Converted {_migration.Converted:n0} component(s). {_migration.Summary()}");
         }
 
         // --------------------------------------------------------------- scan
@@ -242,9 +532,7 @@ namespace OneText.Editor
         /// The dialog is not ceremony. This edits source files in place, and the
         /// undo for that is version control; a rewrite dropped on top of an
         /// afternoon of uncommitted work is unrecoverable in a way nothing else
-        /// in this window is. So git is asked first, and when git cannot answer
-        /// — no repository, no git on the path — that is said too, rather than
-        /// quietly treated as "clean".
+        /// in this window is.
         /// </summary>
         private void Apply()
         {
@@ -255,7 +543,12 @@ namespace OneText.Editor
                 return;
             }
 
-            if (!ConfirmOverwrite(targets)) return;
+            var relative = new List<string>();
+            foreach (var finding in targets) relative.Add(ProjectPath(finding.Path));
+            if (!OnboardingGit.ConfirmOverwrite("Rewrite scripts?",
+                    $"{targets.Count} file(s) will be overwritten in place.",
+                    relative, "Rewrite"))
+                return;
 
             int written = 0, stale = 0;
             var failed = new List<string>();
@@ -311,7 +604,7 @@ namespace OneText.Editor
         /// </summary>
         private static void Write(string path, string text)
         {
-            bool bom = false;
+            bool bom;
             using (var stream = File.OpenRead(path))
             {
                 var head = new byte[3];
@@ -321,95 +614,31 @@ namespace OneText.Editor
             File.WriteAllText(path, text, new UTF8Encoding(bom));
         }
 
-        private bool ConfirmOverwrite(List<TmpScriptFinding> targets)
-        {
-            var relative = new List<string>();
-            foreach (var finding in targets) relative.Add(ProjectPath(finding.Path));
-
-            string status = Git($"status --porcelain -- {Quote(relative)}");
-            if (status == null)
-            {
-                return HubUI.Confirm("Rewrite scripts?",
-                    $"{targets.Count} file(s) will be overwritten in place.\n\n" +
-                    "git could not be asked whether they hold uncommitted work — there may be no " +
-                    "repository here, or no git on the path. This edit cannot be undone from " +
-                    "inside Unity.",
-                    "Rewrite anyway");
-            }
-
-            var dirty = new List<string>();
-            foreach (string line in status.Split('\n'))
-            {
-                string trimmed = line.Trim();
-                if (trimmed.Length == 0) continue;
-                dirty.Add(trimmed);
-            }
-
-            if (dirty.Count == 0)
-            {
-                return HubUI.Confirm("Rewrite scripts?",
-                    $"{targets.Count} file(s) will be overwritten in place. git reports every one " +
-                    "of them committed, so this is revertible.",
-                    "Rewrite");
-            }
-
-            var listing = new StringBuilder();
-            for (int i = 0; i < dirty.Count && i < 10; i++) listing.Append('\n').Append(dirty[i]);
-            if (dirty.Count > 10) listing.Append($"\n… and {dirty.Count - 10} more");
-
-            return HubUI.Confirm("Uncommitted changes",
-                $"{dirty.Count} of the file(s) about to be rewritten hold uncommitted work:\n" +
-                listing + "\n\nRewriting overwrites it, and Unity cannot undo that. Commit or " +
-                "stash first.",
-                "Rewrite anyway");
-        }
-
-        private static string Quote(List<string> paths)
-        {
-            var quoted = new StringBuilder();
-            foreach (string path in paths)
-            {
-                if (quoted.Length > 0) quoted.Append(' ');
-                quoted.Append('"').Append(path).Append('"');
-            }
-            return quoted.ToString();
-        }
+        // ----------------------------------------------------------------- CI
 
         /// <summary>
-        /// Asks git, and returns null for every way it can fail to answer:
-        /// absent, not a repository, or too slow. "I do not know" and "clean"
-        /// are different answers and the caller says different things about
-        /// them.
+        /// The component scan, on the command line. A team midway through a
+        /// migration can make "no TMP components left" a merge condition rather
+        /// than a thing somebody remembers to check.
         /// </summary>
-        private static string Git(string arguments)
+        private VisualElement CiCard()
         {
-            try
-            {
-                var info = new System.Diagnostics.ProcessStartInfo("git", arguments)
-                {
-                    WorkingDirectory = ProjectRoot(),
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using (var process = System.Diagnostics.Process.Start(info))
-                {
-                    if (process == null) return null;
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(5000)) return null;
-                    return process.ExitCode == 0 ? output : null;
-                }
-            }
-            catch (System.Exception)
-            {
-                return null;
-            }
-        }
+            var card = HubUI.MakeCard("On CI",
+                "Scans and reports; never converts. Exits 1 when something in the project would " +
+                "not survive the migration as it stands.");
 
-        private static string ProjectRoot() =>
-            Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath;
+            const string command =
+                "Unity -batchmode -quit -projectPath . -executeMethod " +
+                "OneText.Editor.ComponentMigration.RunFromCommandLine -oneAllScenes";
+
+            card.Add(HubUI.Mono(HubUI.Text(command, "code")));
+            card.Act(HubUI.Quiet("Copy", () =>
+            {
+                EditorGUIUtility.systemCopyBuffer = command;
+                Say("Command copied to the clipboard.");
+            }));
+            return card.Root;
+        }
 
         private static string ProjectPath(string fullPath) =>
             TextSourceScanner.ToProjectPath(fullPath);
