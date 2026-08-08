@@ -22,7 +22,7 @@ namespace OneText.Editor
     /// </summary>
     public static class M15VerticalProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
         private const string JapaneseFont =
             "Packages/com.onetext.core/Tests/CoverageFonts~/NotoSansCJKjp-Regular.otf";
 

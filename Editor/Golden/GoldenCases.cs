@@ -73,9 +73,9 @@ namespace OneText.Editor
     /// </summary>
     public static class GoldenCases
     {
-        public const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        public const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
-        public const string VariableFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+        public const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        public const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
+        public const string VariableFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         private const string CoverageDir = "Packages/com.onetext.core/Tests/CoverageFonts~/";
         public const string JapaneseFont = CoverageDir + "NotoSansCJKjp-Regular.otf";

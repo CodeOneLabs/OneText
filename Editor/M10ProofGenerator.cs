@@ -24,8 +24,8 @@ namespace OneText.Editor
     /// </summary>
     public static class M10ProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string LoclFont = "Packages/com.onetext.core/Tests/Fonts/LoclRegional.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string LoclFont = "Packages/com.onetext.core/Tests/Fonts~/LoclRegional.ttf";
 
         // Not vendored and not required: a system CJK face, because the rules
         // in this file are about full-width marks and no font in the test data

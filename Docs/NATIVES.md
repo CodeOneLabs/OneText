@@ -262,17 +262,31 @@ the two things no folder name can imply: `GetEditorData("OS")` and the iOS
 `AddToEmbeddedBinaries`. No editor OS means no editor plugin, which is the
 `DllNotFoundException`.
 
-So the Linux `.so`'s `.meta` is written in the older form, which Unity 6 reads
-back unchanged (Unity's own `com.unity.rendering.denoising` ships that form to
-a Unity 6 editor). The GUID is untouched, as it must be.
+So **all ten plugin `.meta`s are written in the older form now**, which Unity 6
+reads back unchanged (Unity's own `com.unity.rendering.denoising` ships that
+form to a Unity 6 editor). Every GUID is untouched, as it must be. The Linux
+`.so` went first; the other nine followed once 2022.3's `NativesTests` run had
+named what the folder-guessing fallback loses: `macOS/libHarfBuzzSharp.dylib:
+wrong editor OS` and `the iOS framework is not embedded`, both read back as
+empty strings because no folder name can imply them. The conversion is
+mechanical — the `platformData` map becomes a list of `first:`/`second:` pairs,
+keyed by *group and* name (`Editor: Editor`, `Standalone: OSXUniversal`,
+`iPhone: iOS`, `Windows Store Apps: WindowsStoreApps`, a bare `Any:`) — and
+every setting the map held rides along, including the Android `Is16KbAligned`
+values and the iOS `AddToEmbeddedBinaries` that `NativesTests` asserts.
 
-**The other nine are still `serializedVersion: 3`**, and on 2022.3 they still
-read back empty for anything a folder name cannot imply: `NativesTests` reports
-`macOS/libHarfBuzzSharp.dylib: wrong editor OS` and `the iOS framework is not
-embedded`. Neither can be seen from a Linux runner as anything but a failed
-assertion, and neither is a Linux problem; converting the rest wants an editor
-of each platform to confirm against, or a 2022.3 editor to run
-`NativePluginSettings.ApplyBatch` from, which is what writes these files.
+Converting them also unmasked one thing the fail-fast assertion had been
+standing in front of: 2022.3 reads the Linux `.so`'s `CPU: x86_64` back as
+`AnyCPU`, because it offers no CPU choice for Linux at all (32-bit Linux left
+in 2019.2). Unity 6 preserves the value; `NativesTests` accepts exactly that
+one substitution on exactly that platform, where one ABI makes the two claims
+identical.
+
+One caution survives the conversion: `NativePluginSettings.ApplyBatch` is what
+normally writes these files, and run from a Unity 6 editor it writes
+`serializedVersion: 3` again. Until it learns otherwise, run it from a 2022.3
+editor when the natives are re-vendored, or re-do this conversion by hand and
+let `NativesTests` on the 2022.3 CI job say whether it held.
 
 ### Rebuilding it
 

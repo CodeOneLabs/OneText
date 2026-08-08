@@ -13,9 +13,9 @@ namespace OneText.Editor
     /// </summary>
     public static class M4ProofGenerator
     {
-        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
-        private const string VariableFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+        private const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
+        private const string VariableFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         private const string Paragraph =
             "OneText lays out real text: it wraps at Unicode line break " +

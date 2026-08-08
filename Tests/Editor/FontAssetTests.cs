@@ -7,8 +7,8 @@ namespace OneText.Tests
     /// <summary>The font asset: storage, sharing and variable-font instances.</summary>
     public class FontAssetTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string VariableFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string VariableFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         private static OneFontAsset CreateAsset(string packagePath)
         {

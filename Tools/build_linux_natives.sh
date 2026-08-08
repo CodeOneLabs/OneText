@@ -327,7 +327,7 @@ ${CC:-gcc} "$BUILD/smoke.c" -o "$BUILD/smoke" -ldl
 
 echo
 echo "==> loading it with a second HarfBuzz already in the process"
-if "$BUILD/smoke" "$SO" "$REPO/Tests/Fonts/NotoSans.ttf" "$BUILD/libfakehb.so"; then
+if "$BUILD/smoke" "$SO" "$REPO/Tests/Fonts~/NotoSans.ttf" "$BUILD/libfakehb.so"; then
   say "ok: shaped, and bound to itself throughout"
 else
   st=$?

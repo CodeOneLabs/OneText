@@ -5,7 +5,7 @@ namespace OneText.Unicode
     /// <summary>
     /// The line-breaking and spacing rules East Asian typography specs call
     /// for and UAX #14 leaves to tailoring: kinsoku (禁則処理 / 금칙 / 避头尾),
-    /// punctuation compression (約物詰め / 标점挤压), and the quarter-em gap
+    /// punctuation compression (約物詰め / 标点挤压), and the quarter-em gap
     /// between Han and Latin.
     ///
     /// These are the loudest unserved complaints from the Korean, Japanese and

@@ -14,8 +14,8 @@ namespace OneText.Tests
     /// </summary>
     public class RichTextTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string VariableFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string VariableFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         private static FontData LoadFont(string packagePath) =>
             FontData.Load(File.ReadAllBytes(Path.GetFullPath(packagePath)));
@@ -505,7 +505,7 @@ namespace OneText.Tests
         {
             // CffShapes.otf is authored for the test suite and has no axes,
             // which is exactly the case this covers.
-            using var font = LoadFont("Packages/com.onetext.core/Tests/Fonts/CffShapes.otf");
+            using var font = LoadFont("Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf");
             if (font.IsVariable) Assert.Ignore("test font is variable");
             using var fonts = FontStack.Single(font);
 

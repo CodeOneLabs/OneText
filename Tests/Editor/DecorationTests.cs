@@ -26,8 +26,8 @@ namespace OneText.Tests
     /// </summary>
     public class DecorationTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts/ColorGlyphs.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ColorFontPath = "Packages/com.onetext.core/Tests/Fonts~/ColorGlyphs.ttf";
         private const string JapaneseFontPath =
             "Packages/com.onetext.core/Tests/CoverageFonts~/NotoSansCJKjp-Regular.otf";
 
@@ -558,6 +558,12 @@ namespace OneText.Tests
             // of an em left of centre, which is through the character rather
             // than beside it, and the wash off to one side of the text it is
             // supposed to be behind.
+            //
+            // The Japanese face is a coverage font, which is a download rather
+            // than repository content; without it this case cannot be posed.
+            if (!File.Exists(Path.GetFullPath(JapaneseFontPath)))
+                Assert.Inconclusive("No NotoSansCJKjp-Regular.otf. " +
+                                    "Run: python3 Tools/fetch_coverage_fonts.py");
             var label = NewLabel("<mark><u>あ</u></mark>", JapaneseFontPath);
             label.WritingMode = TextWritingMode.VerticalRightToLeft;
             label.Language = "ja";

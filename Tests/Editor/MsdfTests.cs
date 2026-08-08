@@ -24,10 +24,10 @@ namespace OneText.Tests
     /// </summary>
     public class MsdfTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private const string VariableFontPath =
-            "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+            "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         private readonly List<Object> _created = new List<Object>();
 
@@ -305,7 +305,7 @@ namespace OneText.Tests
         /// back clean, which is what M14 meant by "not yet a problem at the
         /// sizes precise is for" and why this went unnoticed until now.
         /// </summary>
-        private const string CffFontPath = "Packages/com.onetext.core/Tests/Fonts/CffShapes.otf";
+        private const string CffFontPath = "Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf";
 
         [Test]
         public void WithoutErrorCorrection_TheShallowCurveGrowsInkThatIsNotThere()

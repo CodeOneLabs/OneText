@@ -25,7 +25,7 @@ namespace OneText.Tests
     /// </summary>
     public class MaterialLifecycleTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private readonly List<Object> _created = new List<Object>();
 

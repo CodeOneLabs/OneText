@@ -31,7 +31,7 @@ namespace OneText.Tests
     [Category("Coverage")]
     public class EmojiSequenceTests
     {
-        private const string EmojiTestPath = "Packages/com.onetext.core/Tests/UnicodeData/emoji-test.txt";
+        private const string EmojiTestPath = "Packages/com.onetext.core/Tests/UnicodeData~/emoji-test.txt";
         private const string EmojiFontPath =
             "Packages/com.onetext.core/Tests/CoverageFonts~/NotoColorEmoji.ttf";
 

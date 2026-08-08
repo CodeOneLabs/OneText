@@ -28,18 +28,18 @@ COVERAGE = "Tests/CoverageFonts~"
 # Hello, around the world. One per script the hero already speaks for, short
 # enough to stay readable when extruded and tumbled.
 GREETINGS = [
-    ("Hello!",      "Latin",      "Tests/Fonts/NotoSans.ttf"),
-    ("Hola!",       "Latin",      "Tests/Fonts/NotoSans.ttf"),
-    ("Ciao!",       "Latin",      "Tests/Fonts/NotoSans.ttf"),
+    ("Hello!",      "Latin",      "Tests/Fonts~/NotoSans.ttf"),
+    ("Hola!",       "Latin",      "Tests/Fonts~/NotoSans.ttf"),
+    ("Ciao!",       "Latin",      "Tests/Fonts~/NotoSans.ttf"),
     ("안녕",         "Hangul",     f"{COVERAGE}/NotoSansCJKkr-Regular.otf"),
     ("你好",         "Han",        f"{COVERAGE}/NotoSansCJKsc-Regular.otf"),
     ("こんにちは",    "Kana",       f"{COVERAGE}/NotoSansCJKjp-Regular.otf"),
     ("नमस्ते",       "Devanagari", f"{COVERAGE}/NotoSansDevanagari-Regular.ttf"),
     ("สวัสดี",       "Thai",       f"{COVERAGE}/NotoSansThai-Regular.ttf"),
     ("مرحبا",       "Arabic",     f"{COVERAGE}/NotoSansArabic-Regular.ttf"),
-    ("Привет!",     "Cyrillic",   "Tests/Fonts/NotoSans.ttf"),
+    ("Привет!",     "Cyrillic",   "Tests/Fonts~/NotoSans.ttf"),
     ("שלום",        "Hebrew",     f"{COVERAGE}/NotoSansHebrew-Regular.ttf"),
-    ("Γεια!",       "Greek",      "Tests/Fonts/NotoSans.ttf"),
+    ("Γεια!",       "Greek",      "Tests/Fonts~/NotoSans.ttf"),
 ]
 
 _cache = {}

@@ -41,7 +41,7 @@ namespace OneText.Tests
     public class CodepointCoverageTests
     {
         private const string FontDirPath = "Packages/com.onetext.core/Tests/CoverageFonts~";
-        private const string UnicodeDataPath = "Packages/com.onetext.core/Tests/UnicodeData/UnicodeData.txt";
+        private const string UnicodeDataPath = "Packages/com.onetext.core/Tests/UnicodeData~/UnicodeData.txt";
 
         /// <summary>
         /// Codepoints that are assigned and are meant to be drawn.

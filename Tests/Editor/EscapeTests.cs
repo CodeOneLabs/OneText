@@ -18,7 +18,7 @@ namespace OneText.Tests
     /// </summary>
     public class EscapeTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         // ------------------------------------------------------- the parser
 

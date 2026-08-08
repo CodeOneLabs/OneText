@@ -35,7 +35,7 @@ namespace OneText.Editor
     {
         private const string WorkFolder = "Assets/OneTextMigrationProof";
         private const string ScenePath = WorkFolder + "/MigrationProof.unity";
-        private const string CaptionFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string CaptionFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private const int Width = 1400;
         private const int Half = 460;

@@ -11,7 +11,7 @@ namespace OneText.Tests
     /// </summary>
     public class AutoSizeTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private const string LongText =
             "the quick brown fox jumps over the lazy dog and keeps on running " +

@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Done** | M0 to M15, shipped as v0.1.0 (2026-08-05): shaping, the Unicode algorithms, layout, the shared atlas, uGUI components, natives for every platform including wasm, rich text, colour emoji, animation, Asian typography, the Hub, an input field that survives an IME, decorations, MSDF, ruby, vertical writing |
-| **Now: M16** | Ship it: a remote and CI's first green run, the browser demo, the platform and IME matrix on real hardware, OpenUPM listing and the TMP migration guide |
-| **Next: M17** | The known gaps: COLRv1, MSDF error correction, tate-chū-yoko, vertical editing, Thai proven against real data |
-| **Later** | The open squares: UI Toolkit frontend, world-space text, ECS/DOTS, accessibility |
+| **Done** | M0 to M15, shipped as v0.1.0 (2026-08-05): shaping, the Unicode algorithms, layout, the shared atlas, uGUI components, natives for every platform including wasm, rich text, colour emoji, animation, Asian typography, the Hub, an input field that survives an IME, decorations, MSDF, ruby, vertical writing. Then v0.2.0 (2026-08-08): world-space text, auto-size, MSDF error correction, and the Hub's Onboarding tab for leaving TMP |
+| **Now: M16** | Ship it: a remote and CI's first green run, the browser demo, the platform and IME matrix on real hardware, OpenUPM listing and the TMP migration guide (the tooling shipped in v0.2.0; the prose has not) |
+| **Next: M17** | The known gaps: COLRv1, tate-chū-yoko, vertical editing, Thai proven against real data |
+| **Later** | The open squares: UI Toolkit frontend, ECS/DOTS, accessibility |
 | **1.0** | A trust claim, not a feature list: every platform verified on real hardware, CI green as a standing condition, the IME matrix passed, external projects shipping on the package |
 
 The premise behind the ordering: with v0.1.0 out, the bottleneck is no longer
@@ -122,8 +122,12 @@ in priority order:
    it is the one square where first-party competition exists, and the one
    where a single shaping core serving uGUI *and* UI Toolkit would be unique.
    Start when the issue tracker asks for it.
-2. **World-space text.** Lit, sorted, non-Canvas; the layout engine does
-   not care, which makes this the cheapest square on the board.
+2. ~~**World-space text.**~~ Done in v0.2.0, and it was the cheapest square
+   on the board exactly as predicted: `OneTextMesh` runs the whole pipeline
+   through a MeshRenderer with no Canvas anywhere, on TMP's world scale so a
+   migrated nameplate keeps its numbers. What it deliberately does not carry
+   is reveal, sprites, styles and interaction — the smaller component, on
+   purpose.
 3. **ECS/DOTS.** Shaped text for entities exists nowhere; the community
    package that tries is built on TextCore and cannot shape.
 4. **Accessibility.** Exposing text to screen readers; no text asset even

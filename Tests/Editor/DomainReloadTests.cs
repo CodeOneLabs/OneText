@@ -26,7 +26,7 @@ namespace OneText.Tests
     /// </summary>
     public class DomainReloadTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private bool _previousEnabled;
         private EnterPlayModeOptions _previousOptions;

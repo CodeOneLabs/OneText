@@ -12,7 +12,7 @@ namespace OneText.Tests
     /// </summary>
     public class OneTextMeshTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
 
         private static OneTextMesh Create(float width = 10f, float height = 4f)
         {

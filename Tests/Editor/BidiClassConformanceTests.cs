@@ -28,7 +28,7 @@ namespace OneText.Tests
     /// </summary>
     public class BidiClassConformanceTests
     {
-        private const string TestFile = "Packages/com.onetext.core/Tests/UnicodeData/BidiTest.txt";
+        private const string TestFile = "Packages/com.onetext.core/Tests/UnicodeData~/BidiTest.txt";
 
         /// <summary>One character per bidi class, by the class's own definition.</summary>
         private static readonly (string Name, int Codepoint)[] Representatives =

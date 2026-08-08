@@ -2,7 +2,7 @@ fileFormatVersion: 2
 guid: 21060ab34f73846de97269c4ee2a657b
 PluginImporter:
   externalObjects: {}
-  serializedVersion: 3
+  serializedVersion: 2
   iconMap: {}
   executionOrder: {}
   defineConstraints: []
@@ -11,27 +11,37 @@ PluginImporter:
   isExplicitlyReferenced: 0
   validateReferences: 1
   platformData:
-    Any:
+  - first:
+      Any:
+    second:
       enabled: 0
       settings: {}
-    Editor:
+  - first:
+      Editor: Editor
+    second:
       enabled: 1
       settings:
         CPU: x86_64
         DefaultValueInitialized: true
         OS: Windows
-    Win:
+  - first:
+      Standalone: Win
+    second:
       enabled: 0
       settings:
         CPU: None
-    Win64:
+  - first:
+      Standalone: Win64
+    second:
       enabled: 1
       settings:
         CPU: x86_64
-    WindowsStoreApps:
+  - first:
+      Windows Store Apps: WindowsStoreApps
+    second:
       enabled: 0
       settings:
         CPU: x64
-  userData: 
-  assetBundleName: 
-  assetBundleVariant: 
+  userData:
+  assetBundleName:
+  assetBundleVariant:

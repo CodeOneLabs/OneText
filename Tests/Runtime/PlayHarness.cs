@@ -19,9 +19,9 @@ namespace OneText.Tests.Play
     /// </summary>
     public sealed class PlayHarness
     {
-        public const string LatinFont = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        public const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
-        public const string VariableFont = "Packages/com.onetext.core/Tests/Fonts/NotoSansVariable.ttf";
+        public const string LatinFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        public const string ArabicFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
+        public const string VariableFont = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         /// <summary>
         /// Fetched by <c>Tools/fetch_coverage_fonts.py</c> rather than

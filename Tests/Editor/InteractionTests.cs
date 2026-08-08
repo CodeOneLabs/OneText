@@ -9,8 +9,8 @@ namespace OneText.Tests
     /// <summary>M5: hit-testing, caret movement, link markup and the input field.</summary>
     public class InteractionTests
     {
-        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        private const string ArabicFontPath = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        private const string ArabicFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         private static FontData LoadFont(string packagePath) =>
             FontData.Load(File.ReadAllBytes(Path.GetFullPath(packagePath)));

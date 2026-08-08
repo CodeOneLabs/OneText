@@ -9,8 +9,8 @@ namespace OneText.Benchmarks
     /// <summary>Font files the benchmarks use, and where to find a CJK face.</summary>
     public static class BenchFonts
     {
-        public const string Latin = "Packages/com.onetext.core/Tests/Fonts/NotoSans.ttf";
-        public const string Arabic = "Packages/com.onetext.core/Tests/Fonts/NotoSansArabic.ttf";
+        public const string Latin = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+        public const string Arabic = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         // CJK faces are too large to vendor, so the benchmark borrows one from
         // the machine it runs on. Both systems under test get the same file.
