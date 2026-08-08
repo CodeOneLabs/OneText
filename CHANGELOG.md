@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Added
+
+- **The three parity names that were deliberately absent — `alignment`,
+  `lineSpacing`, `textWrappingMode` — plus `enableWordWrapping`, the pre-3.2
+  spelling.** They were absent because a straight alias for any of them would
+  lie: TMP's line spacing is an offset and OneText's a multiplier, and TMP's
+  alignment and wrapping name enums this package did not have. What ships now
+  is not a straight alias for any of them — each converts, through the same
+  `TmpCompat` arithmetic the Onboarding migration has always used, so a value
+  assigned through the alias and the same value carried by the migration
+  cannot disagree.
+
+  `alignment` needed its enum, so the package now declares
+  `OneText.UGUI.TextAlignmentOptions` — TMP's names, TMP's values, verified
+  member for member against the real enum by a test in the TMP-guarded
+  assembly. Assigning splits it across `Alignment`/`VerticalAlignment`; the
+  five distinctions OneText does not draw (Flush, GeoAligned, Baseline,
+  Midline, Capline) resolve to the nearest one it does, exactly as the
+  Onboarding report says they will. Reading reassembles the pair, with `Start`
+  and `End` answering the edge they resolve to, since TMP never had a start
+  edge. `lineSpacing` does the offset↔multiplier arithmetic both ways — `10`
+  through the alias is `1.1` on the property, same intent if not the same
+  pixels, and the readback is a float round trip, so compare it with an
+  epsilon rather than `==`. `textWrappingMode` maps TMP's four modes onto
+  OneText's two, and the whitespace-preservation half, which OneText does not
+  hold, is dropped on assignment and absent on read.
+
+  Because a converting alias never promises `get` returns the bits `set` was
+  given (an approximated alignment reads back as what it resolved to, a line
+  spacing as its float round trip), both setters and `LineSpacing`'s swallow
+  writes that change nothing — TMP projects run `if (label.x != v) label.x = v`
+  in Update, and that idiom must land as a no-op, not a nightly re-layout.
+
+  Like the rest of the parity surface these are hidden from completion,
+  forward-only in spirit, and tested in both directions. The script rewriter
+  learned the two qualified enum names (`TMPro.TextAlignmentOptions`,
+  `TMPro.TextWrappingModes`); unqualified uses were already covered by the
+  `using` rewrite, because the new enums live under the names TMP used.
+
 ## [0.2.0] - 2026-08-08
 
 ### Added

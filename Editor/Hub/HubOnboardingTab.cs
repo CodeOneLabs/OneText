@@ -355,9 +355,10 @@ namespace OneText.Editor
         {
             var card = HubUI.MakeCard("Script rewrite",
                 "TextMeshProUGUI and TMP_Text become OneTextLabel, TMP_InputField becomes " +
-                "OneTextInputField, TextMeshPro becomes OneTextMesh, and using TMPro becomes the " +
-                "namespaces those live in. Type names only: never a member, never a string, " +
-                "never a comment.");
+                "OneTextInputField, TextMeshPro becomes OneTextMesh, TMPro-qualified " +
+                "TextAlignmentOptions and TextWrappingModes re-qualify to OneText's own, and " +
+                "using TMPro becomes the namespaces those live in. Type names only: never a " +
+                "member, never a string, never a comment.");
 
             card.Act(HubUI.Ghost(_findings == null ? "Scan Assets…" : "Scan again", Scan));
             if (_findings != null && Selected().Count > 0)

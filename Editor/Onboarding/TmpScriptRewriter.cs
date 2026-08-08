@@ -99,8 +99,9 @@ namespace OneText.Editor
     /// that needs it, because a codebase mid-migration cannot run a Roslyn
     /// rename over itself.
     ///
-    /// Conservative on purpose, in two directions. It rewrites four type names
-    /// and one <c>using</c>, and stops: a member it does not understand is left
+    /// Conservative on purpose, in two directions. It rewrites the handful of
+    /// type names that have a counterpart and one <c>using</c>, and stops: a
+    /// member it does not understand is left
     /// for the compiler to point at, which is a better guide than a rewriter
     /// guessing. And it will not touch a character inside a string literal, a
     /// character literal or a comment, which is why the scanner below is a
@@ -117,10 +118,13 @@ namespace OneText.Editor
     public static class TmpScriptRewriter
     {
         /// <summary>
-        /// The whole of the type map, longest name first so
-        /// <c>TextMeshProUGUI</c> is never read as <c>TextMeshPro</c> with a
-        /// suffix. The qualified forms are the same map under <c>TMPro.</c>,
-        /// which is how a file that never had a <c>using</c> is handled.
+        /// The whole of the type map. Within a dotted family, longest name
+        /// first, so <c>TextMeshProUGUI</c> is never read as
+        /// <c>TextMeshPro</c> with a suffix; entries that are not prefixes of
+        /// each other owe each other nothing, and the whole-chain match below
+        /// keeps even a prefix from stealing a longer name's member access.
+        /// The qualified forms are the same map under <c>TMPro.</c>, which is
+        /// how a file that never had a <c>using</c> is handled.
         /// </summary>
         private static readonly (string From, string To)[] Types =
         {
@@ -128,6 +132,13 @@ namespace OneText.Editor
             ("TMPro.TMP_InputField", "OneText.UGUI.OneTextInputField"),
             ("TMPro.TextMeshPro", "OneText.OneTextMesh"),
             ("TMPro.TMP_Text", "OneText.UGUI.OneTextLabel"),
+            // The two enums the parity aliases take. Only the qualified forms
+            // are here: OneText declares these under the names TMP used, so an
+            // unqualified TextAlignmentOptions is already correct once the
+            // TMPro using has become a OneText.UGUI one, and rewriting it would
+            // be changing a name to itself.
+            ("TMPro.TextAlignmentOptions", "OneText.UGUI.TextAlignmentOptions"),
+            ("TMPro.TextWrappingModes", "OneText.UGUI.TextWrappingModes"),
             ("TextMeshProUGUI", "OneTextLabel"),
             ("TMP_InputField", "OneTextInputField"),
             ("TextMeshPro", "OneTextMesh"),

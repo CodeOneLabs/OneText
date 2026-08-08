@@ -98,11 +98,35 @@ namespace OneText.Tests
         [TestCase("TMPro.TMP_Text", "OneText.UGUI.OneTextLabel")]
         [TestCase("TMPro.TMP_InputField", "OneText.UGUI.OneTextInputField")]
         [TestCase("TMPro.TextMeshPro", "OneText.OneTextMesh")]
+        [TestCase("TMPro.TextAlignmentOptions", "OneText.UGUI.TextAlignmentOptions")]
+        [TestCase("TMPro.TextWrappingModes", "OneText.UGUI.TextWrappingModes")]
         public void QualifiedNames_AreRenamedQualified(string from, string to)
         {
             // A file that never had a using still has to migrate, and the
             // namespace it names is not the namespace the answer lives in.
             Assert.AreEqual($"class A {{ {to} field; }}", Rewrite($"class A {{ {from} field; }}"));
+        }
+
+        [Test]
+        public void QualifiedEnums_KeepTheirMember()
+        {
+            // The member ride-along is the whole point of mapping the enums:
+            // an assignment is the shape they actually occur in.
+            Assert.AreEqual(
+                "x.alignment = OneText.UGUI.TextAlignmentOptions.MidlineLeft;",
+                Rewrite("x.alignment = TMPro.TextAlignmentOptions.MidlineLeft;"));
+        }
+
+        [Test]
+        public void UnqualifiedEnums_AreLeftForTheUsingRewrite()
+        {
+            // OneText declares TextAlignmentOptions and TextWrappingModes under
+            // the names TMP used, so once `using TMPro;` has become
+            // `using OneText.UGUI;` an unqualified use is already correct.
+            // Rewriting it would be changing a name to itself.
+            Assert.AreEqual(
+                "using OneText.UGUI;\nclass A { TextAlignmentOptions a; TextWrappingModes w; }",
+                Rewrite("using TMPro;\nclass A { TextAlignmentOptions a; TextWrappingModes w; }"));
         }
 
         [Test]

@@ -313,7 +313,20 @@ namespace OneText.UGUI
         public float LineSpacing
         {
             get => _lineSpacing;
-            set { _lineSpacing = value; SetVerticesDirty(); SetLayoutDirty(); }
+            set
+            {
+                // Guarded because the lineSpacing alias converts units on both
+                // sides, and TMP projects write `if (label.lineSpacing != v)
+                // label.lineSpacing = v` in Update: the readback is a float
+                // round trip and not always bit-equal to what was assigned, so
+                // without this that idiom would re-layout the label every
+                // frame. The re-converted multiplier IS bit-equal (same
+                // arithmetic, same input), so it stops here.
+                if (_lineSpacing == value) return;
+                _lineSpacing = value;
+                SetVerticesDirty();
+                SetLayoutDirty();
+            }
         }
 
         /// <summary>
@@ -2913,13 +2926,22 @@ namespace OneText.UGUI
         // them holds state, and none of them is in IntelliSense, so new code
         // written against this class still reads OneText's own names.
         //
-        // What is deliberately *not* here is as much of the point. `lineSpacing`
-        // is missing because TMP's is an offset in font units and OneText's is
-        // a multiplier: an alias would compile, run, and silently change every
-        // paragraph in the project. `alignment` is missing because TMP's
-        // enum type does not exist here, so there is nothing honest to forward
-        // to. And there are no no-op stubs — a ForceMeshUpdate that does
-        // nothing is a bug report about a stale mesh, filed six months later.
+        // The three that are not straight forwards are the three that used to
+        // be missing, and the reason they were missing is the reason each one
+        // converts rather than forwards. TMP's `lineSpacing` is an offset in
+        // font units and OneText's is a multiplier, so the alias does the
+        // arithmetic — the same arithmetic the Onboarding migration does, out
+        // of the same function, because two answers to "what does 10 mean"
+        // would eventually disagree. `alignment` names an enum this package
+        // has no use for, so the package declares it (see TmpCompat) rather
+        // than leaving four hundred call sites uncompilable over a type name;
+        // it splits into OneText's two axes on the way in and is reassembled
+        // on the way out. `textWrappingMode` is the same shape, one enum
+        // narrower.
+        //
+        // What is still deliberately *not* here: no-op stubs. A
+        // ForceMeshUpdate that does nothing is a bug report about a stale mesh,
+        // filed six months later.
         // ====================================================================
 
         /// <summary>TMP-migration parity alias for <see cref="Text"/>.</summary>
@@ -2982,6 +3004,93 @@ namespace OneText.UGUI
         {
             get => MaxVisibleGraphemes;
             set => MaxVisibleGraphemes = value;
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for the <see cref="Alignment"/> /
+        /// <see cref="VerticalAlignment"/> pair, in TMP's single enum.
+        ///
+        /// Assigning splits the bitfield across the two axes, and the five TMP
+        /// distinctions OneText does not draw (Flush, GeoAligned, Baseline,
+        /// Midline, Capline) resolve to the nearest one it does — silently,
+        /// because a property setter has nobody to tell; <c>Converted</c>, the
+        /// one member that is not a position, has every bit set and resolves
+        /// the same way the migration always resolved it. The Onboarding tab
+        /// converts the same values through the same function and does name
+        /// every approximation it made, which is the one to use when it
+        /// matters. An approximated value never reads back as itself, so the
+        /// setter swallows a re-assignment of what is already resolved rather
+        /// than redrawing for it.
+        ///
+        /// Reading is lossy the other way: TMP has no start edge, so
+        /// <see cref="TextAlignment.Start"/> and <see cref="TextAlignment.End"/>
+        /// answer Left and Right. Nothing assigned through here is ever Start
+        /// or End, so that only reaches a label configured in OneText's names.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public TextAlignmentOptions alignment
+        {
+            get => TmpCompat.CombineAlignment(Alignment, VerticalAlignment);
+            set
+            {
+                TmpCompat.SplitAlignment((int)value, out var horizontal, out var vertical,
+                    out _, out _);
+                // Guarded for the same reason as LineSpacing's setter: an
+                // approximated value never reads back as itself (write
+                // TopFlush, read TopJustified), so TMP's compare-then-assign
+                // idiom re-assigns every frame, and it has to land here as a
+                // no-op rather than as a redraw.
+                if (Alignment == horizontal && VerticalAlignment == vertical) return;
+                Alignment = horizontal;
+                VerticalAlignment = vertical;
+            }
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for <see cref="LineSpacing"/>, in TMP's
+        /// units: an offset where zero is the font's own line height, against
+        /// OneText's multiplier where one is. Ten percent looser is
+        /// <c>10</c> through this and <c>1.1</c> through the property.
+        ///
+        /// Same intent, not the same pixels: TMP applied its offset after its
+        /// own ascender/descender arithmetic. And same value, not the same
+        /// bits: the state is stored as the multiplier, so a read is a float
+        /// round trip and <c>10f</c> can come back <c>10.000002f</c>. Assigning
+        /// the readback is a no-op — the re-converted multiplier is bit-equal
+        /// and <see cref="LineSpacing"/>'s setter stops it — but code comparing
+        /// the alias against a literal should expect the epsilon. A project
+        /// that cares should be reading OneText's units, which is what
+        /// <see cref="LineSpacing"/> is.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float lineSpacing
+        {
+            get => TmpCompat.LineSpacingToTmp(LineSpacing);
+            set => LineSpacing = TmpCompat.LineSpacingFromTmp(value);
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for <see cref="Wrap"/>. The two
+        /// preserving modes carry a whitespace decision OneText does not hold,
+        /// so they set the wrap they imply and read back as <c>Normal</c> or
+        /// <c>NoWrap</c>.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public TextWrappingModes textWrappingMode
+        {
+            get => TmpCompat.WrapToTmp(Wrap);
+            set => Wrap = TmpCompat.WrapFromTmp(value);
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for <see cref="Wrap"/> as the boolean it
+        /// was before TMP 3.2 renamed it. Older projects are full of this one.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool enableWordWrapping
+        {
+            get => Wrap == TextWrap.Wrap;
+            set => Wrap = TmpCompat.WrapFromWordWrapping(value);
         }
 
         /// <summary>TMP-migration parity alias for assigning <see cref="Text"/>.</summary>

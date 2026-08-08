@@ -89,14 +89,17 @@ It is a `MaskableGraphic`, so everything you already know just works:
 `RectTransform`, layout groups, `ContentSizeFitter`, masks, raycasting. There
 is no atlas to bake first, and `.text` still compiles — the lowercase TMP
 names are kept as aliases so a project's four hundred call sites do not have
-to change on day one.
+to change on day one. That includes the ones whose units differ:
+`lineSpacing` converts TMP's offset into OneText's multiplier on the way
+through, and `alignment` takes a `TextAlignmentOptions` this package declares
+under TMP's own names and values, so even the enum-typed lines compile.
 
 The Hub's **Onboarding** tab does the rest. It scans your scenes, prefabs and
 scripts, counts every TMP and legacy text component, and reports what will not
 survive — a margin with no counterpart, a tag OneText would print literally, a
 dropdown that keeps needing TMP — before it changes anything. Then it swaps
 the components, re-points every reference and carries the listeners, and
-rewrites the four mechanical type renames in your own source. Boring, on
+rewrites the mechanical type renames in your own source. Boring, on
 purpose.
 
 ## Status

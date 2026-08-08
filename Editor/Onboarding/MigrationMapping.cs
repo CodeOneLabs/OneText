@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using OneText.UGUI;
 
 namespace OneText.Editor
 {
@@ -22,80 +23,37 @@ namespace OneText.Editor
     {
         // ------------------------------------------------------ TMP alignment
 
-        // The public TextAlignmentOptions bitfield: a horizontal bit in the low
-        // byte and a vertical bit in the high one, which is why the combined
-        // names (TopLeft = 0x101) decompose by masking rather than by table.
-        public const int TmpLeft = 0x1;
-        public const int TmpCenter = 0x2;
-        public const int TmpRight = 0x4;
-        public const int TmpJustified = 0x8;
-        public const int TmpFlush = 0x10;
-        public const int TmpGeometryCenter = 0x20;
+        // The bitfield itself lives in the runtime assembly, next to the
+        // TextAlignmentOptions the parity aliases needed declaring anyway, and
+        // these are the names the migration and its tests already use. One set
+        // of numbers, because a migration that disagreed with the runtime alias
+        // about what 0x1000 means would be two migrations.
+        public const int TmpLeft = TmpCompat.Left;
+        public const int TmpCenter = TmpCompat.Center;
+        public const int TmpRight = TmpCompat.Right;
+        public const int TmpJustified = TmpCompat.Justified;
+        public const int TmpFlush = TmpCompat.Flush;
+        public const int TmpGeometryCenter = TmpCompat.GeometryCenter;
 
-        public const int TmpTop = 0x100;
-        public const int TmpMiddle = 0x200;
-        public const int TmpBottom = 0x400;
-        public const int TmpBaseline = 0x800;
-        public const int TmpMidline = 0x1000;
-        public const int TmpCapline = 0x2000;
+        public const int TmpTop = TmpCompat.Top;
+        public const int TmpMiddle = TmpCompat.Middle;
+        public const int TmpBottom = TmpCompat.Bottom;
+        public const int TmpBaseline = TmpCompat.Baseline;
+        public const int TmpMidline = TmpCompat.Midline;
+        public const int TmpCapline = TmpCompat.Capline;
 
         /// <summary>
         /// Splits a <c>TextAlignmentOptions</c> value into the pair OneText
         /// keeps it in. <paramref name="approximated"/> says a distinction was
-        /// lost, and <paramref name="what"/> names it for the report.
+        /// lost, and <paramref name="what"/> names it for the report — which is
+        /// the whole difference between this and assigning the runtime alias,
+        /// where there is nobody to tell.
         /// </summary>
         public static void FromTmpAlignment(int alignment,
             out TextAlignment horizontal, out VerticalAlignment vertical,
-            out bool approximated, out string what)
-        {
-            approximated = false;
-            what = null;
-
-            if ((alignment & TmpFlush) != 0)
-            {
-                // Flush justifies every line, including the last one, which
-                // OneText's Justified deliberately does not.
-                horizontal = TextAlignment.Justified;
-                approximated = true;
-                what = "Flush";
-            }
-            else if ((alignment & TmpJustified) != 0) horizontal = TextAlignment.Justified;
-            else if ((alignment & TmpGeometryCenter) != 0)
-            {
-                // Centres on the rendered glyph bounds rather than the box.
-                horizontal = TextAlignment.Center;
-                approximated = true;
-                what = "GeometryCenter";
-            }
-            else if ((alignment & TmpRight) != 0) horizontal = TextAlignment.Right;
-            else if ((alignment & TmpCenter) != 0) horizontal = TextAlignment.Center;
-            else horizontal = TextAlignment.Left;
-
-            if ((alignment & TmpBottom) != 0) vertical = VerticalAlignment.Bottom;
-            else if ((alignment & TmpMiddle) != 0) vertical = VerticalAlignment.Middle;
-            else if ((alignment & TmpBaseline) != 0)
-            {
-                vertical = VerticalAlignment.Middle;
-                approximated = true;
-                what = Join(what, "Baseline");
-            }
-            else if ((alignment & TmpMidline) != 0)
-            {
-                vertical = VerticalAlignment.Middle;
-                approximated = true;
-                what = Join(what, "Midline");
-            }
-            else if ((alignment & TmpCapline) != 0)
-            {
-                vertical = VerticalAlignment.Top;
-                approximated = true;
-                what = Join(what, "Capline");
-            }
-            else vertical = VerticalAlignment.Top;
-        }
-
-        private static string Join(string a, string b) =>
-            string.IsNullOrEmpty(a) ? b : a + " and " + b;
+            out bool approximated, out string what) =>
+            TmpCompat.SplitAlignment(alignment, out horizontal, out vertical,
+                out approximated, out what);
 
         // --------------------------------------------------- TMP line spacing
 
@@ -109,7 +67,8 @@ namespace OneText.Editor
         /// ascender/descender arithmetic, so identical numbers do not
         /// guarantee identical pixels, only identical intent.
         /// </summary>
-        public static float LineSpacingFromTmp(float offset) => 1f + offset / 100f;
+        public static float LineSpacingFromTmp(float offset) =>
+            TmpCompat.LineSpacingFromTmp(offset);
 
         // ------------------------------------------------------ TMP overflow
 
@@ -149,19 +108,18 @@ namespace OneText.Editor
             }
         }
 
-        public const int TmpWrapNoWrap = 0;
-        public const int TmpWrapNormal = 1;
-        public const int TmpWrapPreserveWhitespace = 2;
-        public const int TmpWrapPreserveWhitespaceNoWrap = 3;
+        public const int TmpWrapNoWrap = (int)TextWrappingModes.NoWrap;
+        public const int TmpWrapNormal = (int)TextWrappingModes.Normal;
+        public const int TmpWrapPreserveWhitespace = (int)TextWrappingModes.PreserveWhitespace;
+        public const int TmpWrapPreserveWhitespaceNoWrap =
+            (int)TextWrappingModes.PreserveWhitespaceNoWrap;
 
         /// <summary>Maps <c>TextWrappingModes</c>; whitespace preservation is not a wrap mode here.</summary>
         public static TextWrap FromTmpWrappingMode(int mode) =>
-            mode == TmpWrapNoWrap || mode == TmpWrapPreserveWhitespaceNoWrap
-                ? TextWrap.NoWrap
-                : TextWrap.Wrap;
+            TmpCompat.WrapFromTmp((TextWrappingModes)mode);
 
         public static TextWrap FromTmpWordWrapping(bool enabled) =>
-            enabled ? TextWrap.Wrap : TextWrap.NoWrap;
+            TmpCompat.WrapFromWordWrapping(enabled);
 
         // ------------------------------------------------------- Unity UI Text
 

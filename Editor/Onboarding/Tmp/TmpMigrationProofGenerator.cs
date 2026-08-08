@@ -102,7 +102,7 @@ namespace OneText.Editor
             tmp.enableAutoSizing = true;
             tmp.fontSizeMin = 24f;
             tmp.fontSizeMax = 54f;
-            tmp.alignment = TextAlignmentOptions.MidlineLeft;
+            tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
             tmp.lineSpacing = 10f;
             tmp.color = Color.white;
 

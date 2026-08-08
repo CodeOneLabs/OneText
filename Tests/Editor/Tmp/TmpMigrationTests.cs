@@ -70,7 +70,7 @@ namespace OneText.Tests
             tmp.enableAutoSizing = true;
             tmp.fontSizeMin = 13f;
             tmp.fontSizeMax = 55f;
-            tmp.alignment = TextAlignmentOptions.BottomRight;
+            tmp.alignment = TMPro.TextAlignmentOptions.BottomRight;
             tmp.overflowMode = TextOverflowModes.Ellipsis;
             tmp.lineSpacing = 25f;
             tmp.richText = true;
@@ -128,7 +128,7 @@ namespace OneText.Tests
             var go = NewObject("Flush");
             var tmp = go.AddComponent<TextMeshProUGUI>();
             tmp.text = "flush";
-            tmp.alignment = TextAlignmentOptions.TopFlush;
+            tmp.alignment = TMPro.TextAlignmentOptions.TopFlush;
 
             var report = ComponentMigration.ScanInPlace(new[] { go }, "(test)");
             Assert.AreEqual(1, CountOf(report, "alignment-approximated"));
@@ -156,7 +156,7 @@ namespace OneText.Tests
             var tmp = go.AddComponent<TextMeshPro>();
             tmp.text = "world";
             tmp.fontSize = 36f;
-            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.alignment = TMPro.TextAlignmentOptions.Center;
 
             var report = ComponentMigration.ConvertInPlace(new[] { go }, "(test)", false);
 
