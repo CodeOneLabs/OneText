@@ -40,6 +40,18 @@ namespace OneText.Editor
 
         public override OneTextHub.Tab Tab => OneTextHub.Tab.Onboarding;
 
+        /// <summary>
+        /// Puts a report on the screen as though a conversion had just produced
+        /// it. Here so a test can hand this tab the report a real project makes
+        /// and measure what it draws, which is the only way to catch this screen
+        /// growing a card per finding again.
+        /// </summary>
+        public void Adopt(MigrationReport report)
+        {
+            _migration = report;
+            _converted = true;
+        }
+
         public override string Title => "Onboarding";
 
         public override string Eyebrow => "Coming from TextMesh Pro?";
@@ -619,14 +631,28 @@ namespace OneText.Editor
                 "Prefabs convert before scenes, and a base prefab before anything built out of " +
                 "it, so a variant never ends up holding both components.").Flush();
 
+            // Counted in two passes over the report rather than one pass per
+            // container. A project with a thousand containers and six thousand
+            // findings makes the nested version six million comparisons, every
+            // time this screen is drawn.
+            var targetsIn = new Dictionary<string, int>();
+            var errorsIn = new Dictionary<string, int>();
+            foreach (var target in _migration.Targets)
+            {
+                targetsIn.TryGetValue(target.Container ?? "", out int n);
+                targetsIn[target.Container ?? ""] = n + 1;
+            }
+            foreach (var finding in _migration.Findings)
+            {
+                if (finding.Severity != DoctorSeverity.Error) continue;
+                errorsIn.TryGetValue(finding.Container ?? "", out int n);
+                errorsIn[finding.Container ?? ""] = n + 1;
+            }
+
             foreach (string container in _migration.Containers)
             {
-                int targets = 0, errors = 0;
-                foreach (var target in _migration.Targets)
-                    if (target.Container == container) targets++;
-                foreach (var finding in _migration.Findings)
-                    if (finding.Container == container && finding.Severity == DoctorSeverity.Error)
-                        errors++;
+                targetsIn.TryGetValue(container, out int targets);
+                errorsIn.TryGetValue(container, out int errors);
 
                 var row = HubUI.Box("folder-row");
                 var name = HubUI.Mono(HubUI.Text(container, "kv__value"));
@@ -635,11 +661,12 @@ namespace OneText.Editor
                 row.Add(HubUI.Badge($"{targets:n0} component(s)", HubTone.Info));
                 if (errors > 0) row.Add(HubUI.Badge($"{errors:n0} error(s)", HubTone.Bad));
 
-                var asset = AssetDatabase.LoadAssetAtPath<Object>(container);
-                if (asset != null)
-                    row.Add(HubUI.Quiet("Show", () => EditorGUIUtility.PingObject(asset)));
-
+                // Loaded when the button is pressed, not when the row is built:
+                // building the row for every container would otherwise load
+                // every prefab in the project into memory to decide whether to
+                // draw a button.
                 string only = container;
+                row.Add(HubUI.Quiet("Show", () => Ping(only)));
                 if (!_converted)
                     row.Add(HubUI.Quiet("Convert", () => Convert(new List<string> { only })));
                 card.Add(row);
@@ -647,6 +674,38 @@ namespace OneText.Editor
             return card.Root;
         }
 
+        private static void Ping(string container)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<Object>(container);
+            if (asset != null) EditorGUIUtility.PingObject(asset);
+            else Debug.LogWarning($"OneText: nothing is at {container} any more.");
+        }
+
+        /// <summary>How many of one rule's findings are drawn before the rest are counted.</summary>
+        private const int PerRule = 50;
+
+        /// <summary>
+        /// Below this many findings in total, every group opens: a short list is
+        /// easier read flat than clicked open, and the collapsing here exists for
+        /// the long one.
+        /// </summary>
+        private const int OpenBelow = 20;
+
+        /// <summary>
+        /// The findings, gathered by the rule that found them.
+        ///
+        /// One card per finding is the right shape for a project with twelve of
+        /// them and the wrong shape for a real one. Five-Dice produces 6,422
+        /// errors and warnings, 5,487 of which are the same missing font file
+        /// reported once per label — and drawing 6,422 cards is not a report, it
+        /// is a hang, followed by a wall nobody reads. Which is the failure this
+        /// whole screen was written against.
+        ///
+        /// So: one row per rule with its count, the rows shut, and the rules that
+        /// need a person sorted to the top. The fonts are not here at all — they
+        /// have a section of their own further down that already collapses them
+        /// to one row per typeface, which is the unit that actually gets fixed.
+        /// </summary>
         private VisualElement FindingsCard()
         {
             var host = new VisualElement();
@@ -667,12 +726,116 @@ namespace OneText.Editor
                 return host;
             }
 
+            bool fontsHaveTheirOwnSection = (_migration.Recovery?.Count ?? 0) > 0;
+            int elsewhere = 0;
+
+            var order = new List<string>();
+            var byRule = new Dictionary<string, List<MigrationFinding>>();
             foreach (var finding in _migration.Findings)
             {
                 if (finding.Severity == DoctorSeverity.Info && !_showNotes) continue;
-                host.Add(Finding(finding));
+                if (fontsHaveTheirOwnSection && finding.Rule == FontRule)
+                {
+                    elsewhere++;
+                    continue;
+                }
+
+                string rule = string.IsNullOrEmpty(finding.Rule) ? "unnamed" : finding.Rule;
+                if (!byRule.TryGetValue(rule, out var list))
+                {
+                    byRule[rule] = list = new List<MigrationFinding>();
+                    order.Add(rule);
+                }
+                list.Add(finding);
             }
+
+            if (elsewhere > 0)
+            {
+                host.Add(HubUI.Notice(
+                    $"{elsewhere:n0} finding(s) are one label each waiting on a missing font file. " +
+                    "They are not listed here: they are the same handful of typefaces over and " +
+                    "over, and 'What you have to fix by hand' below has them one row per typeface, " +
+                    "which is the unit that fixes them.", HubTone.Warn));
+            }
+
+            if (order.Count == 0)
+            {
+                host.Add(HubUI.Notice("Nothing left to report beyond the fonts.", HubTone.Good));
+                return host;
+            }
+
+            // Worst first, and within a severity the largest group first: the
+            // order somebody would work in if they were choosing.
+            order.Sort((a, b) =>
+            {
+                int severity = Worst(byRule[b]).CompareTo(Worst(byRule[a]));
+                if (severity != 0) return severity;
+                int size = byRule[b].Count.CompareTo(byRule[a].Count);
+                return size != 0 ? size : string.CompareOrdinal(a, b);
+            });
+
+            int total = 0;
+            foreach (var pair in byRule) total += pair.Value.Count;
+
+            foreach (string rule in order) host.Add(RuleGroup(rule, byRule[rule], total <= OpenBelow));
             return host;
+        }
+
+        /// <summary>The rule whose findings are one per label rather than one per fix.</summary>
+        private const string FontRule = "font-source-missing";
+
+        private static DoctorSeverity Worst(List<MigrationFinding> findings)
+        {
+            var worst = DoctorSeverity.Info;
+            foreach (var finding in findings) if (finding.Severity > worst) worst = finding.Severity;
+            return worst;
+        }
+
+        private static VisualElement RuleGroup(string rule, List<MigrationFinding> findings, bool open)
+        {
+            var tone = Worst(findings) switch
+            {
+                DoctorSeverity.Error => HubTone.Bad,
+                DoctorSeverity.Warning => HubTone.Warn,
+                _ => HubTone.Neutral,
+            };
+
+            var body = new VisualElement();
+            int drawn = System.Math.Min(findings.Count, PerRule);
+            for (int i = 0; i < drawn; i++) body.Add(Finding(findings[i]));
+
+            if (findings.Count > drawn)
+            {
+                var row = HubUI.Box("folder-row");
+                var rest = HubUI.Text(
+                    $"{findings.Count - drawn:n0} more not drawn, because drawing them is slower " +
+                    "than reading them.", "kv__value");
+                rest.style.flexGrow = 1f;
+                row.Add(rest);
+
+                var all = findings;
+                string named = rule;
+                row.Add(HubUI.Quiet("Print all to Console", () =>
+                {
+                    foreach (var finding in all)
+                    {
+                        Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null,
+                            "OneText migration · {0} · {1} · {2}\n{3}",
+                            named, finding.Container, finding.Path, finding.Message);
+                    }
+                }));
+                body.Add(row);
+            }
+
+            var group = HubUI.Disclose($"{rule}  ·  {findings.Count:n0}", body, open);
+            group.style.borderLeftWidth = 2f;
+            group.style.borderLeftColor = tone switch
+            {
+                HubTone.Bad => new Color(1f, 0.482f, 0.447f),
+                HubTone.Warn => new Color(1f, 0.8f, 0.4f),
+                _ => new Color(0.839f, 0.898f, 0.867f, 0.2f),
+            };
+            return group;
         }
 
         private static VisualElement Finding(in MigrationFinding finding)
@@ -707,9 +870,8 @@ namespace OneText.Editor
             {
                 var row = HubUI.Box("row");
                 row.Add(HubUI.Mono(HubUI.Text(finding.Container, "kv__value")));
-                var asset = AssetDatabase.LoadAssetAtPath<Object>(finding.Container);
-                if (asset != null)
-                    row.Add(HubUI.Quiet("Show in project", () => EditorGUIUtility.PingObject(asset)));
+                string container = finding.Container;
+                row.Add(HubUI.Quiet("Show in project", () => Ping(container)));
                 card.Add(row);
             }
 
