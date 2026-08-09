@@ -226,9 +226,7 @@ namespace OneText
                 var shader = LoadShader();
                 if (shader == null)
                 {
-                    Debug.LogError($"{ShaderName} shader not found: it should have shipped from " +
-                        "the package's Runtime/Shaders/Resources folder. Reimport OneText, or add " +
-                        "the shader to Always Included Shaders.");
+                    ReportMissingShader();
                     return null;
                 }
                 s_material = new Material(shader)
@@ -247,6 +245,74 @@ namespace OneText
                     BindPreciseTexture(s_preciseAtlas);
                 return s_material;
             }
+        }
+
+        /// Said once per domain, not once per label. See <see cref="ReportMissingShader"/>.
+        private static bool s_shaderReported;
+
+        /// <summary>
+        /// Says the shader is missing, once, and says the right thing about why.
+        ///
+        /// <para>Two situations produce a null shader and they are not the same
+        /// problem. A project whose package did not import properly has a fault
+        /// to fix, and gets an error. A process with no graphics device — a
+        /// headless CI container, an editor started without one — loads no
+        /// shaders at all, by design: nothing is wrong, text still lays out and
+        /// measures, and only drawing is unavailable. That one gets a warning
+        /// naming the device, because an error there fails every test that so
+        /// much as adds a label, which is exactly what it did on this project's
+        /// CI: roughly a hundred EditMode failures, every one of them the words
+        /// "Unhandled log message" and none of them a fault in the code under
+        /// test.</para>
+        ///
+        /// <para>Once, either way. The old message came out of a property every
+        /// label touches on enable, which turned one missing file into eight
+        /// thousand identical lines in a CI log.</para>
+        /// </summary>
+        private static void ReportMissingShader()
+        {
+            if (s_shaderReported) return;
+            s_shaderReported = true;
+
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+            {
+                Debug.LogWarning($"{ShaderName} is unavailable because this process has no " +
+                    "graphics device, so no shaders are loaded at all. Layout, measurement and " +
+                    "the atlas still work; nothing will be drawn. This is the expected state in " +
+                    "a headless CI container and not a fault in the package.");
+                return;
+            }
+
+            Debug.LogError($"{ShaderName} shader not found (graphics device: " +
+                $"{SystemInfo.graphicsDeviceType}{EditorShaderDiagnosis()}): it should have " +
+                "shipped from the package's Runtime/Shaders/Resources folder. Reimport OneText, " +
+                "or add the shader to Always Included Shaders.");
+        }
+
+        /// <summary>
+        /// What the editor can see that the runtime cannot, appended to the
+        /// message above.
+        ///
+        /// This exists because of a failure that only ever happened on CI: the
+        /// shader loads on every developer machine and on none of the three CI
+        /// runners, which have a working OpenGL device and import the rest of
+        /// the package fine. Whether the asset is absent from the database, or
+        /// present and unloadable, is the difference between an import problem
+        /// and a compilation one, and it takes a line in a log to tell them
+        /// apart — a line nobody could get by asking a machine that works.
+        /// </summary>
+        private static string EditorShaderDiagnosis()
+        {
+#if UNITY_EDITOR
+            string path = "Packages/com.onetext.core/Runtime/Shaders/Resources/OneText-SDF.shader";
+            var asset = UnityEditor.AssetDatabase.LoadAssetAtPath<Shader>(path);
+            int inDatabase = UnityEditor.AssetDatabase.FindAssets("t:Shader OneText-SDF").Length;
+            return $"; asset at the package path: {(asset != null ? "loads" : "does not load")}" +
+                $"; shaders named OneText-SDF in the database: {inDatabase}" +
+                $"; Shader.Find: {(Shader.Find(ShaderName) != null ? "found" : "null")}";
+#else
+            return string.Empty;
+#endif
         }
 
         /// <summary>
