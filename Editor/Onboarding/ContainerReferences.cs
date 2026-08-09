@@ -1007,9 +1007,50 @@ namespace OneText.Editor
                         if (index == reference.ReferrerIndex) return component;
                         index++;
                     }
+
+                    // The referrer may have been converted too — a dropdown
+                    // holds fields naming labels and is itself swapped for one
+                    // whose fields are wide enough. Its type name changed under
+                    // a record written before that happened, and a record that
+                    // cannot find its own component is reported as damage that
+                    // was never done.
+                    //
+                    // Matched on the field rather than on a second name: the
+                    // component that has this property, on this object, is the
+                    // one the record was about, and asking that way needs no
+                    // table of what becomes what.
+                    var replacement = ByProperty(transform, reference.PropertyPath);
+                    if (replacement != null) return replacement;
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// The one component on this object carrying a serialized object
+        /// reference at this path, or null when none or several do.
+        ///
+        /// Several is not a tie to break: two components with the same field
+        /// means guessing which one the record meant, and writing to the wrong
+        /// one puts a reference into a field somebody deliberately left empty.
+        /// </summary>
+        private static Component ByProperty(Transform transform, string propertyPath)
+        {
+            Component found = null;
+            foreach (var component in transform.GetComponents<Component>())
+            {
+                if (component == null || component is Transform) continue;
+
+                SerializedProperty property;
+                try { property = new SerializedObject(component).FindProperty(propertyPath); }
+                catch (Exception) { continue; }
+                if (property == null ||
+                    property.propertyType != SerializedPropertyType.ObjectReference) continue;
+
+                if (found != null) return null;
+                found = component;
+            }
+            return found;
         }
 
         private static UnityEngine.Object FindAsset(CrossReference reference)
