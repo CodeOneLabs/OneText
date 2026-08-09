@@ -64,38 +64,69 @@ jobs:
             required: false
     continue-on-error: ${{ !matrix.required }}
     steps:
+      # Into a subdirectory, so the host project can be its sibling rather than
+      # its child. See the Create host project step for why that matters.
       - uses: actions/checkout@v4
         with:
           lfs: true
+          path: package
 
       # The package is tested from a throwaway project that references it,
       # exactly the way a consumer would.
       - name: Create host project
         shell: bash # the Windows runner defaults to PowerShell, which has no heredoc
         run: |
-          # CI~ with a trailing tilde, for the same reason the smoke job uses
-          # it: the package is this repository's root, so a plain CI/ folder
-          # becomes package content the moment it exists, and the 6000 asset
-          # pipeline import-loops on a project that contains itself.
-          mkdir -p CI~/Assets CI~/Packages CI~/ProjectSettings
-          cat > CI~/Packages/manifest.json <<'JSON'
+          # The project sits BESIDE the package, never inside it, and this is
+          # not a tidiness preference — it is the difference between a run that
+          # can load an asset and one that cannot.
+          #
+          # This used to be CI~/ at the repository root, which made the package
+          # (the repository) the parent of the project. The tilde stopped the
+          # import loop that arrangement caused, and it did stop it, so the
+          # arrangement looked fine: the code compiled, every test that read a
+          # file with File.ReadAllBytes passed, and 316 of the package's assets
+          # were in the AssetDatabase with paths and GUIDs. But no importer ever
+          # produced an object for any of them. AssetDatabase.FindAssets
+          # "t:Shader" under the package returned 0 while the shader's own GUID
+          # resolved, LoadMainAssetAtPath came back NULL, and every test that
+          # loaded the SDF shader, the Hub's UXML or its USS failed — about a
+          # hundred of them, on Linux and Windows alike, which is what made it
+          # look like a Linux bug for as long as it did. The local dev project
+          # has always been a sibling of the package and has never shown any of
+          # it.
+          #
+          # So: the checkout goes to package/, the project goes to CI/, and the
+          # manifest reaches back out with a relative path. Both are inside
+          # $GITHUB_WORKSPACE, which is what game-ci mounts into the container,
+          # so nothing here depends on a path outside the workspace. No tilde is
+          # needed any more — a plain CI/ beside the package is not package
+          # content, and a project that is not inside the package cannot recurse
+          # into itself.
+          mkdir -p CI/Assets CI/Packages CI/ProjectSettings
+          cat > CI/Packages/manifest.json <<'JSON'
           {
             "dependencies": {
               "com.unity.burst": "1.8.4",
               "com.unity.collections": "1.4.0",
               "com.unity.mathematics": "1.2.6",
               "com.unity.ugui": "1.0.0",
-              "com.onetext.core": "file:../.."
+              "com.onetext.core": "file:../../package"
             },
             "testables": ["com.onetext.core"]
           }
           JSON
 
+      # v2 in the key, deliberately. Every cache written before this is a
+      # Library from the nested layout, carrying an artifact database in which
+      # none of this package's assets ever imported. restore-keys would match
+      # one of those on prefix and restore the broken state into the fixed
+      # layout, which is the one way this change could appear not to work.
+      # Bumping the prefix makes the old ones unreachable instead.
       - uses: actions/cache@v4
         with:
-          path: CI~/Library
-          key: Library-${{ matrix.os }}-${{ matrix.unityVersion }}-${{ hashFiles('**/*.cs') }}
-          restore-keys: Library-${{ matrix.os }}-${{ matrix.unityVersion }}-
+          path: CI/Library
+          key: Library-v2-${{ matrix.os }}-${{ matrix.unityVersion }}-${{ hashFiles('package/**/*.cs') }}
+          restore-keys: Library-v2-${{ matrix.os }}-${{ matrix.unityVersion }}-
 
       - uses: game-ci/unity-test-runner@v4
         id: tests
@@ -105,7 +136,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: CI~
+          projectPath: CI
           unityVersion: ${{ matrix.unityVersion }}
           testMode: editmode
           artifactsPath: test-results
@@ -137,22 +168,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
+          path: package
 
       - name: Create host project
         run: |
-          # CI~ with a trailing tilde, for the same reason the smoke job uses
-          # it: the package is this repository's root, so a plain CI/ folder
-          # becomes package content the moment it exists, and the 6000 asset
-          # pipeline import-loops on a project that contains itself.
-          mkdir -p CI~/Assets CI~/Packages CI~/ProjectSettings
-          cat > CI~/Packages/manifest.json <<'JSON'
+          # Beside the package, not inside it. The EditMode job's Create host
+          # project step carries the reasoning; the short version is that a
+          # project nested inside the package gets an AssetDatabase in which
+          # the package's assets have paths and GUIDs and no imported objects.
+          mkdir -p CI/Assets CI/Packages CI/ProjectSettings
+          cat > CI/Packages/manifest.json <<'JSON'
           {
             "dependencies": {
               "com.unity.burst": "1.8.4",
               "com.unity.collections": "1.4.0",
               "com.unity.mathematics": "1.2.6",
               "com.unity.ugui": "1.0.0",
-              "com.onetext.core": "file:../.."
+              "com.onetext.core": "file:../../package"
             },
             "testables": ["com.onetext.core"]
           }
@@ -164,7 +196,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: CI~
+          projectPath: CI
           unityVersion: ${{ matrix.unityVersion }}
           testMode: playmode
           artifactsPath: playmode-results
@@ -196,32 +228,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
+          path: package
 
       - name: Create host project with the smoke scene sources
         run: |
-          # The trailing tilde is what stops the recursion: the manifest points
-          # the package at the repository root (file:../..), so a plain CI/
-          # directory would be imported right back into the package as assets,
-          # and the first run died in an infinite import loop over CI/Temp.
-          # A hidden folder is a normal place to open a project from, but the
-          # asset database never looks inside it.
-          mkdir -p CI~/Assets/Smoke/Resources/SmokeFonts CI~/Assets/Editor CI~/Packages CI~/ProjectSettings
-          cat > CI~/Packages/manifest.json <<'JSON'
+          # Beside the package rather than inside it, which is what stops the
+          # recursion the tilde used to stop and also the asset-import failure
+          # the tilde did not. The EditMode job's Create host project step has
+          # the whole account.
+          mkdir -p CI/Assets/Smoke/Resources/SmokeFonts CI/Assets/Editor CI/Packages CI/ProjectSettings
+          cat > CI/Packages/manifest.json <<'JSON'
           {
             "dependencies": {
               "com.unity.burst": "1.8.4",
               "com.unity.collections": "1.4.0",
               "com.unity.mathematics": "1.2.6",
               "com.unity.ugui": "1.0.0",
-              "com.onetext.core": "file:../.."
+              "com.onetext.core": "file:../../package"
             }
           }
           JSON
-          cp "Tools/Smoke~/SmokeSelfTest.cs" "CI~/Assets/Smoke/"
-          cp "Tools/Smoke~/SmokeBuildCI.cs"  "CI~/Assets/Editor/"
+          cp "package/Tools/Smoke~/SmokeSelfTest.cs" "CI/Assets/Smoke/"
+          cp "package/Tools/Smoke~/SmokeBuildCI.cs"  "CI/Assets/Editor/"
           # The two fonts the repository ships; .bytes so Unity keeps them whole.
-          cp Tests/Fonts~/NotoSans.ttf       "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes"
-          cp Tests/Fonts~/NotoSansArabic.ttf "CI~/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes"
+          cp package/Tests/Fonts~/NotoSans.ttf       "CI/Assets/Smoke/Resources/SmokeFonts/NotoSans.bytes"
+          cp package/Tests/Fonts~/NotoSansArabic.ttf "CI/Assets/Smoke/Resources/SmokeFonts/NotoSansArabic.bytes"
 
       - name: Cache the downloaded smoke fonts
         uses: actions/cache@v4
@@ -238,13 +269,15 @@ jobs:
           fetch NotoSansThai.bytes       "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansThai/hinted/ttf/NotoSansThai-Regular.ttf"
           fetch NotoSansKorean.bytes     "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf"
           fetch NotoColorEmoji.bytes     "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
-          cp smoke-fonts/*.bytes "CI~/Assets/Smoke/Resources/SmokeFonts/"
+          cp smoke-fonts/*.bytes "CI/Assets/Smoke/Resources/SmokeFonts/"
 
+      # v2 for the same reason as the EditMode job's: every earlier cache is a
+      # Library from the nested layout.
       - uses: actions/cache@v4
         with:
-          path: CI~/Library
-          key: Library-smoke-windows-${{ hashFiles('**/*.cs') }}
-          restore-keys: Library-smoke-windows-
+          path: CI/Library
+          key: Library-smoke-windows-v2-${{ hashFiles('package/**/*.cs') }}
+          restore-keys: Library-smoke-windows-v2-
 
       - uses: game-ci/unity-builder@v4
         env:
@@ -252,7 +285,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: CI~
+          projectPath: CI
           unityVersion: 6000.0.77f1
           targetPlatform: StandaloneWindows64
           buildMethod: SmokeBuildCI.Windows
@@ -262,7 +295,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-smoke-player
-          path: CI~/build/windows
+          path: CI/build/windows
           retention-days: 3
 
   windows-smoke-run:
