@@ -402,6 +402,177 @@ namespace OneText.Editor
                         34f, new Rect(16f, 16f, 480f, 224f),
                         ArabicFont, JapaneseFont, DevanagariFont, ThaiFont);
                 }),
+
+            // ------------------------------------------------------ RectMask2D
+            //
+            // Five cases and not one, because the fragment shader has four
+            // different returns and the clip has to be applied at every one of
+            // them. A patch that clips the ordinary face and forgets the
+            // <u> bar, or the emoji, or the outlined text, passes a single
+            // basic case and ships text spilling out of a scroll view anyway.
+            // One case per return, plus softness, which arrives through its own
+            // uniform and can be missed while the rect itself works.
+            //
+            // Each mask is deliberately narrower and shorter than the text
+            // inside it, so every picture has glyphs cut down the middle both
+            // horizontally and vertically. A case whose text fits inside its
+            // mask proves only that nothing crashed.
+
+            new GoldenCase("mask-rect-plain", 512, 256,
+                "the ordinary undecorated face, cut by a RectMask2D on both axes",
+                new[] { LatinFont }, scene =>
+                {
+                    scene.Mask(new Rect(64f, 48f, 300f, 130f));
+                    scene.Label(LatinFont,
+                        "clipped left and right\nand cut off at the bottom\n" +
+                        "third line is fully outside\nfourth line likewise",
+                        30f, new Rect(-40f, -10f, 460f, 260f));
+                }),
+
+            new GoldenCase("mask-rect-decorations", 512, 256,
+                "outline, shadow and glow through a mask edge: the composited return",
+                new[] { LatinFont }, scene =>
+                {
+                    scene.Mask(new Rect(64f, 40f, 300f, 150f));
+                    scene.Label(LatinFont,
+                        "<outline=#2255ccff w=0.5>Outline</outline>\n" +
+                        "<shadow=#000000c0 x=0.6 y=-0.6 soft=0.3>Shadow</shadow>\n" +
+                        "<glow=#66ddffff r=0.8>Glow</glow>\n" +
+                        "<outline=#000000ff w=0.35><glow=#ffcc44ff r=0.6>Both</glow></outline>",
+                        38f, new Rect(-30f, -8f, 460f, 260f));
+                }),
+
+            new GoldenCase("mask-rect-line-decorations", 512, 256,
+                "underline, strikethrough and <mark>: the flat-colour return, which has no field to clip",
+                new[] { LatinFont }, scene =>
+                {
+                    scene.Mask(new Rect(64f, 40f, 300f, 150f));
+                    scene.Label(LatinFont,
+                        "<u>underlined words</u> plain\n" +
+                        "<s>struck through</s> plain\n" +
+                        "a <mark=#ffdd2266>highlighted</mark> phrase\n" +
+                        "<mark=#3388ff66><u>all</u> <s>three</s> at once</mark>",
+                        30f, new Rect(-30f, -8f, 460f, 260f));
+                }),
+
+            new GoldenCase("mask-rect-softness", 512, 256,
+                "the same clip with softness 12: a band, not an edge",
+                new[] { LatinFont }, scene =>
+                {
+                    scene.Mask(new Rect(64f, 48f, 300f, 130f), softness: 12);
+                    scene.Label(LatinFont,
+                        "soft edges all round\nsecond line fades too\n" +
+                        "third line is fully outside\nfourth line likewise",
+                        30f, new Rect(-40f, -10f, 460f, 260f));
+                }),
+
+            new GoldenCase("mask-rect-decorations-soft", 512, 256,
+                "decorated text under a soft clip: the case where compositing order actually shows",
+                new[] { LatinFont }, scene =>
+                {
+                    // The one case here that is not redundant with the others,
+                    // and the reason it exists is worth writing down.
+                    //
+                    // Clipping a decorated glyph can be done two ways: scale
+                    // each layer's alpha before compositing, or scale the
+                    // finished premultiplied stack. They are not the same,
+                    // because Over is not linear in alpha — the first route
+                    // lets the shadow bleed into what should be face colour and
+                    // reports too much alpha besides. At a hard edge nobody can
+                    // tell, since the factor is only ever 0 or 1 and both
+                    // routes agree at both ends. It takes a *fractional* factor
+                    // over a decorated pixel to separate them, which means
+                    // softness and decorations in the same picture, which is
+                    // this case and nothing else in the suite.
+                    //
+                    // Measured rather than assumed. Rendering every baseline
+                    // twice, once with the shader applying the clip per layer
+                    // and once with it applying it to the composite, changed
+                    // exactly one picture: this one, by 271 pixels, worst
+                    // channel 47/255 — the wrong route reporting alpha 243
+                    // where the right one says 196 and pulling the shadow up
+                    // into the face colour. mask-rect-decorations (hard edge,
+                    // decorated) and mask-rect-softness (soft edge, plain) came
+                    // out byte-identical under both. Delete this case and the
+                    // bug it guards has nothing left to trip over.
+                    scene.Mask(new Rect(64f, 40f, 300f, 150f), softness: 14);
+                    scene.Label(LatinFont,
+                        "<shadow=#000000ff x=0.6 y=-0.6>Shadow</shadow>\n" +
+                        "<outline=#2255ccff w=0.5>Outline</outline>\n" +
+                        "<outline=#000000ff w=0.35><glow=#ffcc44ff r=0.6>Both</glow></outline>\n" +
+                        "<glow=#66ddffff r=0.8>Glow</glow>",
+                        38f, new Rect(-30f, -8f, 460f, 260f));
+                }),
+
+            new GoldenCase("mask-rect-emoji", 512, 256,
+                "colour tiles through a mask edge: the picture return, clipped in alpha only",
+                new[] { EmojiFont, LatinFont }, scene =>
+                {
+                    scene.Mask(new Rect(64f, 40f, 300f, 150f));
+                    scene.Label(EmojiFont,
+                        "\U0001F600\U0001F601\U0001F602\U0001F603\U0001F604\n" +
+                        "\U0001F605\U0001F606\U0001F607\U0001F608\U0001F609\n" +
+                        "\U0001F60A\U0001F60B\U0001F60C\U0001F60D\U0001F60E",
+                        44f, new Rect(-30f, -8f, 460f, 260f), LatinFont);
+                }),
+
+            // ------------------------------------------------------ stencil Mask
+            //
+            // The other mask, which shares nothing with RectMask2D but a name.
+            // Two directions, and a shader can get one right while getting the
+            // other wrong, so both are here.
+
+            new GoldenCase("mask-stencil-child", 512, 256,
+                "text inside a stencil Mask: the direction that only needs the Stencil block",
+                new[] { LatinFont }, scene =>
+                {
+                    scene.StencilMask(new Rect(64f, 48f, 300f, 130f));
+                    scene.Label(LatinFont,
+                        "inside a stencil mask\nsecond line clipped too\n" +
+                        "third line is fully outside\nfourth line likewise",
+                        30f, new Rect(-40f, -10f, 460f, 260f));
+                }),
+
+            new GoldenCase("mask-stencil-circle", 512, 256,
+                "text through a round hole: a mask shape a broken mask cannot accidentally produce",
+                new[] { LatinFont }, scene =>
+                {
+                    // Dense enough that the hole is drawn by the text: every
+                    // line ends at a different column, and the sequence of
+                    // those columns is the circle. A short label in a round
+                    // mask looks the same as a short label in a square one.
+                    scene.CircleMask(new Rect(171f, 24f, 200f, 200f));
+                    scene.Label(LatinFont,
+                        "the shape of this hole is not drawn by anything in the " +
+                        "picture except the text itself, since each line stops " +
+                        "where the stencil stops and the run of those stopping " +
+                        "points is the only circle here, which is the whole " +
+                        "point of setting it against a mask that is round " +
+                        "rather than square or merely small",
+                        14f, new Rect(-6f, -6f, 212f, 212f));
+                }),
+
+            new GoldenCase("mask-stencil-text-shape", 512, 256,
+                "text AS the stencil Mask: colour visible only through the glyphs",
+                new[] { LatinFont }, scene =>
+                {
+                    // The assertion is the shape of the colour, not its
+                    // presence. Stripes rather than one flat fill so that a
+                    // wrong result is unmistakable: through letters they are
+                    // interrupted letter by letter, through the quads a shader
+                    // that never discards writes instead they come out as four
+                    // uninterrupted bars.
+                    scene.TextMask(LatinFont, "SHAPE", 96f, new Rect(40f, 60f, 440f, 120f));
+                    var stripes = new[]
+                    {
+                        new Color(0.95f, 0.35f, 0.30f),
+                        new Color(0.98f, 0.78f, 0.25f),
+                        new Color(0.35f, 0.80f, 0.55f),
+                        new Color(0.35f, 0.60f, 0.95f),
+                    };
+                    for (int i = 0; i < stripes.Length; i++)
+                        scene.Panel(new Rect(i * 110f, 0f, 110f, 120f), stripes[i]);
+                }),
         };
     }
 }

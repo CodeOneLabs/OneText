@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using OneText.UGUI;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace OneText.Editor
 {
@@ -34,6 +35,9 @@ namespace OneText.Editor
         private readonly Camera _camera;
         private readonly RenderTexture _target;
         private readonly List<GameObject> _created = new List<GameObject>();
+
+        /// <summary>Where <see cref="Label"/> parents what it makes; see <see cref="Mask"/>.</summary>
+        private Transform _parent;
 
         public GoldenScene(int width, int height)
         {
@@ -106,15 +110,193 @@ namespace OneText.Editor
         }
 
         /// <summary>
+        /// A <c>RectMask2D</c> over <paramref name="rect"/>, in the same
+        /// top-left pixel coordinates a label takes, which every label made
+        /// after this call goes inside.
+        ///
+        /// A mask is the one thing in this file that cannot be asserted as
+        /// numbers anywhere else in the suite. Whether a glyph is clipped is
+        /// not a fact about layout — the layout is identical either way — it is
+        /// a fact about what the shader did with _ClipRect, and the only place
+        /// that shows up is in the pixels.
+        ///
+        /// <paramref name="softness"/> is the mask's own <c>softness</c>, which
+        /// reaches the shader through a different uniform than the rect does
+        /// (_UIMaskSoftness*, not _ClipRect) and is therefore its own case: a
+        /// shader can clip correctly and ignore softness entirely, which is
+        /// what every version of this one before the RectMask2D fix did.
+        /// </summary>
+        public RectMask2D Mask(Rect rect, int softness = 0)
+        {
+            var go = Place("Mask", rect);
+            var mask = go.AddComponent<RectMask2D>();
+            mask.softness = new Vector2Int(softness, softness);
+
+            _parent = go.transform;
+            return mask;
+        }
+
+        /// <summary>
+        /// The other uGUI mask: a stencil <c>Mask</c> over a plain rectangle,
+        /// which everything made after this call goes inside.
+        ///
+        /// Nothing to do with <see cref="Mask"/> beyond the name they share.
+        /// RectMask2D hands the shader a rectangle to test against; this one
+        /// draws a shape into the stencil buffer and lets the children through
+        /// only where it wrote. A shader can satisfy either and fail the other,
+        /// so both have to be looked at.
+        /// </summary>
+        public Mask StencilMask(Rect rect)
+        {
+            var go = Place("StencilMask", rect);
+            var image = go.AddComponent<Image>();
+            image.color = Color.white;
+            var mask = go.AddComponent<Mask>();
+            mask.showMaskGraphic = false;
+
+            _parent = go.transform;
+            return mask;
+        }
+
+        /// <summary>
+        /// A stencil <c>Mask</c> whose shape is a line of OneText itself:
+        /// everything made after this call is visible only through the glyphs.
+        ///
+        /// This is the case that needs UNITY_UI_ALPHACLIP. A mask writes its
+        /// stencil wherever its graphic draws a fragment, so a shader that never
+        /// discards writes the whole of every glyph quad and the children come
+        /// through as a row of rectangles instead of letters. It is the one
+        /// masking arrangement where being <em>text</em> rather than an image is
+        /// the entire point, so a rectangle is not a degraded result but a
+        /// wrong one.
+        /// </summary>
+        public OneTextLabel TextMask(string fontPath, string text, float size, Rect rect,
+            bool showMaskGraphic = false)
+        {
+            var label = Label(fontPath, text, size, rect);
+            var mask = label.gameObject.AddComponent<Mask>();
+            mask.showMaskGraphic = showMaskGraphic;
+
+            _parent = label.transform;
+            return label;
+        }
+
+        /// <summary>
+        /// A stencil <c>Mask</c> in the shape of a circle, which everything made
+        /// after this call goes inside.
+        ///
+        /// A rectangle is the shape a mask accidentally has when something is
+        /// wrong — an unclipped quad, a stencil written across a whole glyph
+        /// tile — so a rectangular mask is the one shape that cannot tell a
+        /// working mask from a broken one. A circle can: every curved edge in
+        /// the picture is a pixel the stencil test had to decide individually.
+        /// </summary>
+        public Mask CircleMask(Rect rect)
+        {
+            var go = Place("CircleMask", rect);
+            var image = go.AddComponent<Image>();
+            image.sprite = CircleSprite();
+            image.color = Color.white;
+
+            var mask = go.AddComponent<Mask>();
+            mask.showMaskGraphic = false;
+
+            _parent = go.transform;
+            return mask;
+        }
+
+        /// <summary>
+        /// A white disc with a one-pixel edge ramp, built in code so that no
+        /// case depends on an asset that could be reimported at a different
+        /// compression setting and quietly move the baseline.
+        ///
+        /// The ramp is not antialiasing — a stencil test is a yes or a no, and
+        /// what it decides is which side of uGUI's alpha-clip threshold each
+        /// edge pixel falls on. The text drawn through the hole brings its own
+        /// antialiasing, which is the edge quality the picture actually shows.
+        /// </summary>
+        private static Sprite CircleSprite()
+        {
+            if (s_circle != null) return s_circle;
+
+            const int Size = 256;
+            var texture = new Texture2D(Size, Size, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+
+            var pixels = new Color32[Size * Size];
+            float centre = (Size - 1) * 0.5f;
+            float radius = Size * 0.5f - 1f;
+            for (int y = 0; y < Size; y++)
+            {
+                for (int x = 0; x < Size; x++)
+                {
+                    float dx = x - centre, dy = y - centre;
+                    float alpha = Mathf.Clamp01(radius - Mathf.Sqrt(dx * dx + dy * dy));
+                    pixels[y * Size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+                }
+            }
+            texture.SetPixels32(pixels);
+            texture.Apply(false, false);
+
+            s_circle = Sprite.Create(texture, new Rect(0f, 0f, Size, Size),
+                new Vector2(0.5f, 0.5f), 100f);
+            s_circle.hideFlags = HideFlags.HideAndDontSave;
+            return s_circle;
+        }
+
+        private static Sprite s_circle;
+
+        /// <summary>
+        /// A flat rectangle of colour, for a mask to reveal parts of. An Image
+        /// and not a label on purpose: it is the thing being masked, and a
+        /// checkerboard of solid colour makes the shape of the hole obvious in a
+        /// way a second line of text would not.
+        /// </summary>
+        public Image Panel(Rect rect, Color color)
+        {
+            var go = Place("Panel", rect);
+            var image = go.AddComponent<Image>();
+            image.color = color;
+            return image;
+        }
+
+        /// <summary>
+        /// A child of the current parent at <paramref name="rect"/>, in pixels
+        /// from the top left of whatever it lands inside.
+        /// </summary>
+        private GameObject Place(string name, Rect rect)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            _created.Add(go);
+            go.transform.SetParent(_parent != null ? _parent : CanvasGo.transform, false);
+
+            var rectTransform = go.GetComponent<RectTransform>();
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(0f, 1f);
+            rectTransform.pivot = new Vector2(0f, 1f);
+            rectTransform.sizeDelta = new Vector2(rect.width, rect.height);
+            rectTransform.anchoredPosition = new Vector2(rect.x, -rect.y);
+            return go;
+        }
+
+        /// <summary>
         /// A label at <paramref name="rect"/>, measured in pixels from the top
         /// left of the canvas, in the primary font with the rest as fallbacks.
+        ///
+        /// The rect is relative to whatever the label lands inside, which is the
+        /// canvas until a <see cref="Mask"/> has been made and that mask
+        /// afterwards.
         /// </summary>
         public OneTextLabel Label(string fontPath, string text, float size, Rect rect,
             params string[] fallbackPaths)
         {
             var go = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer));
             _created.Add(go);
-            go.transform.SetParent(CanvasGo.transform, false);
+            go.transform.SetParent(_parent != null ? _parent : CanvasGo.transform, false);
 
             var rectTransform = go.GetComponent<RectTransform>();
             rectTransform.anchorMin = new Vector2(0f, 1f);

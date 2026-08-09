@@ -1,9 +1,17 @@
 // Minimal SDF text shader for uGUI: samples the R8 glyph atlas
 // (Texture2DArray, layer in uv.z) and does screen-space antialiased
-// coverage from the 0.5 isoline. Stencil block keeps RectMask/Mask working.
+// coverage from the 0.5 isoline.
 // A label with `precise` on samples the RGBA multi-channel atlas instead and
 // takes the median of three channels, which keeps corners sharp; same
 // material either way, so the two batch together.
+//
+// The two uGUI masks are two different mechanisms and this shader needs both.
+// The Stencil block below serves `Mask`, which is stencil-based. `RectMask2D`
+// is not: it drives CanvasRenderer.EnableRectClipping, which sets _ClipRect
+// and turns on UNITY_UI_CLIP_RECT per renderer, and a shader that ignores
+// those clips nothing. (An earlier version of this comment claimed the stencil
+// block covered RectMask2D too. It did not, and text inside every ScrollRect
+// was hanging over the edge of its viewport as a result.)
 Shader "OneText/SDF"
 {
     Properties
@@ -20,6 +28,18 @@ Shader "OneText/SDF"
         _StencilWriteMask ("Stencil Write Mask", Float) = 255
         _StencilReadMask ("Stencil Read Mask", Float) = 255
         _ColorMask ("Color Mask", Float) = 15
+
+        // The rect a RectMask2D is clipping to, in root-canvas space, written
+        // by the CanvasRenderer rather than by anything of ours. The default is
+        // the one uGUI's own shaders use: wide enough to be no rect at all, so
+        // a material inspected outside a mask reads as unclipped.
+        _ClipRect ("Clip Rect", Vector) = (-32767, -32767, 32767, 32767)
+
+        // Set by StencilMaterial when this label is a `Mask`'s own graphic.
+        // Nothing reads the float — the keyword beside it is what the shader
+        // acts on — but uGUI writes it, and a Property it can write without
+        // warning is cheaper than explaining the warning.
+        _UseUIAlphaClip ("Use Alpha Clip", Float) = 0
     }
 
     SubShader
@@ -58,7 +78,48 @@ Shader "OneText/SDF"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 3.5
+            // multi_compile and not shader_feature, and the distinction is the
+            // whole correctness of this feature in a player build. Nothing ever
+            // enables UNITY_UI_CLIP_RECT on a *material*: the CanvasRenderer
+            // turns it on at draw time, and OneText's material is built at
+            // runtime and HideAndDontSave besides. shader_feature strips
+            // variants no built material asks for, so the clipping variant would
+            // exist in the editor and be gone from the build — mask works when
+            // you test it, mask silently stops working when you ship it.
+            // _local keeps it out of the global keyword table, which is a fixed
+            // budget the whole project shares.
+            #pragma multi_compile_local _ UNITY_UI_CLIP_RECT
+            // The stencil half of masking, and multi_compile for the same
+            // reason: StencilMaterial builds the material that carries this
+            // keyword at runtime, so no serialized material asks for the
+            // variant and shader_feature would strip it.
+            #pragma multi_compile_local _ UNITY_UI_ALPHACLIP
             #include "UnityCG.cginc"
+
+            // Every return in the fragment goes through this.
+            //
+            // A `Mask` writes its stencil wherever its graphic produces a
+            // fragment, and "produces a fragment" for a text shader means the
+            // whole glyph quad, most of which is the transparent margin around
+            // a letter. Without the discard, a line of text used as a mask
+            // reveals its children through a row of rectangles instead of
+            // through the letters, which is the one arrangement where being
+            // text rather than an image was the entire point.
+            //
+            // A discard costs real money on a tile-based mobile GPU, which is
+            // why it is behind a keyword rather than always on: it is paid only
+            // by a label that is actually somebody's mask, and the ordinary
+            // millions of text pixels never reach it. With the keyword off this
+            // is `return c` and nothing else.
+            //
+            // At the end, deliberately: the face coverage is read through
+            // fwidth, and a fragment killed before its quad-mates take their
+            // derivative would make that derivative undefined.
+            #ifdef UNITY_UI_ALPHACLIP
+                #define ONETEXT_RETURN(c) { fixed4 shaded = (c); clip(shaded.a - 0.001); return shaded; }
+            #else
+                #define ONETEXT_RETURN(c) return (c);
+            #endif
 
             UNITY_DECLARE_TEX2DARRAY(_GlyphTex);
             // Colour glyphs (emoji, sprites) live in a second array: a
@@ -80,6 +141,21 @@ Shader "OneText/SDF"
             // for arrays. The shadow offset is the only thing that reads it.
             float4 _GlyphTexelSize;
             float4 _MsdfTexelSize;
+
+            #ifdef UNITY_UI_CLIP_RECT
+            // All three are set per renderer by the canvas, never by us.
+            // _UIMaskSoftness* is the RectMask2D `Softness` field, and it is a
+            // uniform rather than a Property for that reason: a Property would
+            // suggest a material somewhere holds the value, and none does.
+            //
+            // Everything in this #ifdef — the uniforms, the interpolator, the
+            // vertex maths — is absent from the variant compiled with the
+            // keyword off, which is the variant every unmasked label in the
+            // project draws with. Not "cheap when unused": not present.
+            float4 _ClipRect;
+            float _UIMaskSoftnessX;
+            float _UIMaskSoftnessY;
+            #endif
 
             // One reach (how far outside the ink the field still knows
             // anything) in texels. Must equal GlyphRasterizer.SpreadPixels,
@@ -115,6 +191,19 @@ Shader "OneText/SDF"
                 float4 decoA : TEXCOORD1;
                 float4 bounds : TEXCOORD2;
                 float4 decoB : TEXCOORD3;
+                #ifdef UNITY_UI_CLIP_RECT
+                // xy: this vertex's distance from the clip rect's centre,
+                // doubled, so the frag can compare it against the rect's size
+                // without halving anything. zw: one over the softness band in
+                // those same doubled units, stored pre-divided because a
+                // reciprocal per vertex is cheaper than one per pixel.
+                //
+                // Derived in vert from the position, NOT read from a mesh
+                // channel: the vertex-budget contract in OneTextLabel.AddVert
+                // ends at TEXCOORD3 and this does not extend it. Nothing needs
+                // to be added to the canvas's additionalShaderChannels.
+                half4 mask : TEXCOORD4;
+                #endif
             };
 
             v2f vert(appdata v)
@@ -126,6 +215,35 @@ Shader "OneText/SDF"
                 o.decoA = v.decoA;
                 o.bounds = v.bounds;
                 o.decoB = v.decoB;
+
+                #ifdef UNITY_UI_CLIP_RECT
+                // v.vertex is already in root-canvas space — the canvas batcher
+                // bakes every graphic's mesh into that space on the CPU — and
+                // _ClipRect is given in the same space, so there is no matrix
+                // here and a RectMask2D inside a world-space canvas works
+                // exactly as one in a screen-space canvas.
+                //
+                // pixelSize is one screen pixel measured in canvas units, and it
+                // is what makes a softness of zero come out as a one-pixel
+                // antialiased edge rather than a stair-step: without it, text
+                // would meet the mask boundary a pixel differently from every
+                // Image beside it under the same mask. The projection matrix's
+                // scale carries clip space to NDC and _ScreenParams carries NDC
+                // to pixels; w undoes the perspective divide that has not
+                // happened yet.
+                float2 pixelSize = o.pos.w
+                    / abs(mul((float2x2)UNITY_MATRIX_P, _ScreenParams.xy));
+                // Guarding the subtraction below against a degenerate rect: an
+                // infinity here would come back out of it as a NaN, and a NaN
+                // in the mask makes the whole label vanish rather than clip
+                // wrongly. The default ±32767 rect needs no help — its two
+                // terms cancel to zero, which is why "no mask" costs nothing
+                // even in the clipping variant.
+                float4 clipped = clamp(_ClipRect, -2e10, 2e10);
+                o.mask = half4(v.vertex.xy * 2 - clipped.xy - clipped.zw,
+                    0.25 / (0.25 * float2(_UIMaskSoftnessX, _UIMaskSoftnessY) + pixelSize));
+                #endif
+
                 return o;
             }
 
@@ -202,6 +320,27 @@ Shader "OneText/SDF"
 
             fixed4 frag(v2f i) : SV_Target
             {
+                // The RectMask2D factor, once. Every one of the four returns
+                // below needs it and exactly one of them runs, so computing it
+                // here costs one evaluation per pixel and no more.
+                //
+                // This is the softness-aware form uGUI's own shaders use rather
+                // than UnityGet2DClipping, which is a hard step and would make
+                // RectMask2D.Softness silently do nothing. mask.xy is the
+                // doubled distance from the rect's centre and (zw - xy) its
+                // doubled size, so their difference is the doubled distance
+                // still to go before the edge; scaling by the pre-divided band
+                // and saturating turns that into coverage, per axis.
+                #ifdef UNITY_UI_CLIP_RECT
+                half2 inside = saturate(
+                    (_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);
+                half clipA = inside.x * inside.y;
+                #else
+                // A literal 1, so every `* clipA` below is constant-folded out
+                // of the unmasked variant rather than left as a multiply.
+                half clipA = 1.0;
+                #endif
+
                 // A colour tile is a picture, not a distance field: sample it
                 // straight and tint by the vertex colour, which is what lets a
                 // label fade its emoji out with the rest of its text.
@@ -226,13 +365,24 @@ Shader "OneText/SDF"
                 // the discriminator rather than a second material, for the same
                 // reason colour and precise are: an underlined word has to
                 // batch with the sentence around it.
-                if (i.bounds.w > 2.5) return i.color;
+                if (i.bounds.w > 2.5)
+                {
+                    fixed4 bar = i.color;
+                    bar.a *= clipA;
+                    ONETEXT_RETURN(bar);
+                }
 
                 float precise = step(1.5, i.bounds.w);
                 if (i.bounds.w > 0.5 && precise < 0.5)
                 {
                     float3 s = float3(i.uv.x, clamp(i.uv.y, i.uv.w, i.bounds.x), i.uv.z);
-                    return UNITY_SAMPLE_TEX2DARRAY(_ColorTex, s) * i.color;
+                    // Alpha only. Under SrcAlpha/OneMinusSrcAlpha the source
+                    // contributes rgb*a, so attenuating a is the whole of
+                    // clipping; scaling rgb as well would darken the tile
+                    // towards the mask edge instead of fading it.
+                    fixed4 tile = UNITY_SAMPLE_TEX2DARRAY(_ColorTex, s) * i.color;
+                    tile.a *= clipA;
+                    ONETEXT_RETURN(tile);
                 }
 
                 float2 tileMin = float2(i.bounds.y, i.uv.w);
@@ -277,8 +427,8 @@ Shader "OneText/SDF"
                 if (i.decoA.y + i.decoA.w + i.decoB.y < 0.5)
                 {
                     fixed4 plain = i.color;
-                    plain.a = faceA;
-                    return plain;
+                    plain.a = faceA * clipA;
+                    ONETEXT_RETURN(plain);
                 }
 
                 float2 outlineRG = Unpack(i.decoA.x);
@@ -337,9 +487,26 @@ Shader "OneText/SDF"
                 acc = Over(float4(outlineRgb * outlineA, outlineA), acc);
                 acc = Over(float4(i.color.rgb * faceA, faceA), acc);
 
+                // Clipping applies HERE, to the finished premultiplied stack,
+                // and not to i.color.a on the way in. Scaling the four layers'
+                // alphas individually and then compositing is not the same
+                // thing, because Over is not linear in alpha: with an opaque
+                // shadow under an opaque face and a factor of one half, the
+                // per-layer route yields acc.a = 0.75 and lets a quarter of the
+                // shadow bleed into what should be pure face colour. Scaling a
+                // premultiplied result uniformly is the one operation that does
+                // commute with Over — it is a change of exposure, not of
+                // composition — so the colours come out of the divide below
+                // untouched and only the alpha is attenuated.
+                //
+                // With a hard step the distinction never shows, since the factor
+                // is 0 or 1. Softness is what makes it visible, and softness is
+                // exactly what the formula above supports.
+                acc *= clipA;
+
                 // Back to straight alpha for SrcAlpha/OneMinusSrcAlpha, which is
                 // the blend every other uGUI graphic in the batch is using.
-                return fixed4(acc.rgb / max(acc.a, 1e-4), acc.a);
+                ONETEXT_RETURN(fixed4(acc.rgb / max(acc.a, 1e-4), acc.a));
             }
             ENDCG
         }
