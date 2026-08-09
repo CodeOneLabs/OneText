@@ -109,12 +109,18 @@
 - **A missing shader is said once, not eight thousand times.** `SharedGlyphAtlas.
   Material` logged an error every time it was asked and the shader was not
   there, and every label asks on enable. On CI that turned one missing file into
-  ~8,000 identical lines and roughly a hundred EditMode failures, every one of
-  them the words "Unhandled log message" and none of them about the code under
-  test. It is reported once per domain now, and it names the graphics device and
-  — in the editor — whether the asset is in the database at all, which is the
-  difference between an import problem and a compilation one. Reproduced by
-  hiding the shader locally: the same run went from ~100 failures to 1.
+  ~8,000 identical lines, and into 28 EditMode failures whose whole content was
+  the words "Unhandled log message" — failures about the logging, sitting on top
+  of the ones about the shader. It is reported once per domain now, and it names
+  the graphics device and — in the editor — whether the asset is in the database
+  at all, which is the difference between an import problem and a compilation
+  one.
+
+  That distinction was not decoration. The first run carrying this message
+  answered the question the same day: `shaders named OneText-SDF in the
+  database: 0` with `Shader.Find: null` on a working OpenGLCore device, which is
+  an import problem and nothing else, and is what led to the CI layout fix
+  below.
 
   A process with **no graphics device** loads no shaders by design, so there the
   report is a warning rather than an error: layout, measurement and the atlas
@@ -192,6 +198,69 @@
   Styles badges asked for the assets themselves — each font carrying a
   compressed copy of its .ttf — twice per refresh, and a refresh happens on
   every click in the window. They ask the search index for a count now.
+
+### Fixed
+
+- **CI has never once been able to load an asset out of this package, and now
+  can.** The throwaway project the suite runs from was created *inside* the
+  package it tests: this repository's root is the package, and the project sat
+  in it. That arrangement import-loops, a trailing tilde on the folder name
+  stopped the loop, and because it stopped the loop it looked settled — the code
+  compiled, every test that read a file through `File.ReadAllBytes` passed, and
+  316 of the package's assets were in the `AssetDatabase` with paths and GUIDs.
+
+  None of them had been imported. `FindAssets("t:Shader")` under the package
+  returned 0 while the shader's own GUID resolved from its path;
+  `LoadMainAssetAtPath` returned NULL; so did `Resources.Load`. Every test that
+  loaded the SDF shader, the Hub's UXML or its USS failed, and every test that
+  did not, passed — about a hundred of them, on Linux **and on Windows**. That
+  it was both is the part that had been hiding in plain sight: this was filed as
+  a Linux bug for as long as it was, and Linux was only where anyone looked.
+
+  The project is created beside the package now rather than within it, which is
+  what the dev project this package is written against has always done and why
+  it never showed any of this. The `Library` cache keys carry a `v2`, because
+  every cache written before this holds an artifact database in which these
+  assets never imported and `restore-keys` matches on prefix — it would have
+  restored the broken state into the fixed tree.
+
+- **The 2022.3 job builds again, and has run a test for the first time since the
+  scene-and-prefab migration landed.** It died at compile on four `CS1503`s that
+  named neither the cause nor the version. `placeholder.SetText` written as a
+  method group resolves against the TextMesh Pro inside Unity 6 and not at all
+  against TMP 3.0.7, which is what 2022.3 pulls in: 3.0.7 has only
+  `SetText(string, bool syncTextInputBox = true)`, and a method group whose only
+  candidate has an optional parameter does not convert to
+  `UnityAction<string>` — a method group conversion does not fill optional
+  parameters in. The generic `AddPersistentListener` stopped being applicable,
+  resolution fell back to the non-generic pair, and the error came out naming
+  `UnityEvent`, which the line never mentions. The signature is named through
+  reflection instead of left to overload resolution.
+
+- **A test that cannot run where it is now reports Skipped, which is what it
+  always meant.** Fifteen guards — no DOTween, no coverage fonts, no colour
+  emoji font, no git, a renderer that does not match the stamp the goldens were
+  taken on — said `Assert.Inconclusive`. Unity's command-line runner exits 2
+  when a suite does not come back Passed, and Inconclusive is not Passed, so a
+  run with nothing wrong in it reported failure: the 2022.3 job went red holding
+  737 passed and 0 failed. `Assert.Ignore` is the API that means what these say,
+  and the suite was already using it in eleven other places.
+
+- **`DomainReloadTests` reads its font inside the play session rather than
+  before it.** The `[SetUp]` turns Domain Reload off, but a project that had it
+  on when the run started still reloads on the way into the first play session:
+  the setting lands, and the entry already under way does not get it. The reload
+  discards the iterator's locals, so bytes read before the loop came back empty
+  and `FontData.Load` threw on an empty array — in the first test of the class
+  only. The dev project already has Domain Reload off in its `EditorSettings`,
+  so its first entry never reloads and the failure could not happen there.
+
+- **The Windows smoke build stops asking git a question the workspace root
+  cannot answer.** `unity-builder` derives a build number from git at the
+  workspace root, and the checkout moved into a subdirectory, so
+  `git rev-parse --is-shallow-repository` exited 128 before the build started.
+  Nothing reads that version; the smoke player exists to print one marker into a
+  log and is then discarded.
 
 ## [0.2.0] - 2026-08-08
 
