@@ -39,13 +39,13 @@ namespace OneText.Editor
         {
             get
             {
-                int count = AllFonts().Count;
+                int count = FontCount();
                 return count == 0 ? "0" : count.ToString("n0");
             }
         }
 
         public override HubTone BadgeTone =>
-            AllFonts().Count == 0 ? HubTone.Warn : HubTone.Neutral;
+            FontCount() == 0 ? HubTone.Warn : HubTone.Neutral;
 
         protected override void Compose(VisualElement content)
         {
@@ -67,7 +67,7 @@ namespace OneText.Editor
             foreach (var font in fonts) content.Add(FontCard(font));
 
             var more = HubUI.MakeCard("Another font",
-                "Fallbacks are ordinary font assets too; the chain is set in project settings.");
+                "Fallbacks are ordinary font assets too; the chain is set in Global Settings.");
             more.Add(HubUI.Ghost("Choose a font file…", ImportFont));
             content.Add(more.Root);
         }
@@ -77,14 +77,14 @@ namespace OneText.Editor
             var settings = OneTextSettings.Instance;
             var card = HubUI.MakeCard("Project default",
                 "What a label draws with when it has no font of its own, followed by its fallbacks.");
-            card.Act(HubUI.Ghost("Project settings",
-                () => SettingsService.OpenProjectSettings("Project/OneText")));
+            card.Act(HubUI.Ghost("Global settings",
+                () => OneTextHub.Open(OneTextHub.Tab.Settings)));
 
             if (settings == null)
             {
                 card.Add(HubUI.Notice(
                     "This project has no OneText settings asset, so there is no default font and " +
-                    "no fallback chain. Open project settings to make one.", HubTone.Warn));
+                    "no fallback chain. Open Global Settings to make one.", HubTone.Warn));
                 return card.Root;
             }
 
@@ -110,21 +110,22 @@ namespace OneText.Editor
         /// <summary>
         /// The last tier of the chain, which is not a font asset at all.
         ///
-        /// When nothing the project ships covers a character, the machine's own
-        /// fonts are asked. That is a better outcome than a box and a worse one
-        /// than shipping the face: the glyph comes from whatever this computer
-        /// happens to have, and another device may have a different one or
-        /// none. Putting it at the end of the chain is where a reader would
-        /// look for it, and Doctor's `system-fallback` rule says which
-        /// characters are relying on it.
+        /// When nothing the project ships covers a character, the fonts of the
+        /// device running the game are asked — in the build, on the player's
+        /// phone or PC, not just in this editor. That is a better outcome than a
+        /// box and a worse one than shipping the face: the glyph comes from
+        /// whatever that particular device happens to have, so two devices can
+        /// draw the same string differently. Putting it at the end of the chain
+        /// is where a reader would look for it, and Doctor's `system-fallback`
+        /// rule says which characters are relying on it.
         /// </summary>
         private static VisualElement SystemTier(OneTextSettings settings)
         {
             bool on = settings.SystemFontFallback;
             var row = HubUI.KeyValue("System fonts",
                 on
-                    ? "Characters no font above covers are drawn from this machine's own fonts, " +
-                      "which another machine may not have. Doctor lists them."
+                    ? "Characters no font above covers are drawn from the player's own device " +
+                      "fonts at runtime, which another device may not have. Doctor lists them."
                     : "A character no font above covers draws a box.",
                 on ? HubTone.Neutral : HubTone.Warn);
             var badge = HubUI.Badge(on ? "OS FALLBACK ON" : "OFF",
@@ -133,7 +134,7 @@ namespace OneText.Editor
             row.Insert(1, badge);
 
             var change = HubUI.Quiet("Change",
-                () => SettingsService.OpenProjectSettings("Project/OneText"));
+                () => OneTextHub.Open(OneTextHub.Tab.Settings));
             change.style.marginLeft = 10f;
             row.Add(change);
             return row;
@@ -178,7 +179,60 @@ namespace OneText.Editor
                 "Only meaningful for the scripts Unicode unified: ja, zh-Hans, zh-Hant, ko. An " +
                 "untagged Han font gives Japanese readers Chinese shapes and nobody files a bug.",
                 "hint"));
+
+            card.Add(PackingRow(font));
             return card.Root;
+        }
+
+        /// <summary>
+        /// How hard this font is packed, and the button that spends a minute to
+        /// pack it harder.
+        ///
+        /// Importing packs fast, because packing a 16 MB Korean face as small
+        /// as brotli goes froze the editor for over a minute and 15 % of a font
+        /// is not worth that on every drag-and-drop. It is worth it once, on
+        /// the build that ships, and this is where that once happens.
+        /// </summary>
+        private VisualElement PackingRow(OneFontAsset font)
+        {
+            bool smallest = font.Packing == OneFontAsset.FontPacking.Smallest;
+            var row = HubUI.KeyValue("Packing", smallest
+                    ? "as small as it goes"
+                    : "packed for a fast import",
+                smallest ? HubTone.Good : HubTone.Neutral);
+            if (smallest) return row;
+
+            var button = HubUI.Quiet("Pack smaller", () => PackSmaller(font));
+            button.style.marginLeft = 10f;
+            row.Add(button);
+            return row;
+        }
+
+        private void PackSmaller(OneFontAsset font)
+        {
+            long before = font.StoredSize;
+            bool done;
+            try
+            {
+                EditorUtility.DisplayProgressBar("OneText",
+                    $"Packing {font.FamilyName} as small as it goes — this takes a while…", 0.5f);
+                done = font.Repack(OneFontAsset.FontPacking.Smallest);
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            if (!done)
+            {
+                SayBadly($"{font.FamilyName} has no font file to pack.");
+                return;
+            }
+
+            EditorUtility.SetDirty(font);
+            AssetDatabase.SaveAssets();
+            Refresh();
+            Say($"{font.FamilyName}: {before / 1024f:n0} KB → {font.StoredSize / 1024f:n0} KB.");
         }
 
         private void ShowLanguageMenu(OneFontAsset font, TextField field)
@@ -262,7 +316,7 @@ namespace OneText.Editor
         {
             get
             {
-                int count = AllStyles().Count;
+                int count = StyleCount();
                 return count == 0 ? null : count.ToString("n0");
             }
         }

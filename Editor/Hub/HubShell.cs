@@ -6,12 +6,12 @@ using UnityEngine.UIElements;
 namespace OneText.Editor
 {
     /// <summary>
-    /// The window's chrome: a sidebar of sections, a header that says what the
+    /// The Hub's chrome: a sidebar of sections, a header that says what the
     /// open one is for, and the panel itself.
     ///
-    /// It is a class rather than code inside the window because the same tree
-    /// has to be buildable without a window; the tests build every section
-    /// this way, and so does the screenshot pass.
+    /// It is a class rather than code inside the host because the same tree has
+    /// to be buildable without one; the settings page mounts it, and the tests
+    /// and the screenshot pass build every section with no host at all.
     /// </summary>
     public sealed class HubShell
     {
@@ -60,10 +60,6 @@ namespace OneText.Editor
                 _lede = Root.Q<Label>("lede");
                 _toast = Root.Q("toast");
                 _toastText = Root.Q<Label>("toast-text");
-
-                var settings = Root.Q<Button>("settings-button");
-                if (settings != null)
-                    settings.clicked += () => SettingsService.OpenProjectSettings("Project/OneText");
 
                 var version = Root.Q<Label>("version");
                 if (version != null) version.text = PackageVersion();

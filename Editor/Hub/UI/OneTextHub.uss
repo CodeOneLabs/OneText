@@ -51,7 +51,7 @@
     padding: 6px 14px;
     border-width: 1px;
     border-color: var(--line-hi);
-    border-radius: 980px;
+    border-radius: 6px;
     background-color: rgba(0, 0, 0, 0);
     background-image: none;
     color: var(--green);
@@ -555,7 +555,7 @@
 
 .hub-root .pill {
     padding: 5px 13px;
-    border-radius: 980px;
+    border-radius: 6px;
     border-width: 1px;
     border-color: var(--line);
     background-color: rgba(0, 0, 0, 0);
@@ -607,7 +607,7 @@
 
 .hub-root .badge {
     padding: 2px 8px;
-    border-radius: 980px;
+    border-radius: 4px;
     font-size: 9.5px;
     letter-spacing: 0.6px;
     color: var(--ink-faint);

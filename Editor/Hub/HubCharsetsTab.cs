@@ -235,7 +235,7 @@ namespace OneText.Editor
             else
                 card.Add(HubUI.Notice(
                     "The project does not bake this charset at startup yet; set it as the " +
-                    "prewarm charset in project settings.", HubTone.Neutral));
+                    "prewarm charset in Global Settings.", HubTone.Neutral));
             return card.Root;
         }
 
@@ -254,10 +254,10 @@ namespace OneText.Editor
             if (!CharsetRecorder.Enabled)
             {
                 card.Add(HubUI.Notice(
-                    "Recording is off. Turn on 'Record Charset In Play Mode' in project settings, " +
+                    "Recording is off. Turn on 'Record Charset In Play Mode' in Global Settings, " +
                     "play the game, and everything it drew shows up here.", HubTone.Neutral));
-                card.Add(HubUI.Ghost("Project settings",
-                    () => SettingsService.OpenProjectSettings("Project/OneText")));
+                card.Add(HubUI.Ghost("Global settings",
+                    () => OneTextHub.Open(OneTextHub.Tab.Settings)));
                 return card.Root;
             }
 

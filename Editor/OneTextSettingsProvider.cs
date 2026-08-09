@@ -1,13 +1,21 @@
 using System.IO;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace OneText.Editor
 {
     /// <summary>
-    /// Project Settings &gt; OneText: the default font and the project-wide
-    /// fallback chain, created on demand so a new project never has to know
-    /// where the settings asset lives.
+    /// Project Settings &gt; OneText: the Hub, mounted where a Unity project
+    /// keeps its project-wide decisions.
+    ///
+    /// It used to be an inspector for the settings asset with a button to a
+    /// window holding everything else, which meant the default font was in one
+    /// place and the fonts themselves in another. Project settings is where
+    /// people go looking — it is where TextMesh Pro put the same decisions —
+    /// so the whole Hub is here now, and the settings asset is one section of
+    /// it. This class owns the page's lifetime and the asset's existence;
+    /// <see cref="HubSettingsTab"/> owns what the page shows.
     /// </summary>
     public static class OneTextSettingsProvider
     {
@@ -17,112 +25,48 @@ namespace OneText.Editor
         [SettingsProvider]
         public static SettingsProvider Create()
         {
-            return new SettingsProvider("Project/OneText", SettingsScope.Project)
+            OneTextHub hub = null;
+
+            return new SettingsProvider(OneTextHub.SettingsPath, SettingsScope.Project)
             {
                 label = "OneText",
-                keywords = new[] { "text", "font", "fallback", "onetext" },
-                guiHandler = _ => DrawSettings(),
+                keywords = new[]
+                {
+                    "text", "font", "fallback", "onetext", "atlas", "raycast", "rich text",
+                    "wrapping", "auto size", "charset", "dictionary", "doctor", "migration",
+                },
+                activateHandler = (_, root) =>
+                {
+                    hub = OneTextHub.Mount();
+                    var ui = hub.CreateUI();
+                    ui.style.flexGrow = 1f;
+                    // The settings window hands out a panel that is as tall as
+                    // its content unless something asks for height. The Hub is
+                    // two scrolling columns and has no natural height at all,
+                    // so it says so: this is the old window's minimum.
+                    ui.style.minHeight = 460f;
+                    // And it keeps its scrolling to itself. Without this the
+                    // settings window's own scroll view measures the Hub's full
+                    // composed height on every layout pass, which on a section
+                    // with a few hundred rows is a measurable stutter for a
+                    // scrollbar nobody wants.
+                    ui.style.overflow = Overflow.Hidden;
+                    root.style.flexGrow = 1f;
+                    root.Add(ui);
+
+                    // Nothing ticks a settings page. The atlas section watches a
+                    // running game, so it is given a clock of its own — at the
+                    // rate that section already throttles itself to, since it is
+                    // the only one that has ever wanted one.
+                    var mounted = hub;
+                    root.schedule.Execute(() => mounted.Tick()).Every(500);
+                },
+                deactivateHandler = () =>
+                {
+                    OneTextHub.Unmount(hub);
+                    hub = null;
+                },
             };
-        }
-
-        private static UnityEditor.Editor s_editor;
-
-        private static void DrawSettings()
-        {
-            // The settings page is where people arrive; the Hub is where the
-            // tools are. A milestone about discoverability may as well say so
-            // in the one place everybody already opens.
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Open the Hub", GUILayout.Width(120f)))
-                    OneTextHub.Open();
-            }
-
-            var settings = Find();
-            if (settings == null)
-            {
-                EditorGUILayout.HelpBox(
-                    "No settings asset yet. Create one to set the font new labels start with " +
-                    "and the fallback fonts every label inherits.", MessageType.Info);
-                if (GUILayout.Button("Create settings asset"))
-                    Selection.activeObject = GetOrCreate();
-                return;
-            }
-
-            UnityEditor.Editor.CreateCachedEditor(settings, null, ref s_editor);
-            EditorGUI.BeginChangeCheck();
-            s_editor.OnInspectorGUI();
-            if (EditorGUI.EndChangeCheck())
-            {
-                EditorUtility.SetDirty(settings);
-                OneTextSettings.Invalidate();
-                // A different budget means a different texture; rebuild it now
-                // so the editor shows what the game will get.
-                SharedGlyphAtlas.Reconfigure();
-            }
-
-            EditorGUILayout.Space();
-            DrawAtlasStatus(settings);
-
-            EditorGUILayout.Space();
-            EditorGUILayout.HelpBox(
-                "Fonts are OneText Font Assets: right-click any .ttf/.otf in the project and " +
-                "choose OneText > Create Font Asset.", MessageType.None);
-        }
-
-        /// <summary>
-        /// What the configured budget buys, and what the live atlas is doing
-        /// with it. Tile counts are the number that decides whether a script
-        /// fits, so they are worth showing before a project ships.
-        /// </summary>
-        private static void DrawAtlasStatus(OneTextSettings settings)
-        {
-            var budget = settings.AtlasSettings;
-            EditorGUILayout.LabelField("Atlas budget", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Texture memory", $"{budget.MemoryBytes / (1024f * 1024f):0.#} MB " +
-                $"({budget.TextureSize}x{budget.TextureSize} x {budget.LayerCount})");
-
-            // The budget figure above is R8; the precise atlas holds the same
-            // texels in four channels from the same setting, so a project with
-            // precise labels pays it again times four. Only said when that
-            // atlas exists; the existence check never creates one.
-            if (SharedGlyphAtlas.PreciseAtlasExists)
-            {
-                var preciseStats = SharedGlyphAtlas.PreciseAtlas.GetStats();
-                EditorGUILayout.LabelField("Precise atlas",
-                    $"+{preciseStats.MemoryBytes / (1024f * 1024f):0.#} MB (RGBA32, for labels with " +
-                    "Precise on)");
-            }
-
-            // A CJK glyph at 48px rasterizes to roughly a 56px square once the
-            // SDF padding is added; that ratio is what makes CJK the budget case.
-            long capacity = (long)budget.TextureSize * budget.TextureSize * budget.LayerCount;
-            EditorGUILayout.LabelField("Rough capacity",
-                $"~{capacity / (56 * 56):n0} CJK tiles @48px, ~{capacity / (26 * 26):n0} Latin tiles @36px");
-
-            if (!SharedGlyphAtlas.Exists && !SharedGlyphAtlas.PreciseAtlasExists)
-            {
-                EditorGUILayout.LabelField("Live atlas", "not created yet");
-                return;
-            }
-
-            if (SharedGlyphAtlas.Exists)
-            {
-                var stats = SharedGlyphAtlas.Atlas.GetStats();
-                EditorGUILayout.LabelField("Live atlas",
-                    $"{stats.TileCount:n0} tiles, {stats.UsedFraction * 100f:0.#}% full, " +
-                    $"{stats.Evictions:n0} evictions, {stats.Compactions:n0} compactions");
-            }
-            if (SharedGlyphAtlas.PreciseAtlasExists)
-            {
-                var stats = SharedGlyphAtlas.PreciseAtlas.GetStats();
-                EditorGUILayout.LabelField("Live precise atlas",
-                    $"{stats.TileCount:n0} tiles, {stats.UsedFraction * 100f:0.#}% full, " +
-                    $"{stats.Evictions:n0} evictions, {stats.Compactions:n0} compactions");
-            }
-            EditorGUILayout.LabelField("Partial upload",
-                GlyphAtlas.SupportsPartialUpload ? "supported" : "not supported (full upload per flush)");
         }
 
         /// <summary>The project's settings asset, or null if it does not exist.</summary>

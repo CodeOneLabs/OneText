@@ -25,15 +25,51 @@ namespace OneText
         [Tooltip("Consulted, in order, for characters a label's own fonts do not cover.")]
         [SerializeField] private List<OneFontAsset> _fallbackFonts = new List<OneFontAsset>();
 
-        [Tooltip("Default em size for new labels.")]
+        [Tooltip("When no font above covers a character, draw it from a font the device the game " +
+            "is running on already has — /system/fonts on Android, the system font folders on " +
+            "Windows, macOS, Linux and iOS. This happens in the build, on the player's machine, " +
+            "not only in the editor. On by default, because a box is the worst outcome for a " +
+            "reader. Doctor still warns about every character that needs one: the face is " +
+            "whatever that device happens to ship, so two devices can draw the same string " +
+            "differently and a device with nothing for the character still draws a box. Web has " +
+            "no font folder to look in, so the option finds nothing there.")]
+        [SerializeField] private bool _systemFontFallback = true;
+
+        // The fields a new label or a new world text starts with. They are here
+        // rather than only as C# field initializers because "every label in this
+        // project starts at 24 and does not take clicks" is a project decision,
+        // and a project decision that can only be made by editing every object
+        // after the fact is not really available. TextMesh Pro's settings page
+        // taught people to look for exactly these; this is where they are.
+        [Header("New text defaults")]
+        [Tooltip("Em size a new label or world text starts at.")]
         [SerializeField] private float _defaultFontSize = 36f;
 
-        [Tooltip("When no font above covers a character, draw it from a font the operating system " +
-            "has instead of a box. On by default, because a box is the worst outcome for a reader. " +
-            "Doctor still warns about every character that needs one: the face is the one on this " +
-            "machine, and another device may have a different one or none. Web has no font " +
-            "directory to look in, so the option does nothing there.")]
-        [SerializeField] private bool _systemFontFallback = true;
+        [Tooltip("Smallest size auto-size may shrink to, on a new label or world text.")]
+        [SerializeField] private float _defaultAutoSizeMin = 10f;
+
+        [Tooltip("Largest size auto-size may grow to, on a new label or world text.")]
+        [SerializeField] private float _defaultAutoSizeMax = 128f;
+
+        [Tooltip("Whether a new label takes pointer clicks. On matches Unity's other graphics; " +
+            "off is what a screen full of captions wants, because every one of them otherwise " +
+            "sits between the pointer and the button behind it.")]
+        [SerializeField] private bool _defaultRaycastTarget = true;
+
+        [Tooltip("Whether a new label parses <b>, <color> and the rest of the markup.")]
+        [SerializeField] private bool _defaultRichText = true;
+
+        [Tooltip("Whether a new label turns the two characters \\n into a real newline.")]
+        [SerializeField] private bool _defaultParseEscapes = true;
+
+        [Tooltip("How a new label treats a line too long for its box.")]
+        [SerializeField] private TextWrap _defaultWrap = TextWrap.Wrap;
+
+        [Tooltip("Rect size a label created from the GameObject menu starts with.")]
+        [SerializeField] private Vector2 _defaultCanvasSize = new Vector2(320f, 80f);
+
+        [Tooltip("Rect size a world text created from the GameObject menu starts with, in metres.")]
+        [SerializeField] private Vector2 _defaultWorldSize = new Vector2(20f, 5f);
 
         [Header("Glyph atlas")]
         [Tooltip("Edge length of each atlas layer. Bigger holds more glyphs at once; " +
@@ -82,6 +118,69 @@ namespace OneText
         public IReadOnlyList<OneFontAsset> FallbackFonts => _fallbackFonts;
 
         public float DefaultFontSize => _defaultFontSize;
+
+        /// <summary>
+        /// What a new label or world text starts as.
+        ///
+        /// A value type rather than a bag of properties so the caller reads the
+        /// project's answer once and cannot get half of it from a settings
+        /// asset that was created, or destroyed, between two lines.
+        /// </summary>
+        public struct TextDefaults
+        {
+            public float FontSize;
+            public float AutoSizeMin;
+            public float AutoSizeMax;
+            public bool RaycastTarget;
+            public bool RichText;
+            public bool ParseEscapes;
+            public TextWrap Wrap;
+
+            /// <summary>Rect a label created from the GameObject menu gets.</summary>
+            public Vector2 CanvasSize;
+
+            /// <summary>Rect a world text created from the GameObject menu gets, in metres.</summary>
+            public Vector2 WorldSize;
+
+            /// <summary>
+            /// What a project with no settings asset gets. The same numbers the
+            /// serialized fields start at, so creating the asset changes
+            /// nothing until somebody edits it.
+            /// </summary>
+            public static TextDefaults Default => new TextDefaults
+            {
+                FontSize = 36f,
+                AutoSizeMin = 10f,
+                AutoSizeMax = 128f,
+                RaycastTarget = true,
+                RichText = true,
+                ParseEscapes = true,
+                Wrap = TextWrap.Wrap,
+                CanvasSize = new Vector2(320f, 80f),
+                WorldSize = new Vector2(20f, 5f),
+            };
+        }
+
+        /// <summary>This asset's answer for a new label or world text.</summary>
+        public TextDefaults Defaults => new TextDefaults
+        {
+            FontSize = _defaultFontSize,
+            AutoSizeMin = _defaultAutoSizeMin,
+            AutoSizeMax = _defaultAutoSizeMax,
+            RaycastTarget = _defaultRaycastTarget,
+            RichText = _defaultRichText,
+            ParseEscapes = _defaultParseEscapes,
+            Wrap = _defaultWrap,
+            CanvasSize = _defaultCanvasSize,
+            WorldSize = _defaultWorldSize,
+        };
+
+        /// <summary>
+        /// The project's answer, or the built-in one when no settings asset
+        /// exists. What every "a new label starts as" path reads.
+        /// </summary>
+        public static TextDefaults ProjectDefaults =>
+            Instance != null ? Instance.Defaults : TextDefaults.Default;
 
         /// <summary>
         /// Whether a character no font in the chain covers may be drawn from an

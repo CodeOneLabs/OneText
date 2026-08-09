@@ -43,7 +43,7 @@ namespace OneText.Editor
             var settings = OneTextSettings.Instance;
             var tiles = HubUI.Box("tiles");
 
-            int fonts = AllFonts().Count;
+            int fonts = FontCount();
             tiles.Add(HubUI.Tile("Fonts", fonts.ToString("n0"),
                 settings != null && settings.DefaultFont != null
                     ? $"default {settings.DefaultFont.FamilyName}"
@@ -51,7 +51,7 @@ namespace OneText.Editor
                 fonts > 0 ? HubTone.Good : HubTone.Neutral,
                 () => Hub.Go(OneTextHub.Tab.Fonts)));
 
-            int styles = AllStyles().Count;
+            int styles = StyleCount();
             tiles.Add(HubUI.Tile("Styles", styles.ToString("n0"),
                 styles == 0 ? "none yet" : "named, reusable",
                 styles > 0 ? HubTone.Good : HubTone.Neutral,
@@ -118,8 +118,7 @@ namespace OneText.Editor
             var card = HubUI.MakeCard("First steps",
                 "Each of these is done once per project. They tick themselves off.").Flush();
 
-            var fonts = AllFonts();
-            card.Add(Step(fonts.Count > 0, "Import a font",
+            card.Add(Step(FontCount() > 0, "Import a font",
                 "OneText reads .ttf and .otf itself, but Unity owns those extensions, so a font " +
                 "asset is the one step between dropping a font in and drawing with it.",
                 "Choose a font file…", ImportFont));
@@ -128,7 +127,7 @@ namespace OneText.Editor
                 "Set the project's default font",
                 "Every label with no font of its own gets this one, plus the fallback chain " +
                 "under it. Without it, a new label draws nothing.",
-                "Project settings", () => SettingsService.OpenProjectSettings("Project/OneText")));
+                "Global settings", () => OneTextHub.Open(OneTextHub.Tab.Settings)));
 
             card.Add(Step(Hub.StringFolders.Count > 0, "Point OneText at your strings",
                 "The folders your localisation tables and dialogue live in. Doctor, the gallery " +
@@ -210,7 +209,7 @@ namespace OneText.Editor
         private VisualElement Map()
         {
             var card = HubUI.MakeCard("Sections",
-                "What the rest of this window is for: nine screens, one question each.").Flush();
+                "What the rest of this page is for: ten screens, one question each.").Flush();
             foreach (var section in Hub.Sections)
             {
                 if (section.Tab == OneTextHub.Tab.Overview) continue;

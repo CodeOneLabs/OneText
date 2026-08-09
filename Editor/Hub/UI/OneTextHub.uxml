@@ -15,7 +15,6 @@
             </ui:VisualElement>
             <ui:ScrollView name="nav" class="nav" />
             <ui:VisualElement class="sidebar__foot">
-                <ui:Button name="settings-button" text="Project settings" class="btn--quiet" />
                 <ui:Label name="version" text="" class="sidebar__version" />
             </ui:VisualElement>
         </ui:VisualElement>

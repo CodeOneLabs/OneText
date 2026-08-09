@@ -61,9 +61,9 @@ namespace OneText.UGUI
         [SerializeField] private List<OneFontAsset> _fallbackFonts = new List<OneFontAsset>();
 
         [TextArea]
-        [SerializeField] private string _text = "مرحبا بالعالم";
+        [SerializeField] private string _text = "New Text";
 
-        [SerializeField] private float _fontSize = 64f;
+        [SerializeField] private float _fontSize = 36f;
 
         [Tooltip("Pick the largest size between Min and Max at which the whole text fits " +
                  "the rect. The Size field above is ignored while this is on.")]
@@ -693,7 +693,37 @@ namespace OneText.UGUI
             base.OnDestroy();
         }
 
+        /// <summary>
+        /// Copies Project Settings &gt; OneText's new-text defaults onto this
+        /// label: size, auto-size bounds, wrapping, markup, escapes and whether
+        /// it takes clicks.
+        ///
+        /// Called for you when a label is added in the editor. Public because
+        /// the other direction is worth having too: a label that has drifted
+        /// from the project's answer can be put back on it.
+        /// </summary>
+        public void ApplyProjectDefaults()
+        {
+            var defaults = OneTextSettings.ProjectDefaults;
+            FontSize = defaults.FontSize;
+            AutoSizeMin = defaults.AutoSizeMin;
+            AutoSizeMax = defaults.AutoSizeMax;
+            Wrap = defaults.Wrap;
+            RichText = defaults.RichText;
+            ParseEscapes = defaults.ParseEscapes;
+            raycastTarget = defaults.RaycastTarget;
+        }
+
 #if UNITY_EDITOR
+        // Reset is what Unity calls when the component is added in the editor
+        // and when somebody picks Reset from its context menu, which are the
+        // two moments "what should a new label be" is being asked.
+        protected override void Reset()
+        {
+            base.Reset();
+            ApplyProjectDefaults();
+        }
+
         protected override void OnValidate()
         {
             base.OnValidate();
@@ -2871,6 +2901,14 @@ namespace OneText.UGUI
         /// TEXCOORD2  x tile v-max · y tile u-min · z tile u-max · w which atlas
         /// TEXCOORD3  glow R|G · glow B|A · shadow dx|dy · shadow soft|glow radius
         ///
+        /// The list ends at TEXCOORD3 and the shader's does not: it also has a
+        /// TEXCOORD4 for RectMask2D clipping. That one is <em>derived in the
+        /// vertex shader</em> from the position it was already given, not
+        /// carried from here, so it is not part of this contract and wants
+        /// nothing added to the canvas's additionalShaderChannels. Adding it
+        /// would cost every graphic in the canvas a channel to duplicate a
+        /// number the GPU can work out for free.
+        ///
         /// <b>Nothing here is new.</b> The canvas is already asked for
         /// TexCoord1/2/3 (see EnsureMaterial), and TEXCOORD1, TEXCOORD3 and
         /// TEXCOORD2.yz were the second and third sweep-line samples and their
@@ -2926,22 +2964,29 @@ namespace OneText.UGUI
         // them holds state, and none of them is in IntelliSense, so new code
         // written against this class still reads OneText's own names.
         //
-        // The three that are not straight forwards are the three that used to
-        // be missing, and the reason they were missing is the reason each one
-        // converts rather than forwards. TMP's `lineSpacing` is an offset in
-        // font units and OneText's is a multiplier, so the alias does the
+        // The ones that are not straight forwards convert, and each converts
+        // for the reason it was hard to add. TMP's `lineSpacing` is an offset
+        // in font units and OneText's is a multiplier, so the alias does the
         // arithmetic — the same arithmetic the Onboarding migration does, out
         // of the same function, because two answers to "what does 10 mean"
         // would eventually disagree. `alignment` names an enum this package
         // has no use for, so the package declares it (see TmpCompat) rather
         // than leaving four hundred call sites uncompilable over a type name;
         // it splits into OneText's two axes on the way in and is reassembled
-        // on the way out. `textWrappingMode` is the same shape, one enum
-        // narrower.
+        // on the way out. `textWrappingMode` and `overflowMode` are the same
+        // shape, narrower.
         //
-        // What is still deliberately *not* here: no-op stubs. A
-        // ForceMeshUpdate that does nothing is a bug report about a stale mesh,
-        // filed six months later.
+        // What is deliberately *not* here: no-op stubs. A ForceMeshUpdate that
+        // does nothing is a bug report about a stale mesh, filed six months
+        // later, so the one below really does lay the text out and rebuild the
+        // geometry before it returns — callers read the results on the next
+        // line, which is the whole reason they called it. Where OneText has no
+        // counterpart at all and inventing one would mean drawing something
+        // other than what was asked for, the member is either absent (and the
+        // Onboarding report names it as manual work) or present and [Obsolete]
+        // as an error, which turns "no definition for characterSpacing" into a
+        // sentence saying what to write instead. Nothing here quietly does the
+        // wrong thing.
         // ====================================================================
 
         /// <summary>TMP-migration parity alias for <see cref="Text"/>.</summary>
@@ -3093,9 +3138,249 @@ namespace OneText.UGUI
             set => Wrap = TmpCompat.WrapFromWordWrapping(value);
         }
 
-        /// <summary>TMP-migration parity alias for assigning <see cref="Text"/>.</summary>
+        /// <summary>
+        /// TMP-migration parity alias for <see cref="Overflow"/>, in TMP's
+        /// wider enum. Four of TMP's seven modes are about what clips the text
+        /// or where the rest of it goes rather than about the layout, and they
+        /// resolve to the nearest thing OneText does — the same resolution the
+        /// Onboarding migration makes, out of the same function, and the same
+        /// silence, because a property setter has nobody to tell. An
+        /// approximated value never reads back as itself, so the setter
+        /// swallows a re-assignment of what is already resolved.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public TextOverflowModes overflowMode
+        {
+            get => TmpCompat.OverflowToTmp(Overflow);
+            set
+            {
+                var resolved = TmpCompat.OverflowFromTmp(value, out _);
+                if (Overflow == resolved) return;
+                Overflow = resolved;
+            }
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for the alpha channel of
+        /// <see cref="Graphic.color"/>.
+        ///
+        /// It holds no state of its own: reading asks the colour, and writing
+        /// assigns the colour back, which is what runs the invalidation. The
+        /// tint joins the mesh on the way out rather than being baked into the
+        /// cached quads, so fading a label — which is what nine uses in ten of
+        /// this member are — redraws without laying anything out again.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float alpha
+        {
+            get => color.a;
+            set
+            {
+                var tint = color;
+                tint.a = value;
+                color = tint;
+            }
+        }
+
+        /// <summary>
+        /// TMP-migration parity for <c>ForceMeshUpdate</c>: lay the text out
+        /// and rebuild the geometry now, before this returns.
+        ///
+        /// Synchronous on purpose, because that is the only thing callers want
+        /// from it. The idiom it exists for is assign-then-measure — set the
+        /// text, force the update, read the size in the next statement — and
+        /// against a canvas that rebuilds at the end of the frame the reading
+        /// would otherwise describe the previous string.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void ForceMeshUpdate() => ForceMeshUpdate(false);
+
+        /// <summary>
+        /// TMP-migration parity for <c>ForceMeshUpdate(bool, bool)</c>.
+        ///
+        /// <paramref name="ignoreActiveState"/> is accepted and ignored:
+        /// nothing in the path below asks whether the component is enabled, so
+        /// a disabled label is rebuilt either way and the flag has nothing left
+        /// to switch off. <paramref name="forceTextReparsing"/> does what it
+        /// says — the markup is parsed again and the layout re-run even when
+        /// neither input changed, which is the flag's one real use: a project
+        /// that mutated something the cache key cannot see.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void ForceMeshUpdate(bool ignoreActiveState, bool forceTextReparsing = false)
+        {
+            if (forceTextReparsing)
+            {
+                _parsedFrom = null;
+                _layoutValid = false;
+            }
+
+            EnsureLayout();
+            // The layout is only half of it; the mesh is the half the caller
+            // can see. UpdateGeometry is Graphic's own path to OnPopulateMesh
+            // and the canvas renderer, so what lands is exactly what the
+            // deferred rebuild would have produced, just now.
+            if (canvasRenderer != null) UpdateGeometry();
+        }
+
+        /// <summary>
+        /// TMP-migration parity for <c>GetParsedText</c>, which is
+        /// <see cref="DisplayText"/> under TMP's name: the text as laid out,
+        /// with the markup taken out of it.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public string GetParsedText() => DisplayText;
+
+        /// <summary>
+        /// TMP-migration parity alias for assigning <see cref="Text"/>.
+        /// </summary>
         [EditorBrowsable(EditorBrowsableState.Never)]
         public void SetText(string value) => Text = value;
+
+        /// <summary>
+        /// TMP-migration parity alias for assigning <see cref="Text"/>.
+        /// <paramref name="syncTextInputBox"/> is TMP's flag for keeping the
+        /// inspector's text box in step with a runtime assignment; the
+        /// inspector here reads the same serialized field either way, so there
+        /// is nothing for it to switch on.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SetText(string value, bool syncTextInputBox) => Text = value;
+
+        /// <summary>
+        /// TMP-migration parity alias for assigning <see cref="Text"/> from a
+        /// builder. Worth being plain about what it does not carry over: TMP's
+        /// builder overload exists to set text without allocating a string, and
+        /// this one allocates, because OneText's text is a string. Same result,
+        /// not the same garbage.
+        ///
+        /// The numeric overloads (<c>SetText("{0:2}", value)</c>) are
+        /// deliberately absent rather than approximated. Their format syntax is
+        /// TMP's own and not <c>string.Format</c>'s — <c>{0:2}</c> means two
+        /// decimal places there and something else entirely to the BCL — so an
+        /// implementation that forwarded would compile, run, and print the
+        /// wrong number. The Onboarding report names them as manual work.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SetText(System.Text.StringBuilder value) =>
+            Text = value != null ? value.ToString() : string.Empty;
+
+        /// <summary>
+        /// TMP-migration parity for <c>isTextOverflowing</c>: whether the text
+        /// as laid out does not fit the box.
+        ///
+        /// True when overflow handling actually dropped lines, and also when
+        /// nothing was dropped but the block reaches past an edge — which is
+        /// the ordinary case for the default <see cref="TextOverflow.Overflow"/>,
+        /// where the text spills rather than being cut. Asking lays the text
+        /// out if it is stale, so the answer describes what is on screen.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool isTextOverflowing
+        {
+            get
+            {
+                var result = EnsureLayout();
+                if (result.Truncated) return true;
+                var rect = GetPixelAdjustedRect();
+                // A hair of slack, because a line laid out to exactly the box
+                // width is not overflowing and float arithmetic disagrees.
+                const float epsilon = 0.01f;
+                return result.Width > rect.width + epsilon ||
+                       result.Height > rect.height + epsilon;
+            }
+        }
+
+        /// <summary>
+        /// TMP-migration parity for <c>renderedWidth</c>: how wide the laid-out
+        /// text is, as opposed to <see cref="preferredWidth"/>, which asks how
+        /// wide it would be given a free hand.
+        ///
+        /// The laid-out block, not the drawn one, and those differ in exactly
+        /// one situation: mid-typewriter, where the clusters still hidden are
+        /// measured here and are not on screen. Reading a reveal's width while
+        /// it runs is not something this can answer honestly, and
+        /// <see cref="LayoutResult"/> is the member for code that needs the
+        /// distinction.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float renderedWidth => EnsureLayout().Width;
+
+        /// <inheritdoc cref="renderedWidth"/>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float renderedHeight => EnsureLayout().Height;
+
+        // -------------------------------------------------- named, not faked
+        //
+        // Below here are members TMP has, projects use, and OneText cannot
+        // honour without drawing something other than what was asked for. They
+        // are declared and obsoleted as errors rather than left out, because
+        // the compiler is the only place the author is guaranteed to be
+        // looking: "OneTextLabel does not contain a definition for margin" sends
+        // them to a search engine, and the message below sends them to the
+        // member that does the job.
+
+        [System.Obsolete("OneText has no label-wide letter spacing. Use <cspace=0.1em> markup " +
+                         "for a range, or a OneTextStyle asset with Letter Spacing set for the " +
+                         "whole label.", true)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float characterSpacing
+        {
+            get => throw new System.NotSupportedException();
+            set => throw new System.NotSupportedException();
+        }
+
+        [System.Obsolete("OneText has no word spacing. The nearest thing is letter spacing, as " +
+                         "<cspace> markup or a OneTextStyle asset; there is no per-space knob.",
+            true)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float wordSpacing
+        {
+            get => throw new System.NotSupportedException();
+            set => throw new System.NotSupportedException();
+        }
+
+        [System.Obsolete("OneText lays text out in the RectTransform's rect and has no margin of " +
+                         "its own. Inset the RectTransform, or parent the label to a rect that is " +
+                         "the size you wanted the text area to be.", true)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public Vector4 margin
+        {
+            get => throw new System.NotSupportedException();
+            set => throw new System.NotSupportedException();
+        }
+
+        [System.Obsolete("OneText does not resize its own RectTransform. Add a ContentSizeFitter, " +
+                         "which reads preferredWidth/preferredHeight from this label like any " +
+                         "other layout element.", true)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool autoSizeTextContainer
+        {
+            get => throw new System.NotSupportedException();
+            set => throw new System.NotSupportedException();
+        }
+
+        [System.Obsolete("OneText has no dirty flag to read: the layout cache is keyed by the " +
+                         "values it was built from, so staleness is derived and not stored. To " +
+                         "force the rebuild that setting this to true forced, call " +
+                         "ForceMeshUpdate().", true)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool havePropertiesChanged
+        {
+            get => throw new System.NotSupportedException();
+            set => throw new System.NotSupportedException();
+        }
+
+        [System.Obsolete("OneText reveals from the start of the text only: MaxVisibleGraphemes " +
+                         "(maxVisibleCharacters) sets where the reveal ends, and there is no " +
+                         "member for where it begins. Paged text needs its own string per page.",
+            true)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public int firstVisibleCharacter
+        {
+            get => throw new System.NotSupportedException();
+            set => throw new System.NotSupportedException();
+        }
 
         // TMP parity — end
     }

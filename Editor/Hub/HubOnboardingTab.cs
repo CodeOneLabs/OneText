@@ -26,6 +26,7 @@ namespace OneText.Editor
     /// </summary>
     public sealed class HubOnboardingTab : HubSection
     {
+        private TmpScanReport _report;
         private List<TmpScriptFinding> _findings;
         private readonly HashSet<string> _skipped = new HashSet<string>();
         private int _preview = -1;
@@ -34,6 +35,7 @@ namespace OneText.Editor
         private MigrationReport _migration;
         private bool _converted;
         private bool _allScenes;
+        private bool _crossContainer = true;
         private bool _showNotes;
 
         public override OneTextHub.Tab Tab => OneTextHub.Tab.Onboarding;
@@ -43,10 +45,10 @@ namespace OneText.Editor
         public override string Eyebrow => "Coming from TextMesh Pro?";
 
         public override string Lede =>
-            "Every TMP and legacy text component in your scenes and prefabs, counted, judged and " +
-            "swapped in place — and the type names in your own scripts rewritten, with the diff " +
-            "on screen first. Everything that will not survive is named up front rather than " +
-            "found later.";
+            "Move this project off TextMesh Pro. Step 1 converts the text components in your " +
+            "scenes and prefabs. Step 2 rewrites the TMP type names in your own scripts. Both " +
+            "scan first and show you the list — including what they cannot convert — and neither " +
+            "writes anything until you press a button.";
 
         public override string NavHint => "migrate off TMP";
 
@@ -75,6 +77,7 @@ namespace OneText.Editor
 
         protected override void Compose(VisualElement content)
         {
+            content.Add(StepsCard());
             content.Add(ComponentCard());
             if (_migration != null && _migration.Targets.Count > 0)
             {
@@ -89,14 +92,386 @@ namespace OneText.Editor
                 content.Add(PreviewCard());
             }
 
+            content.Add(LeftBehindCard());
             content.Add(CiCard());
+        }
+
+        // ------------------------------------------------------------- steps
+
+        /// <summary>
+        /// The four buttons on this screen, in the order they are meant to be
+        /// pressed, each with one sentence saying what it does to the project.
+        ///
+        /// It is here because the rest of this screen was written for somebody
+        /// who already knew the shape of the job. Somebody who has just
+        /// installed the package does not, and a screen of counts and warnings
+        /// with no stated order reads as a wall rather than as a task.
+        /// </summary>
+        private VisualElement StepsCard()
+        {
+            var card = HubUI.MakeCard("What to do, in order",
+                "Nothing on this screen changes a file until you press Convert or Rewrite. " +
+                "Scanning is always safe.").Flush();
+
+            card.Add(HubUI.KeyValue("1 · Scan Scenes & Prefabs",
+                "Opens every scene and prefab, counts the TMP and legacy text components, and " +
+                "lists the ones that will not convert cleanly. Saves nothing."));
+            card.Add(HubUI.KeyValue("2 · Convert",
+                "Replaces each component with the OneText one, keeping its values; makes a font " +
+                "asset from the .ttf behind each TMP font; re-points every reference to the old " +
+                "component. This saves the files."));
+            card.Add(HubUI.KeyValue("3 · Scan Assets",
+                "Reads the .cs files under Assets and finds the TMP type names in them. You get " +
+                "the diff on screen. Writes nothing."));
+            card.Add(HubUI.KeyValue("4 · Rewrite",
+                "Writes those files. Type names only — never a member, a string or a comment."));
+            card.Add(HubUI.KeyValue("Before you start",
+                "Commit your work. Both buttons ask git whether the files they are about to " +
+                "touch are committed and tell you before they go ahead, but Unity itself cannot " +
+                "undo either one."));
+            return card.Root;
+        }
+
+        // -------------------------------------------------------- left behind
+
+        /// <summary>
+        /// Everything the migration could not finish, gathered in one place
+        /// rather than spread through two reports.
+        ///
+        /// This card exists because of what a real project looks like on the
+        /// other side of the button. The conversion succeeds and the numbers are
+        /// large and encouraging, and then there are two hundred prefabs whose
+        /// fonts have no file, a vendor's plugin that will not compile, and four
+        /// scripts that were refused for a reason stated once and scrolled past.
+        /// None of those are failures of the run; they are the work the run
+        /// cannot do, and a person who is handed them as a list will do them.
+        /// The same person, handed a green summary and a compiler, will not.
+        /// </summary>
+        private VisualElement LeftBehindCard()
+        {
+            var refused = new List<TmpScriptFinding>();
+            var assemblies = new SortedDictionary<string, List<string>>();
+            var vendored = new List<TmpScriptFinding>();
+
+            if (_findings != null)
+            {
+                foreach (var finding in _findings)
+                {
+                    if (!finding.Result.Viable) refused.Add(finding);
+                    if (finding.IsLikelyThirdParty) vendored.Add(finding);
+                    if (finding.NeedsAssemblyPatch && finding.Assembly != null)
+                        assemblies[finding.Assembly.Path] = finding.MissingReferences;
+                }
+            }
+
+            var groups = _report?.Groups ?? new List<TmpFileGroup>();
+            bool anything = refused.Count > 0 || assemblies.Count > 0 || vendored.Count > 0 ||
+                            groups.Count > 0 || (_migration?.Recovery?.Count ?? 0) > 0;
+            if (!anything) return new VisualElement();
+
+            var card = HubUI.MakeCard("What you have to fix by hand",
+                "The run did not fail. These are the jobs it cannot do for you, listed so you do " +
+                "not have to find them in the console.");
+
+            var fonts = _migration?.Recovery;
+            if (fonts != null && fonts.Count > 0) FontSection(card, fonts);
+            if (assemblies.Count > 0) AssemblySection(card, assemblies);
+            if (refused.Count > 0) RefusedSection(card, refused);
+            if (groups.Count > 0) GroupSection(card, groups);
+            if (vendored.Count > 0) VendorSection(card, vendored);
+            return card.Root;
+        }
+
+        /// <summary>
+        /// Fonts the migration could not rasterise, one row per typeface rather
+        /// than per label.
+        ///
+        /// This is the largest single category on a real project and the most
+        /// misleading one to report by count: an asset pack ships a baked SDF
+        /// atlas and no .ttf, TMP is content with that and OneText cannot be,
+        /// and one missing file turns into thousands of errors that are all the
+        /// same error. So they are collapsed to the typeface, a placeholder
+        /// asset already stands where the font goes, and the row says the one
+        /// thing that fixes every label at once: put this file here.
+        ///
+        /// Where the typeface is open-licensed and we can name a legitimate
+        /// source, there is a button. It downloads exactly one font, after the
+        /// licence has been on screen, and checks that what came back is a font
+        /// before anything touches the project.
+        /// </summary>
+        private void FontSection(HubUI.Card card, FontRecoveryManifest fonts)
+        {
+            card.Add(HubUI.Notice(
+                $"{fonts.Unfilled:n0} typeface(s) have no font file in this project, and " +
+                $"{fonts.LabelCount:n0} label(s) are waiting on them. OneText draws from the " +
+                ".ttf or .otf itself, so a baked TMP atlas is not something it can read. A " +
+                "placeholder asset is already in place for each — drop the font in and every " +
+                "label using it comes back at once.", HubTone.Bad));
+
+            foreach (var entry in fonts.Entries)
+            {
+                var row = HubUI.Box("folder-row");
+                var name = HubUI.Text(entry.FamilyName ?? entry.Key, "kv__value");
+                name.style.flexGrow = 1f;
+                row.Add(name);
+                row.Add(HubUI.Badge($"{entry.LabelCount:n0} label(s)", HubTone.Info));
+                row.Add(HubUI.Badge($"{entry.FontAssets.Count:n0} TMP asset(s)", HubTone.Neutral));
+                if (entry.Filled) row.Add(HubUI.Badge("filled", HubTone.Good));
+                card.Add(row);
+
+                if (entry.Filled) continue;
+
+                card.Add(HubUI.KeyValue("wants", entry.ExpectedFileName ?? "the original font file"));
+                if (!string.IsNullOrEmpty(entry.PlaceholderAssetPath))
+                {
+                    var slot = HubUI.Box("row");
+                    slot.Add(HubUI.Mono(HubUI.Text(entry.PlaceholderAssetPath, "kv__value")));
+                    var placeholder = AssetDatabase.LoadAssetAtPath<Object>(entry.PlaceholderAssetPath);
+                    if (placeholder != null)
+                        slot.Add(HubUI.Quiet("Show", () => EditorGUIUtility.PingObject(placeholder)));
+                    card.Add(slot);
+                }
+
+                var candidate = entry.Candidate;
+                if (!candidate.Found)
+                {
+                    // Looking a family up is a request, so it is a click rather
+                    // than something a scan does on your behalf a thousand
+                    // times. The offline half already knows whether there is
+                    // anywhere to look, which is what decides the button.
+                    if (!entry.Resolved && FontSourceCatalog.CanResolve(entry.FamilyName))
+                    {
+                        var looking = entry;
+                        card.Add(HubUI.KeyValue("source",
+                            "Not in the short list this window carries. It can ask the Google " +
+                            "Fonts catalogue whether this family is published there — one " +
+                            "request, and the licence comes back with it.", HubTone.Neutral));
+                        card.Add(HubUI.Quiet($"Look up {entry.FamilyName}", () =>
+                        {
+                            var found = FontRecovery.Resolve(looking);
+                            Refresh();
+                            if (found.Ok) Say(found.Message); else SayBadly(found.Message);
+                        }));
+                        continue;
+                    }
+
+                    card.Add(HubUI.KeyValue("source",
+                        "Not one this window can name. Asset-pack and commercial faces are not " +
+                        "ours to fetch — find the file you licensed and drop it on the " +
+                        "placeholder.", HubTone.Warn));
+                    continue;
+                }
+
+                // The licence is on screen before the button is, which is the
+                // whole point of having a button: the person clicking it is
+                // agreeing to something specific rather than to a download.
+                card.Add(HubUI.KeyValue($"licence — {candidate.LicenceName}",
+                    candidate.LicenceUrl ?? candidate.HomeUrl ?? "see the source"));
+                if (!string.IsNullOrEmpty(candidate.Note))
+                    card.Add(HubUI.KeyValue("note", candidate.Note, HubTone.Warn));
+
+                if (string.IsNullOrEmpty(candidate.DownloadUrl))
+                {
+                    card.Add(HubUI.KeyValue("source",
+                        $"{candidate.HomeUrl} — published behind a page rather than a file, so " +
+                        "this one is a manual download.", HubTone.Warn));
+                    continue;
+                }
+
+                var wanted = entry;
+                var actions = HubUI.Box("row");
+                actions.Add(HubUI.Quiet($"Download {candidate.FamilyName} ({candidate.LicenceName})",
+                    () =>
+                    {
+                        var outcome = FontRecovery.Recover(wanted);
+                        AssetDatabase.Refresh();
+                        Refresh();
+                        if (outcome.Outcome == FontSourceOutcome.Ok) Say(outcome.Message);
+                        else SayBadly(outcome.Message);
+                    }));
+                actions.Add(HubUI.Quiet("Open source page",
+                    () => Application.OpenURL(candidate.HomeUrl ?? candidate.DownloadUrl)));
+                card.Add(actions);
+            }
+        }
+
+        /// <summary>
+        /// Assemblies that will not see OneText once their files are rewritten.
+        ///
+        /// OneText's own assemblies are auto-referenced, which covers
+        /// <c>Assembly-CSharp</c> and nothing else. A file under somebody's
+        /// <c>.asmdef</c> compiles against exactly what that file lists, so a
+        /// rewrite there produces a type the assembly has never heard of. The
+        /// fix is one line in a JSON file, which is why there is a button for
+        /// it rather than a paragraph.
+        /// </summary>
+        private void AssemblySection(HubUI.Card card, SortedDictionary<string, List<string>> assemblies)
+        {
+            card.Add(HubUI.Notice(
+                $"{assemblies.Count:n0} assembly definition(s) do not reference OneText. Rewriting " +
+                "the files inside them produces types those assemblies cannot see — the rewrite " +
+                "compiles nowhere until this is added.", HubTone.Bad));
+
+            foreach (var pair in assemblies)
+            {
+                string path = pair.Key;
+                var missing = pair.Value;
+
+                var row = HubUI.Box("folder-row");
+                var name = HubUI.Mono(HubUI.Text(ProjectPath(path), "kv__value"));
+                name.style.flexGrow = 1f;
+                row.Add(name);
+                row.Add(HubUI.Badge(string.Join(", ", missing), HubTone.Warn));
+                row.Add(HubUI.Quiet("Add references", () =>
+                {
+                    if (!OnboardingGit.ConfirmOverwrite("Patch assembly definition?",
+                            $"{ProjectPath(path)} will gain {string.Join(", ", missing)}.",
+                            new List<string> { ProjectPath(path) }, "Patch"))
+                        return;
+
+                    if (TmpAssemblyGraph.Patch(path, missing))
+                    {
+                        AssetDatabase.Refresh();
+                        Scan();
+                        Say($"Added {string.Join(", ", missing)} to {System.IO.Path.GetFileName(path)}.");
+                    }
+                    else
+                    {
+                        SayBadly($"{ProjectPath(path)} could not be written.");
+                    }
+                }));
+                card.Add(row);
+            }
+        }
+
+        /// <summary>
+        /// Files the rewriter looked at and declined, each with the sentence
+        /// saying why.
+        ///
+        /// A refusal is the rewriter working. Rewriting a file it knows it
+        /// cannot finish leaves a project that does not build, and the names it
+        /// could not carry are the reason — so they are printed, and the file is
+        /// left exactly as it was.
+        /// </summary>
+        private void RefusedSection(HubUI.Card card, List<TmpScriptFinding> refused)
+        {
+            card.Add(HubUI.Notice(
+                $"{refused.Count:n0} file(s) were left untouched on purpose. Each needs a hand " +
+                "first; rewriting them as they stand would not compile.", HubTone.Warn));
+
+            foreach (var finding in refused)
+            {
+                var row = HubUI.Box("folder-row");
+                var name = HubUI.Mono(HubUI.Text(ProjectPath(finding.Path), "kv__value"));
+                name.style.flexGrow = 1f;
+                row.Add(name);
+
+                var asset = AssetDatabase.LoadAssetAtPath<Object>(ProjectPath(finding.Path));
+                if (asset != null)
+                    row.Add(HubUI.Quiet("Show", () => EditorGUIUtility.PingObject(asset)));
+                card.Add(row);
+
+                card.Add(HubUI.KeyValue("why", finding.Result.Blocker ?? "unstated", HubTone.Warn));
+                if (finding.Result.BlockingNames != null && finding.Result.BlockingNames.Count > 0)
+                    card.Add(HubUI.KeyValue("in the way",
+                        string.Join(", ", finding.Result.BlockingNames)));
+            }
+        }
+
+        /// <summary>
+        /// Files that only compile if they move together.
+        ///
+        /// A file declaring <c>void Fade(this TMP_Text t)</c> and every file
+        /// calling it are one unit: convert the declaration alone and the calls
+        /// stop resolving, convert the calls alone and they find nothing.
+        /// Unticking one row of a group is the way to break a build with every
+        /// individual choice looking reasonable, so the group is stated and the
+        /// selection is held to it.
+        /// </summary>
+        private void GroupSection(HubUI.Card card, List<TmpFileGroup> groups)
+        {
+            card.Add(HubUI.Notice(
+                $"{groups.Count:n0} set(s) of files have to be rewritten together — one names a " +
+                "TextMesh Pro type in something the others use. Ticking part of a set is how a " +
+                "build breaks with every single choice looking sensible.", HubTone.Warn));
+
+            foreach (var group in groups)
+            {
+                bool stuck = Stuck(group);
+                card.Add(HubUI.KeyValue(stuck ? "held back" : "together",
+                    group.Reason ?? "shared type", stuck ? HubTone.Bad : HubTone.Neutral));
+
+                if (stuck)
+                {
+                    var blockers = new List<string>();
+                    foreach (var finding in _findings)
+                        if (!finding.Result.Viable && group.Paths.Contains(finding.Path))
+                            blockers.Add(System.IO.Path.GetFileName(finding.Path));
+
+                    card.Add(HubUI.Notice(
+                        $"None of these will be rewritten while {string.Join(" and ", blockers)} " +
+                        "cannot be. That file is refused above, and the set only compiles whole — " +
+                        "so the refusal has to be dealt with by hand first, and then this scanned " +
+                        "again.", HubTone.Bad));
+                }
+
+                foreach (string path in group.Paths)
+                    card.Add(HubUI.Mono(HubUI.Text($"    {ProjectPath(path)}", "code")));
+            }
+        }
+
+        /// <summary>
+        /// Somebody else's code, and the one vendor we meet halfway.
+        ///
+        /// A rewrite inside a vendor's folder is undone by their next update,
+        /// silently, months later. For DOTween — the one integration OneText
+        /// ships — there is a supported answer that does not involve editing
+        /// their source at all, so it is spelled out here rather than left to be
+        /// discovered.
+        /// </summary>
+        private void VendorSection(HubUI.Card card, List<TmpScriptFinding> vendored)
+        {
+            card.Add(HubUI.Notice(
+                $"{vendored.Count:n0} file(s) live in somebody else's folder and start unticked. " +
+                "A rewrite there is replaced by their next update, without a word.", HubTone.Warn));
+
+            foreach (var finding in vendored)
+                card.Add(HubUI.Mono(HubUI.Text($"    {ProjectPath(finding.Path)}", "code")));
+
+            bool dotween = false;
+            foreach (var finding in vendored)
+                if (finding.Path.Replace('\\', '/').IndexOf("/Demigiant/", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    finding.Path.IndexOf("DOTween", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    dotween = true;
+            if (!dotween) return;
+
+            card.Add(HubUI.Notice(
+                "DOTween is here, and OneText ships an integration for it so its source never has " +
+                "to be edited. Three things it cannot do for you:", HubTone.Info));
+            card.Add(HubUI.KeyValue("1. define ONETEXT_DOTWEEN",
+                "Player Settings > Scripting Define Symbols, per build target. Until then the " +
+                "integration assembly does not compile and none of the DO* shortcuts resolve. " +
+                "Installed from OpenUPM instead? Then it is already on."));
+            card.Add(HubUI.KeyValue("2. re-run DOTween's setup",
+                "Tools > Demigiant > DOTween Utility Panel > Setup DOTween. DOTween Pro guards " +
+                "its own TMP files with a marker that only its panel can flip; with TMP gone and " +
+                "the marker still set, their source stops compiling."));
+            card.Add(HubUI.KeyValue("3. re-author DOTweenAnimation components",
+                "Any set to TargetType.TextMeshPro or TextMeshProUGUI dispatch inside DOTween's " +
+                "compiled code on the component type, so a converted object animates nothing, " +
+                "quietly. Those need a code-driven tween or a re-authored animation."));
+            card.Add(HubUI.KeyValue("no counterpart",
+                "DOFaceColor, DOFaceFade, DOOutlineColor and DOGlowColor tween TMP material " +
+                "properties OneText does not have — it carries face, outline and glow as per-quad " +
+                "decoration. DOTweenTMPAnimator rewrites TMP mesh vertices from outside; OneText's " +
+                "equivalent is ITextQuadModifier, which a wrapper cannot stand in for."));
         }
 
         // ------------------------------------------------------- components
 
         private VisualElement ComponentCard()
         {
-            var card = HubUI.MakeCard("Scenes and prefabs",
+            var card = HubUI.MakeCard("Step 1 · Scenes and prefabs",
                 "TextMeshProUGUI and TextMeshPro become OneTextLabel and OneTextMesh, " +
                 "TMP_InputField becomes OneTextInputField, and UnityEngine.UI.Text and TextMesh " +
                 "come along too. Font assets are made from the .ttf behind them, once each, and " +
@@ -116,19 +491,46 @@ namespace OneText.Editor
                     HubTone.Warn));
             }
 
-            card.Add(HubUI.Pill(_allScenes ? "Every scene under Assets" : "Scenes in Build Settings",
+            card.Add(HubUI.Pill("Also scan scenes that are not in Build Settings",
                 _allScenes, on =>
                 {
                     _allScenes = on;
                     Refresh();
                 }));
 
+            // The two toggles belong together: what a narrowed run cannot mend
+            // is exactly the references reaching in from the containers it left
+            // out, so the warning about one is really a nudge about the other.
+            card.Add(HubUI.Pill("Fix references that cross from one scene or prefab into another",
+                _crossContainer, on =>
+            {
+                _crossContainer = on;
+                Refresh();
+            }));
+
+            if (!_crossContainer)
+            {
+                card.Add(HubUI.Notice(
+                    "A field in one prefab that names a label in another is broken by converting " +
+                    "the second, and with this off nothing will mend it or say so. It is only a " +
+                    "switch because it costs one extra open of each asset that nests another.",
+                    HubTone.Warn));
+            }
+            else if (!_allScenes)
+            {
+                card.Add(HubUI.Notice(
+                    "References are followed, but only into the containers this run covers. " +
+                    "Scenes outside Build Settings are not being read, so a field in one of them " +
+                    "pointing at a converted label will not be mended — turn on every scene above " +
+                    "if that matters here.", HubTone.Info));
+            }
+
             if (_migration == null)
             {
-                card.Add(HubUI.Empty("Not scanned yet",
-                    "Opens each scene and prefab, reads every component on every object — " +
-                    "inactive ones included — and closes them again. Nothing is saved, nothing " +
-                    "is dirtied, and the report says what would and would not survive.",
+                card.Add(HubUI.Empty("Start here: scan your scenes and prefabs",
+                    "Opens each one, reads every component on every object — inactive ones " +
+                    "included — and closes it again. Nothing is saved and nothing is marked " +
+                    "dirty. You get a count and a list of what would not convert cleanly.",
                     "Scan Scenes & Prefabs…", ScanComponents, "⇄"));
                 return card.Root;
             }
@@ -142,7 +544,7 @@ namespace OneText.Editor
                 (_migration.CountOfKind(MigrationKind.InputField)).ToString("n0"),
                 "become OneTextInputField"));
             tiles.Add(HubUI.Tile("no counterpart",
-                (_migration.CountOfKind(MigrationKind.ReportOnly)).ToString("n0"), "left alone",
+                (_migration.CountOfKind(MigrationKind.ReportOnly)).ToString("n0"), "stay as TMP",
                 _migration.CountOfKind(MigrationKind.ReportOnly) == 0 ? HubTone.Good : HubTone.Warn));
             card.Add(tiles);
 
@@ -150,12 +552,12 @@ namespace OneText.Editor
             severity.Add(HubUI.Tile("containers", _migration.Containers.Count.ToString("n0"),
                 $"of {_migration.ContainersScanned:n0} opened"));
             severity.Add(HubUI.Tile("errors", _migration.Errors.ToString("n0"),
-                "will not survive as-is", _migration.Errors == 0 ? HubTone.Good : HubTone.Bad));
+                "need you to fix them", _migration.Errors == 0 ? HubTone.Good : HubTone.Bad));
             severity.Add(HubUI.Tile("warnings", _migration.Warnings.ToString("n0"),
-                "survive, but differently",
+                "convert, but not identically",
                 _migration.Warnings == 0 ? HubTone.Good : HubTone.Warn));
             severity.Add(HubUI.Tile("notes",
-                _migration.Count(DoctorSeverity.Info).ToString("n0"), "worth reading once"));
+                _migration.Count(DoctorSeverity.Info).ToString("n0"), "read once, no action"));
             card.Add(severity);
 
             if (_converted)
@@ -193,7 +595,11 @@ namespace OneText.Editor
             _migration = ComponentMigration.Scan(new ComponentMigration.Options
             {
                 AllScenes = _allScenes,
+                CrossContainerReferences = _crossContainer,
             });
+            // Scanning writes nothing, so no placeholder is made here: the list
+            // is built so the count can be on screen before anybody commits.
+            FontRecovery.Collect(_migration);
             _converted = false;
             Refresh();
             Say(_migration.Summary());
@@ -343,7 +749,9 @@ namespace OneText.Editor
                 AllScenes = _allScenes,
                 OnlyContainers = only,
                 AdoptProjectFontDefaults = true,
+                CrossContainerReferences = _crossContainer,
             });
+            FontRecovery.Collect(_migration, createPlaceholders: true);
             _converted = true;
             Refresh();
             Say($"Converted {_migration.Converted:n0} component(s). {_migration.Summary()}");
@@ -353,7 +761,7 @@ namespace OneText.Editor
 
         private VisualElement ScanCard()
         {
-            var card = HubUI.MakeCard("Script rewrite",
+            var card = HubUI.MakeCard("Step 2 · Your scripts",
                 "TextMeshProUGUI and TMP_Text become OneTextLabel, TMP_InputField becomes " +
                 "OneTextInputField, TextMeshPro becomes OneTextMesh, TMPro-qualified " +
                 "TextAlignmentOptions and TextWrappingModes re-qualify to OneText's own, and " +
@@ -366,9 +774,9 @@ namespace OneText.Editor
 
             if (_findings == null)
             {
-                card.Add(HubUI.Empty("Not scanned yet",
-                    "Reads every .cs file under Assets — packages are left alone — and reports " +
-                    "the ones that mention TextMesh Pro. Nothing is written by scanning.",
+                card.Add(HubUI.Empty("Scan your scripts",
+                    "Reads every .cs file under Assets — packages are left alone — and lists the " +
+                    "ones that mention TextMesh Pro. Scanning writes nothing.",
                     "Scan Assets…", Scan, "⇄"));
                 return card.Root;
             }
@@ -400,8 +808,9 @@ namespace OneText.Editor
             if (residuals > 0)
             {
                 card.Add(HubUI.Notice(
-                    "Some files will still need manual work. They are marked below, with the " +
-                    "names; after the rewrite the compiler will point at the same lines.",
+                    "Some files still need you afterwards: they use TMP names OneText has no " +
+                    "counterpart for. They are marked below with the names, and after the " +
+                    "rewrite the compiler points at the same lines.",
                     HubTone.Warn));
             }
             return card.Root;
@@ -411,8 +820,18 @@ namespace OneText.Editor
         {
             var paths = TmpScriptRewriter.ScriptsUnder(Application.dataPath);
             _scanned = paths.Count;
-            _findings = TmpScriptRewriter.Scan(paths);
+            _report = TmpScriptRewriter.ScanProject(paths, Application.dataPath);
+            _findings = _report.Files;
             _skipped.Clear();
+
+            // Somebody else's folder starts unticked. A vendor's source is
+            // replaced wholesale by the next update, so a rewrite there is work
+            // that will be undone by a version bump nobody connects to it — and
+            // in the one case that matters, DOTween, the integration assembly is
+            // the supported answer rather than editing their files.
+            foreach (var finding in _findings)
+                if (finding.IsLikelyThirdParty) _skipped.Add(finding.Path);
+
             _preview = _findings.Count > 0 ? 0 : -1;
             Refresh();
             Say(_findings.Count == 0
@@ -446,10 +865,18 @@ namespace OneText.Editor
                 name.style.flexGrow = 1f;
                 row.Add(name);
 
-                row.Add(HubUI.Badge($"{finding.Result.Changes.Count:n0} line(s)",
-                    finding.Result.Changed ? HubTone.Info : HubTone.Neutral));
+                if (!finding.Result.Viable)
+                    row.Add(HubUI.Badge("refused", HubTone.Bad));
+                else
+                    row.Add(HubUI.Badge($"{finding.Result.Changes.Count:n0} line(s)",
+                        finding.Result.Changed ? HubTone.Info : HubTone.Neutral));
+
                 if (finding.Result.Residuals.Count > 0)
                     row.Add(HubUI.Badge($"{finding.Result.Residuals.Count:n0} left", HubTone.Warn));
+                if (finding.IsLikelyThirdParty)
+                    row.Add(HubUI.Badge("third party", HubTone.Warn));
+                if (finding.NeedsAssemblyPatch)
+                    row.Add(HubUI.Badge("asmdef", HubTone.Warn));
 
                 row.Add(HubUI.Quiet(index == _preview ? "Showing" : "Show", () =>
                 {
@@ -464,12 +891,67 @@ namespace OneText.Editor
         private bool Included(TmpScriptFinding finding) =>
             finding.Result.Changed && !_skipped.Contains(finding.Path);
 
+        /// <summary>
+        /// A group nothing can satisfy, because one of its members was refused.
+        ///
+        /// A group is the set of files that only compile together — a
+        /// declaration written in TMP terms and everyone who reads it. If one
+        /// member cannot be rewritten at all, then rewriting the rest is the
+        /// exact failure the grouping exists to prevent: the declaration moves
+        /// to OneText and a caller left behind can no longer reach it. So the
+        /// group is held back whole, and the refusal that is blocking it is what
+        /// the person has to deal with first.
+        /// </summary>
+        private bool Stuck(TmpFileGroup group)
+        {
+            if (_findings == null) return false;
+            foreach (var finding in _findings)
+                if (!finding.Result.Viable && group.Paths.Contains(finding.Path)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// The ticked files, plus whatever they drag along, minus what cannot
+        /// move at all.
+        ///
+        /// Grouping is not advice. A file that declares an extension method on
+        /// a TMP type and the files that call it cannot be rewritten apart in
+        /// either direction, so ticking one member of a group ticks the group —
+        /// and a group with a refusal in it ticks nothing. Doing all of that
+        /// here rather than in the click handler means the count on the button
+        /// is already the truth.
+        /// </summary>
         private List<TmpScriptFinding> Selected()
         {
             var selected = new List<TmpScriptFinding>();
             if (_findings == null) return selected;
+
+            var wanted = new HashSet<string>();
             foreach (var finding in _findings)
-                if (Included(finding)) selected.Add(finding);
+                if (Included(finding)) wanted.Add(finding.Path);
+
+            var blocked = new HashSet<string>();
+            if (_report != null)
+            {
+                foreach (var group in _report.Groups)
+                {
+                    if (Stuck(group))
+                    {
+                        foreach (string path in group.Paths) blocked.Add(path);
+                        continue;
+                    }
+                    bool any = false;
+                    foreach (string path in group.Paths) if (wanted.Contains(path)) any = true;
+                    if (!any) continue;
+                    foreach (string path in group.Paths) wanted.Add(path);
+                }
+            }
+
+            foreach (var finding in _findings)
+            {
+                if (blocked.Contains(finding.Path)) continue;
+                if (wanted.Contains(finding.Path) && finding.Result.Changed) selected.Add(finding);
+            }
             return selected;
         }
 

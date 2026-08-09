@@ -284,8 +284,8 @@ namespace OneText.Editor
                     $"headroom, and the budget is " +
                     $"{Megabytes(stats.CapacityPixels * bytesPerTexel)}. {recommended} would hold it.",
                     HubTone.Warn));
-                _demand.Add(HubUI.Primary("Open project settings",
-                    () => SettingsService.OpenProjectSettings("Project/OneText")));
+                _demand.Add(HubUI.Primary("Open Global Settings",
+                    () => OneTextHub.Open(OneTextHub.Tab.Settings)));
             }
 
             private static Label Value()
@@ -396,9 +396,9 @@ namespace OneText.Editor
             {
                 card.Add(HubUI.Notice(
                     "Character recording is off, so there is nothing to promote. Turn on 'Record " +
-                    "Charset In Play Mode' in project settings and play.", HubTone.Neutral));
-                card.Add(HubUI.Ghost("Project settings",
-                    () => SettingsService.OpenProjectSettings("Project/OneText")));
+                    "Charset In Play Mode' in Global Settings and play.", HubTone.Neutral));
+                card.Add(HubUI.Ghost("Global settings",
+                    () => OneTextHub.Open(OneTextHub.Tab.Settings)));
                 return card.Root;
             }
 

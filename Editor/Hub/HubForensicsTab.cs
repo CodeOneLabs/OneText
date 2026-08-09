@@ -35,6 +35,11 @@ namespace OneText.Editor
         private Texture2D _preview;
         private string _previewKey;
 
+        // The part of the panel that costs real time, and the font it is being
+        // built for; see FillStage.
+        private VisualElement _stage;
+        private OneFontAsset _stageFont;
+
         public override OneTextHub.Tab Tab => OneTextHub.Tab.Forensics;
 
         public override string Title => "Forensics";
@@ -51,6 +56,10 @@ namespace OneText.Editor
 
         protected override void Compose(VisualElement content)
         {
+            // A rebuild throws the old stage away; a callback still holding it
+            // must not fill an element nobody is looking at.
+            _stage = null;
+            _stageFont = null;
             content.Add(InputCard());
 
             var font = _font != null ? _font
@@ -68,10 +77,33 @@ namespace OneText.Editor
                 return;
             }
 
-            BuildLayout(font);
-            content.Add(StageCard(font));
-            content.Add(SelectionCard(font));
-            content.Add(GlyphListCard());
+            // Everything below this line costs a font parse, a shaping pass and
+            // a rasterize of every glyph in the sample — 400 ms the first time
+            // this section is opened in a project, all of it before the panel
+            // appears. So the panel appears first and the work happens on the
+            // next frame, with something on screen saying why.
+            _stage = new VisualElement();
+            _stageFont = font;
+            _stage.Add(HubUI.Notice("Laying the text out and rasterizing it…"));
+            content.Add(_stage);
+            _stage.schedule.Execute(FillStage).ExecuteLater(1);
+        }
+
+        /// <summary>
+        /// Lays the sample out and fills the panel with what it found.
+        ///
+        /// Public because the deferred call above only runs once the tree is on
+        /// a panel, and a headless test that wants to know this section works
+        /// has no panel to put it on.
+        /// </summary>
+        public void FillStage()
+        {
+            if (_stage == null || _stageFont == null) return;
+            _stage.Clear();
+            BuildLayout(_stageFont);
+            _stage.Add(StageCard(_stageFont));
+            _stage.Add(SelectionCard(_stageFont));
+            _stage.Add(GlyphListCard());
         }
 
         // ---------------------------------------------------------------- input

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.ComponentModel;
 using OneText.Unicode;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -378,7 +379,26 @@ namespace OneText
             }
         }
 
+        /// <summary>
+        /// Copies Project Settings &gt; OneText's new-text defaults onto this
+        /// world text: size, auto-size bounds, wrapping and markup. The two
+        /// defaults that are about a canvas (escapes and raycast target) have
+        /// no meaning out here.
+        /// </summary>
+        public void ApplyProjectDefaults()
+        {
+            var defaults = OneTextSettings.ProjectDefaults;
+            FontSize = defaults.FontSize;
+            AutoSizeMin = defaults.AutoSizeMin;
+            AutoSizeMax = defaults.AutoSizeMax;
+            Wrap = defaults.Wrap;
+            RichText = defaults.RichText;
+        }
+
 #if UNITY_EDITOR
+        // See OneTextLabel.Reset: the moment the project's answer is wanted.
+        private void Reset() => ApplyProjectDefaults();
+
         private void OnValidate()
         {
             _parsedFrom = null;
@@ -1053,5 +1073,162 @@ namespace OneText
             _indices.Add(start + 2);
             _indices.Add(start + 3);
         }
+
+        // ====================================================================
+        // TMP parity — begin
+        //
+        // The migration turns TextMesh Pro's world component into this one, so
+        // the same call sites arrive here that arrive at OneTextLabel, and the
+        // aliases exist for the same reason: a project with `label.text = …`
+        // written a hundred times over should still compile the afternoon it
+        // swaps packages. Each forwards to the PascalCase property that is the
+        // real API, holds no state, and stays out of IntelliSense so new code
+        // reads OneText's own names. The long version of the argument is at the
+        // bottom of OneTextLabel.
+        //
+        // Shorter here than there, and the missing ones are all one missing
+        // thing: alignment, lineSpacing, textWrappingMode, enableWordWrapping
+        // and overflowMode convert between TMP's units and OneText's, that
+        // arithmetic lives in OneText.UGUI.TmpCompat so the runtime aliases and
+        // the Onboarding migration cannot answer differently, and this assembly
+        // does not reference uGUI — deliberately, since world text should not
+        // need a Canvas package to exist. Writing a second copy of the
+        // conversion here would buy five members and cost the guarantee that
+        // there is only one answer, so they wait for TmpCompat to move down
+        // into the core assembly, where both callers can reach it.
+        // ====================================================================
+
+        /// <summary>TMP-migration parity alias for <see cref="Text"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public string text
+        {
+            get => Text;
+            set => Text = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="FontSize"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float fontSize
+        {
+            get => FontSize;
+            set => FontSize = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="Color"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public Color color
+        {
+            get => Color;
+            set => Color = value;
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for the alpha channel of
+        /// <see cref="Color"/>: reads it, and writes the colour back, which is
+        /// what runs the invalidation.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float alpha
+        {
+            get => Color.a;
+            set
+            {
+                var tint = Color;
+                tint.a = value;
+                Color = tint;
+            }
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="RichText"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool richText
+        {
+            get => RichText;
+            set => RichText = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="AutoSize"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool enableAutoSizing
+        {
+            get => AutoSize;
+            set => AutoSize = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="AutoSizeMin"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float fontSizeMin
+        {
+            get => AutoSizeMin;
+            set => AutoSizeMin = value;
+        }
+
+        /// <summary>TMP-migration parity alias for <see cref="AutoSizeMax"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public float fontSizeMax
+        {
+            get => AutoSizeMax;
+            set => AutoSizeMax = value;
+        }
+
+        /// <summary>
+        /// TMP-migration parity alias for <see cref="ForceRebuild"/>: lay the
+        /// text out and rebuild the mesh now, before this returns. Callers read
+        /// the result on the next line, which is the whole reason they call it.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void ForceMeshUpdate() => ForceRebuild();
+
+        /// <summary>
+        /// TMP-migration parity for <c>ForceMeshUpdate(bool, bool)</c>.
+        /// <paramref name="ignoreActiveState"/> is accepted and ignored, since
+        /// the rebuild below never asks whether the component is enabled;
+        /// <paramref name="forceTextReparsing"/> parses the markup again even
+        /// when the string did not change.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void ForceMeshUpdate(bool ignoreActiveState, bool forceTextReparsing = false)
+        {
+            if (forceTextReparsing) _parsedFrom = null;
+            ForceRebuild();
+        }
+
+        /// <summary>
+        /// TMP-migration parity for <c>GetParsedText</c>: the text as laid out,
+        /// with the markup taken out of it.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public string GetParsedText()
+        {
+            EnsureDisplayText();
+            return _displayText;
+        }
+
+        /// <summary>TMP-migration parity alias for assigning <see cref="Text"/>.</summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SetText(string value) => Text = value;
+
+        /// <summary>
+        /// TMP-migration parity alias for assigning <see cref="Text"/>.
+        /// <paramref name="syncTextInputBox"/> is TMP's flag for keeping the
+        /// inspector's text box in step with a runtime assignment; the
+        /// inspector here reads the same serialized field either way.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SetText(string value, bool syncTextInputBox) => Text = value;
+
+        /// <summary>
+        /// TMP-migration parity alias for assigning <see cref="Text"/> from a
+        /// builder. It allocates, where TMP's overload existed not to: OneText's
+        /// text is a string. Same result, not the same garbage. The numeric
+        /// overloads are deliberately absent — their <c>{0:2}</c> is TMP's own
+        /// format syntax and not <c>string.Format</c>'s, so forwarding would
+        /// print the wrong number rather than fail to compile.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SetText(System.Text.StringBuilder value) =>
+            Text = value != null ? value.ToString() : string.Empty;
+
+        // TMP parity — end
     }
 }

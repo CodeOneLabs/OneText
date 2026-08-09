@@ -17,7 +17,10 @@ namespace OneText.Editor
         public static void CreateLabel(MenuCommand command)
         {
             var parent = EnsureCanvas(command);
-            var go = CreateGraphicObject("OneText Label", parent, new Vector2(320f, 80f));
+            // Size, wrapping, markup and the rest come from Project Settings >
+            // OneText: AddComponent runs Reset, which reads them.
+            var go = CreateGraphicObject("OneText Label", parent,
+                OneTextSettings.ProjectDefaults.CanvasSize);
             var label = go.AddComponent<OneTextLabel>();
             label.color = Color.white;
             Register(go, "Create OneText Label");
@@ -72,10 +75,11 @@ namespace OneText.Editor
             var go = new GameObject("OneText Mesh", typeof(RectTransform));
             var parent = command.context as GameObject;
             if (parent != null) go.transform.SetParent(parent.transform, false);
-            // TMP's world-text defaults (20×5 rect, size 36): a scene that
-            // swapped a TextMeshPro object for this one sees the same box and
-            // the same glyph height.
-            go.GetComponent<RectTransform>().sizeDelta = new Vector2(20f, 5f);
+            // TMP's world-text defaults (20×5 rect, size 36) are what the
+            // project starts with, so a scene that swapped a TextMeshPro object
+            // for this one sees the same box and the same glyph height. Both
+            // numbers are the project's to change.
+            go.GetComponent<RectTransform>().sizeDelta = OneTextSettings.ProjectDefaults.WorldSize;
             go.AddComponent<OneTextMesh>();
             Register(go, "Create OneText Mesh");
         }

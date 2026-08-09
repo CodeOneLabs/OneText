@@ -158,6 +158,11 @@ namespace OneText.Editor
         /// <summary>Every font asset in the project.</summary>
         protected static List<OneFontAsset> AllFonts() => OneTextHub.AllFonts();
 
+        /// <summary>How many there are, without opening them: what a badge wants.</summary>
+        protected static int FontCount() => OneTextHub.FontCount();
+
+        protected static int StyleCount() => OneTextHub.StyleCount();
+
         /// <summary>
         /// Creates a ScriptableObject asset where the user says to put it, or
         /// returns null when they change their mind.
