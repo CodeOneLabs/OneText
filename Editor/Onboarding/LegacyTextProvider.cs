@@ -40,6 +40,7 @@ namespace OneText.Editor
             if (scriptType == null) return MigrationKind.None;
             if (typeof(Text).IsAssignableFrom(scriptType)) return MigrationKind.Label;
             if (typeof(TextMesh).IsAssignableFrom(scriptType)) return MigrationKind.Mesh;
+            if (typeof(InputField).IsAssignableFrom(scriptType)) return MigrationKind.InputField;
             if (typeof(Dropdown).IsAssignableFrom(scriptType)) return MigrationKind.Dropdown;
             return MigrationKind.None;
         }
@@ -48,6 +49,7 @@ namespace OneText.Editor
         {
             if (component is Text text) return FromUiText(text, container, path);
             if (component is TextMesh mesh) return FromTextMesh(mesh, container, path);
+            if (component is InputField field) return FromInputField(field, container, path);
             if (component is Dropdown dropdown) return FromDropdown(dropdown, container, path);
             return null;
         }
@@ -79,6 +81,104 @@ namespace OneText.Editor
             target.Companions.Add(dropdown.captionText != null ? dropdown.captionText.gameObject : null);
             target.Companions.Add(dropdown.itemText != null ? dropdown.itemText.gameObject : null);
             return target;
+        }
+
+        /// <summary>
+        /// The uGUI input field, for the same reason as the dropdown and rather
+        /// more urgently: <c>m_TextComponent</c> is declared <c>Text</c>, so the
+        /// moment the label inside the field is converted the field is pointing
+        /// at nothing and types into a void. Nothing about the field itself needs
+        /// migrating — it is here because what it names does.
+        ///
+        /// Read here rather than at conversion time because a
+        /// <c>SerializedObject</c> dies with the object it reads, and by the time
+        /// this field is converted the label it names is already gone.
+        /// </summary>
+        private static MigrationTarget FromInputField(InputField field, string container, string path)
+        {
+            var target = new MigrationTarget
+            {
+                Kind = MigrationKind.InputField,
+                ComponentType = nameof(InputField),
+                Provider = "Unity UI",
+                Source = field,
+                Container = container,
+                Path = path,
+            };
+
+            var values = MigrationValues.Default;
+            values.Text = field.text ?? string.Empty;
+            values.Multiline = field.lineType != InputField.LineType.SingleLine;
+            values.ReadOnly = field.readOnly;
+            values.CharacterLimit = field.characterLimit;
+            values.CaretWidth = field.caretWidth;
+            values.CaretBlinkRate = field.caretBlinkRate;
+            values.Interactable = field.interactable;
+            values.CaretColor = CaretColour(field);
+
+            values.TextComponentId = field.textComponent == null
+                ? 0 : field.textComponent.GetInstanceID();
+            values.PlaceholderId = field.placeholder == null
+                ? 0 : field.placeholder.GetInstanceID();
+            values.TargetGraphicId = field.targetGraphic == null
+                ? 0 : field.targetGraphic.GetInstanceID();
+
+            // uGUI's three are onValueChanged, onSubmit and onEndEdit, and the
+            // serialized names do not match the properties: what the inspector
+            // calls On End Edit is m_OnDidEndEdit, and m_OnSubmit is the one
+            // that used to be called m_OnEndEdit. Reading by the property's own
+            // backing field is the only way to move the right list.
+            var serialized = new SerializedObject(field);
+            values.ValueChangedCalls = UnityEventTransfer.Read(serialized, "m_OnValueChanged");
+            values.SubmitCalls = UnityEventTransfer.Read(serialized, "m_OnSubmit");
+            values.EndEditCalls = UnityEventTransfer.Read(serialized, "m_OnDidEndEdit");
+
+            target.Values = values;
+
+            if (field.contentType != InputField.ContentType.Standard)
+            {
+                target.Note(DoctorSeverity.Warning, "no-counterpart",
+                    $"content type {field.contentType} is not carried: OneTextInputField has no " +
+                    "content type and no character validation, so a password field becomes a " +
+                    "plain one and an email field stops validating. Filter the value in your own " +
+                    "code, on the value-changed event.");
+            }
+            else if (field.characterValidation != InputField.CharacterValidation.None)
+            {
+                target.Note(DoctorSeverity.Warning, "no-counterpart",
+                    $"character validation {field.characterValidation} is not carried: " +
+                    "OneTextInputField accepts whatever is typed. Reject it yourself on the " +
+                    "value-changed event.");
+            }
+
+            if (values.TextComponentId == 0)
+            {
+                target.Note(DoctorSeverity.Warning, "no-counterpart",
+                    "this input field has no text component assigned, so there is nothing for the " +
+                    "converted field to draw into.");
+            }
+            else if (!(field.textComponent is Text))
+            {
+                target.Note(DoctorSeverity.Warning, "no-counterpart",
+                    $"the text component is a {field.textComponent.GetType().Name} rather than a " +
+                    "Text, so this migration will not have converted it and the new field will " +
+                    "have none. Assign a OneTextLabel to Text Component by hand.");
+            }
+
+            return target;
+        }
+
+        /// <summary>
+        /// The caret's colour, without asking the property for it.
+        ///
+        /// <c>InputField.caretColor</c> answers with the text component's colour
+        /// when the field has no custom one, and reads that component without
+        /// checking it is there — a field with none throws rather than answers.
+        /// </summary>
+        private static Color CaretColour(InputField field)
+        {
+            if (field.customCaretColor) return field.caretColor;
+            return field.textComponent != null ? field.textComponent.color : Color.black;
         }
 
         private static MigrationTarget FromUiText(Text text, string container, string path)

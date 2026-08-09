@@ -122,8 +122,18 @@ namespace OneText.Tests
 
         // ------------------------------------------------------------ references
 
+        /// <summary>
+        /// The two shapes of field that can name a label, and the two different
+        /// reasons neither one is left reading None.
+        ///
+        /// A <c>Button</c>'s <c>targetGraphic</c> is declared <c>Graphic</c>, so
+        /// it simply takes the replacement and is re-pointed. An
+        /// <c>InputField</c>'s <c>m_TextComponent</c> is declared <c>Text</c> and
+        /// never could be, which is why the input field is a migration target in
+        /// its own right rather than a bystander to be apologised to afterwards.
+        /// </summary>
         [Test]
-        public void References_ArePointedAtTheReplacementOrReportedAsErrors()
+        public void AWideFieldAndAnInputField_BothEndUpNamingTheReplacement()
         {
             var root = NewObject("Root", typeof(RectTransform));
 
@@ -132,46 +142,38 @@ namespace OneText.Tests
             var text = labelGo.AddComponent<Text>();
             text.text = "pointed at";
 
-            // A field declared as Graphic can hold what replaces it.
             var buttonGo = new GameObject("Button", typeof(RectTransform));
             buttonGo.transform.SetParent(root.transform, false);
             var button = buttonGo.AddComponent<Button>();
             button.targetGraphic = text;
 
-            // A field declared as Text cannot, and that is exactly the shape of
-            // the TMP_Text field this whole module warns about.
-            var fieldGo = new GameObject("Field", typeof(RectTransform));
+            var fieldGo = new GameObject("Field", typeof(RectTransform), typeof(CanvasRenderer));
             fieldGo.transform.SetParent(root.transform, false);
             var field = fieldGo.AddComponent<InputField>();
             field.textComponent = text;
-            field.placeholder = text;
-
-            var scan = ComponentMigration.ScanInPlace(Roots(root), "(test)");
-            Assert.Greater(CountOf(scan, "dangling-reference"), 0,
-                "the scan did not notice anything pointing at the label");
 
             var report = ComponentMigration.ConvertInPlace(Roots(root), "(test)", false);
             var label = labelGo.GetComponent<OneTextLabel>();
-            Assert.NotNull(label);
+            Assert.NotNull(label, "the label was not converted");
 
             Assert.AreSame(label, button.targetGraphic,
                 "a Graphic field was not re-pointed at the replacement");
             Assert.Greater(report.Relinked, 0, "nothing was counted as re-linked");
 
-            var textComponent = new SerializedObject(field).FindProperty("m_TextComponent");
-            Assert.IsNull(textComponent.objectReferenceValue,
-                "a Text-typed field somehow accepted a OneTextLabel");
+            Assert.IsTrue(field == null, "the old input field is still there");
+            var made = fieldGo.GetComponent<OneTextInputField>();
+            Assert.NotNull(made, "the input field was left as a bystander rather than converted");
+            Assert.AreSame(label, made.textComponent,
+                "the converted field does not name the label it used to, so it types into nothing");
 
-            bool named = false;
             foreach (var finding in report.Findings)
             {
-                if (finding.Rule != "dangling-reference" ||
-                    finding.Severity != DoctorSeverity.Error) continue;
-                StringAssert.Contains("m_TextComponent", finding.Message);
-                named = true;
+                Assert.AreNotEqual("reference-would-break", finding.Rule,
+                    "something was held back, which means one of these two fields was read as " +
+                    "unable to hold the replacement: " + finding.Message);
+                Assert.AreNotEqual("dangling-reference", finding.Rule,
+                    "a reference was left reading None: " + finding.Message);
             }
-            Assert.IsTrue(named,
-                "the reference that could not be re-pointed was not reported as an error");
         }
 
         private static int CountOf(MigrationReport report, string rule)

@@ -588,17 +588,50 @@ namespace OneText.Editor
             var convertible = new List<MigrationTarget>();
             foreach (var target in targets) if (target.Convertible) convertible.Add(target);
 
-            var references = convertible.Count == 0
-                ? new List<Referrer>()
-                : CollectReferences(roots, convertible);
-
-            foreach (var reference in references)
+            // Both halves of the census: what the loaded objects still hold, and
+            // what only the file still says. Gathered together because the
+            // withholding below can send us round again, and a second round that
+            // forgot the severed half would convert exactly what the first round
+            // held back for.
+            var unreadable = new List<string>();
+            List<Referrer> Gather()
             {
-                reference.Target.Note(DoctorSeverity.Warning, "dangling-reference",
-                    $"{reference.ReferrerType} at '{reference.ReferrerPath}' points at this " +
-                    $"component through '{reference.PropertyPath}'. The migration will re-point it " +
-                    "at the OneText component that replaces it; a field declared as a TextMesh Pro " +
-                    "type cannot hold one, so run the script rewrite first if this is your code.");
+                var found = CollectReferences(roots, convertible);
+                unreadable.Clear();
+                Severed(roots, container, convertible, found, unreadable);
+                return found;
+            }
+
+            var references = convertible.Count == 0 ? new List<Referrer>() : Gather();
+
+            // Anything whose conversion would leave a field unable to name it is
+            // taken off the list before the list is used. Once it is off, the
+            // references have to be gathered again: a component that was skipped
+            // as a referrer because it was itself going to be converted is a
+            // referrer again the moment it is not — and its own fields are
+            // exactly the narrow kind that started this, so it can hold back the
+            // next component along.
+            //
+            // Which is why this is a loop rather than a second pass. A uGUI
+            // InputField named by an 'InputField' field is held back; that makes
+            // its 'Text'-declared m_TextComponent live again; that has to hold
+            // back the label inside it. One round found the first, reported it,
+            // and broke the second.
+            while (convertible.Count > 0 && Withhold(references, convertible))
+                references = Gather();
+
+            foreach (string lost in unreadable)
+            {
+                report.Add(new MigrationFinding
+                {
+                    Severity = DoctorSeverity.Error,
+                    Rule = "severed-reference",
+                    Message = $"{lost} named a text component in this file, and the field is not " +
+                              "on the component any more — the script was rewritten into something " +
+                              "without it. Nothing can put that reference back; it is here so that " +
+                              "the loss is known rather than found at runtime.",
+                    Container = container,
+                });
             }
 
             foreach (var target in targets) report.Add(target);
@@ -617,7 +650,7 @@ namespace OneText.Editor
                 int oldId = target.Source.GetInstanceID();
                 try
                 {
-                    var component = Replace(target, fonts, undo);
+                    var component = Replace(target, fonts, undo, report);
                     if (component == null) continue;
                     replaced[oldId] = component;
                     made.Add((target, component));
@@ -762,6 +795,260 @@ namespace OneText.Editor
             public string PropertyPath;
             public int OldId;
             public MigrationTarget Target;
+
+            /// <summary>The type the field is declared as, e.g. <c>Text</c>.</summary>
+            public string DeclaredType;
+
+            /// <summary>Whether that type can hold what the target is about to become.</summary>
+            public bool Holds;
+        }
+
+        /// <summary>
+        /// The references this container's file still spells out and its loaded
+        /// objects no longer hold, for targets inside this same file.
+        ///
+        /// <see cref="CollectReferences"/> asks the loaded components, and a
+        /// field whose declared type changed under it has nothing to say: Unity
+        /// discarded the pointer when the script rewrite widened the field, so
+        /// the walk sees 0 and records nothing. Nothing records it, so nothing
+        /// mends it, so nothing reports it — the field simply reads None the next
+        /// time somebody runs the game, and the report says the container was
+        /// converted cleanly.
+        ///
+        /// <see cref="ContainerFile"/> was written for the cross-file half of
+        /// exactly this and returns both halves now. This is the half where there
+        /// is no other container to open: the controller and the label it drives
+        /// are usually in one prefab, which makes this the commoner case and the
+        /// quieter one.
+        /// </summary>
+        private static void Severed(GameObject[] roots, string container,
+            List<MigrationTarget> convertible, List<Referrer> into, List<string> unreadable)
+        {
+            var stored = ContainerFile.Read(container);
+            if (stored.Count == 0) return;
+
+            var byTarget = new Dictionary<int, MigrationTarget>();
+            foreach (var target in convertible)
+                if (target.Source != null) byTarget[target.Source.GetInstanceID()] = target;
+
+            Dictionary<long, Component> byId = null;
+            foreach (var entry in stored)
+            {
+                if (!ContainerFile.IsInside(entry)) continue;
+                if (Replacement(ContainerFile.KindOfScript(entry.TargetScript)) == null) continue;
+
+                if (byId == null) byId = Inside(roots, container);
+                if (!byId.TryGetValue(entry.Referrer, out var referrer) || referrer == null) continue;
+                if (!byId.TryGetValue(entry.TargetFileId, out var found) || found == null) continue;
+                if (!byTarget.TryGetValue(found.GetInstanceID(), out var target)) continue;
+
+                var serialized = new SerializedObject(referrer);
+                var property = serialized.FindProperty(entry.PropertyPath);
+                if (property == null ||
+                    property.propertyType != SerializedPropertyType.ObjectReference)
+                {
+                    // The file names a field the component no longer has. Said
+                    // out loud rather than skipped: it means the script was
+                    // rewritten into something that dropped the field, and the
+                    // reference is gone for good.
+                    unreadable.Add($"'{entry.PropertyPath}' on " +
+                                   $"{referrer.GetType().Name} at '{PathOf(referrer.transform)}'");
+                    continue;
+                }
+
+                // Still holding it, so the ordinary census already has this one.
+                if (property.objectReferenceInstanceIDValue != 0) continue;
+
+                string declared = DeclaredTypeName(property);
+                into.Add(new Referrer
+                {
+                    Component = referrer,
+                    ReferrerPath = PathOf(referrer.transform),
+                    ReferrerType = referrer.GetType().Name,
+                    PropertyPath = entry.PropertyPath,
+                    OldId = found.GetInstanceID(),
+                    Target = target,
+                    DeclaredType = declared,
+                    Holds = WouldHold(declared, Replacement(target.Kind)),
+                });
+            }
+        }
+
+        /// <summary>
+        /// Every component in this container, by the id its file gives it.
+        ///
+        /// Two ways in, because the two kinds of container are open in different
+        /// senses. A scene is open — its objects are the scene's own, and
+        /// <c>GlobalObjectId</c> hands back the id the file uses. A prefab is
+        /// open as a copy in a preview scene, and a copy carries no asset ids at
+        /// all; the asset does, and the two hierarchies are the same shape, so
+        /// the ids come off the asset and land on the copy by where they sit.
+        /// </summary>
+        private static Dictionary<long, Component> Inside(GameObject[] roots, string container)
+        {
+            var byId = new Dictionary<long, Component>();
+            if (roots == null || string.IsNullOrEmpty(container)) return byId;
+
+            if (container.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var root in roots)
+                {
+                    if (root == null) continue;
+                    foreach (var component in root.GetComponentsInChildren<Component>(true))
+                    {
+                        if (component == null) continue;
+                        var id = GlobalObjectId.GetGlobalObjectIdSlow(component);
+                        if (id.targetObjectId != 0) byId[(long)id.targetObjectId] = component;
+                    }
+                }
+                return byId;
+            }
+
+            // Where each component sits, and what it is. Two of one type on one
+            // object cannot be told apart this way, so neither is claimed: a
+            // reference mended onto the wrong component of the right type is
+            // worse than one reported as unmended.
+            var byPlace = new Dictionary<string, Component>();
+            var ambiguous = new HashSet<string>();
+            foreach (var root in roots)
+            {
+                if (root == null) continue;
+                foreach (var component in root.GetComponentsInChildren<Component>(true))
+                {
+                    if (component == null) continue;
+                    string key = PathOf(component.transform) + "|" + component.GetType().FullName;
+                    if (byPlace.ContainsKey(key)) ambiguous.Add(key);
+                    else byPlace[key] = component;
+                }
+            }
+
+            UnityEngine.Object[] assets;
+            try { assets = AssetDatabase.LoadAllAssetsAtPath(container); }
+            catch (Exception) { return byId; }
+            if (assets == null) return byId;
+
+            foreach (var asset in assets)
+            {
+                if (!(asset is Component component)) continue;
+                if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out _, out long id))
+                    continue;
+                string key = PathOf(component.transform) + "|" + component.GetType().FullName;
+                if (ambiguous.Contains(key)) continue;
+                if (byPlace.TryGetValue(key, out var live)) byId[id] = live;
+            }
+            return byId;
+        }
+
+        /// <summary>
+        /// Takes off the list every component whose conversion would leave a
+        /// field naming nothing, and says so where the component is.
+        ///
+        /// This is the difference between a migration and a wrecking ball. A
+        /// field declared <c>Text</c> cannot hold a <c>OneTextLabel</c>, and
+        /// unlike the TextMesh Pro case there is no rewrite coming to widen it:
+        /// this module deliberately leaves <c>Text</c> alone in source, because
+        /// the name is too common to rewrite by name. So converting the label
+        /// that field names would break the field, permanently, in exchange for
+        /// nothing the project asked for. The label stays as it is, the report
+        /// says which field is the reason, and the choice of what to do about it
+        /// stays with the person who wrote the field.
+        ///
+        /// Returns whether anything was withheld, because if it was, the list of
+        /// references was gathered against a list that no longer holds.
+        /// </summary>
+        private static bool Withhold(List<Referrer> references, List<MigrationTarget> convertible)
+        {
+            var blocked = new Dictionary<MigrationTarget, Referrer>();
+            foreach (var reference in references)
+            {
+                if (reference.Holds || blocked.ContainsKey(reference.Target)) continue;
+                blocked[reference.Target] = reference;
+            }
+            if (blocked.Count == 0) return false;
+
+            foreach (var pair in blocked)
+            {
+                var reference = pair.Value;
+                pair.Key.Note(DoctorSeverity.Error, "reference-would-break",
+                    $"this component was left as it is. '{reference.PropertyPath}' on " +
+                    $"{reference.ReferrerType} at '{reference.ReferrerPath}' names it and is " +
+                    $"declared {reference.DeclaredType}, which cannot hold the " +
+                    $"{Replacement(pair.Key.Kind)?.Name} it would become — converting it would " +
+                    $"empty that field with nothing able to fill it again. {Remedy(reference)}");
+                convertible.Remove(pair.Key);
+            }
+            return true;
+        }
+
+        /// <summary>What the person reading the finding can actually do about it.</summary>
+        private static string Remedy(Referrer reference)
+        {
+            if (IsTmpType(reference.DeclaredType))
+                return "That field is a TextMesh Pro type, which the script rewrite in this tab " +
+                       "does widen: run it, let Unity recompile, and convert again.";
+
+            return $"The script rewrite does not touch {reference.DeclaredType} — the name is too " +
+                   "common in source to rewrite safely — so nothing this tab can do will widen " +
+                   "that field. If the script is yours, declare it as the OneText type and convert " +
+                   "again. If it is not, leaving this component alone is the right answer.";
+        }
+
+        private static bool IsTmpType(string name) =>
+            !string.IsNullOrEmpty(name) &&
+            (name.StartsWith("TMP_", StringComparison.Ordinal) ||
+             name.StartsWith("TMPro_", StringComparison.Ordinal) ||
+             name == "TextMeshProUGUI" || name == "TextMeshPro");
+
+        /// <summary>The OneText type a kind is replaced by, which is what a field has to hold.</summary>
+        private static Type Replacement(MigrationKind kind)
+        {
+            switch (kind)
+            {
+                case MigrationKind.Label: return typeof(OneTextLabel);
+                case MigrationKind.Mesh: return typeof(OneTextMesh);
+                case MigrationKind.InputField: return typeof(OneTextInputField);
+                case MigrationKind.Dropdown: return typeof(OneTextDropdown);
+                default: return null;
+            }
+        }
+
+        /// <summary>
+        /// The type a serialized object reference is declared as.
+        ///
+        /// <c>SerializedProperty.type</c> answers <c>PPtr&lt;$Text&gt;</c> for a
+        /// field declared <c>Text</c>, which is the declared type and not the
+        /// type of whatever happens to be in it — the distinction this whole
+        /// check rests on, since the thing in it is about to be destroyed.
+        /// </summary>
+        private static string DeclaredTypeName(SerializedProperty property)
+        {
+            string type = property.type;
+            if (string.IsNullOrEmpty(type)) return null;
+            int start = type.IndexOf('$');
+            if (start < 0) return type;
+            int end = type.IndexOf('>', start);
+            return end < 0
+                ? type.Substring(start + 1)
+                : type.Substring(start + 1, end - start - 1);
+        }
+
+        /// <summary>
+        /// Whether a field declared as <paramref name="declared"/> can hold a
+        /// <paramref name="replacement"/>, by walking what the replacement is
+        /// rather than by resolving the name to a type.
+        ///
+        /// Resolving would mean searching every loaded assembly for a simple
+        /// name that several of them may have. Walking cannot answer "yes"
+        /// wrongly in a way that matters: the worst case is two unrelated types
+        /// sharing a simple name, and the answer to that is the readback in
+        /// <see cref="Relink"/>, which measures rather than predicts.
+        /// </summary>
+        private static bool WouldHold(string declared, Type replacement)
+        {
+            if (string.IsNullOrEmpty(declared) || replacement == null) return true;
+            for (var type = replacement; type != null; type = type.BaseType)
+                if (type.Name == declared) return true;
+            return false;
         }
 
         /// <summary>
@@ -802,6 +1089,7 @@ namespace OneText.Editor
                         int id = iterator.objectReferenceInstanceIDValue;
                         if (id == 0 || !byId.TryGetValue(id, out var target)) continue;
 
+                        string declared = DeclaredTypeName(iterator);
                         found.Add(new Referrer
                         {
                             Component = component,
@@ -810,6 +1098,8 @@ namespace OneText.Editor
                             PropertyPath = iterator.propertyPath,
                             OldId = id,
                             Target = target,
+                            DeclaredType = declared,
+                            Holds = WouldHold(declared, Replacement(target.Kind)),
                         });
                     }
                 }
@@ -855,9 +1145,10 @@ namespace OneText.Editor
                     Severity = DoctorSeverity.Error,
                     Rule = "dangling-reference",
                     Message = $"'{reference.PropertyPath}' on {reference.ReferrerType} would not " +
-                              $"take the {made.GetType().Name} that replaced its target: the field " +
-                              "is still declared as a TextMesh Pro type. Run the script rewrite in " +
-                              "this tab, let Unity recompile, and convert again.",
+                              $"take the {made.GetType().Name} that replaced its target, and reads " +
+                              $"None now. The field is declared {reference.DeclaredType}, which " +
+                              "this migration read as wide enough — so either two types share that " +
+                              "name or the field is not what it says. " + Remedy(reference),
                     Container = reference.Target.Container,
                     Path = reference.ReferrerPath,
                     Component = reference.ReferrerType,
@@ -872,7 +1163,8 @@ namespace OneText.Editor
         /// one on, and every captured value written through
         /// <c>SerializedObject</c> because the fields that hold them are private.
         /// </summary>
-        private static Component Replace(MigrationTarget target, FontAssetCache fonts, bool undo)
+        private static Component Replace(MigrationTarget target, FontAssetCache fonts, bool undo,
+            MigrationReport report)
         {
             var go = target.Source.gameObject;
 
@@ -881,7 +1173,15 @@ namespace OneText.Editor
             // Selectable's state are serialized structures, not the handful of
             // scalars a label carries, and a SerializedObject dies with the
             // object it reads. So this one is built before the old one goes.
-            if (target.Kind == MigrationKind.Dropdown) return ReplaceDropdown(target, go, undo);
+            if (target.Kind == MigrationKind.Dropdown) return ReplaceDropdown(target, go, undo, report);
+
+            // An input field is a Selectable too, and a Selectable's colour
+            // block, transition and navigation are structures rather than the
+            // scalars MigrationValues can hold. Without this they are silently
+            // replaced by the defaults, which is a field that converts, reports
+            // nothing, and stops highlighting when the pointer is over it.
+            if (target.Kind == MigrationKind.InputField)
+                return ReplaceInputField(target, go, fonts, undo);
 
             if (undo) Undo.DestroyObjectImmediate(target.Source);
             else UnityEngine.Object.DestroyImmediate(target.Source);
@@ -892,10 +1192,6 @@ namespace OneText.Editor
                 case MigrationKind.Label:
                     EnsureGraphicParts(go, undo);
                     made = Add<OneTextLabel>(go, undo);
-                    break;
-                case MigrationKind.InputField:
-                    EnsureGraphicParts(go, undo);
-                    made = Add<OneTextInputField>(go, undo);
                     break;
                 case MigrationKind.Mesh:
                     EnsureRect(go, undo);
@@ -923,7 +1219,8 @@ namespace OneText.Editor
         /// moves them whole, which is the reason this component's fields are
         /// named exactly as Unity's are.
         /// </summary>
-        private static Component ReplaceDropdown(MigrationTarget target, GameObject go, bool undo)
+        private static Component ReplaceDropdown(MigrationTarget target, GameObject go, bool undo,
+            MigrationReport report)
         {
             var old = (Dropdown)target.Source;
 
@@ -952,7 +1249,8 @@ namespace OneText.Editor
                 var carrier = scratch.AddComponent<OneTextDropdown>();
                 if (carrier == null)
                     throw new InvalidOperationException("the carrier would not take a OneTextDropdown");
-                Carry(new SerializedObject(old), new SerializedObject(carrier));
+                Carry(new SerializedObject(old), new SerializedObject(carrier),
+                    Both(SelectableFields, DropdownFields));
 
                 if (undo) Undo.DestroyObjectImmediate(old);
                 else UnityEngine.Object.DestroyImmediate(old);
@@ -968,7 +1266,8 @@ namespace OneText.Editor
                         "the object would not take a OneTextDropdown after the old one was " +
                         "removed. What is on it: " + string.Join(", ", present));
                 }
-                Carry(new SerializedObject(carrier), new SerializedObject(made));
+                Carry(new SerializedObject(carrier), new SerializedObject(made),
+                    Both(SelectableFields, DropdownFields));
             }
             finally { UnityEngine.Object.DestroyImmediate(scratch); }
 
@@ -978,29 +1277,102 @@ namespace OneText.Editor
             if (undo) to.ApplyModifiedProperties();
             else to.ApplyModifiedPropertiesWithoutUndo();
 
+            // A label the dropdown named and that is still a Text is a label
+            // something else stopped this run from converting. The dropdown has
+            // just been handed nothing for it, and a dropdown with no caption is
+            // exactly the silent failure everything here is arranged against.
+            Missing(report, target, captionObject, "Caption Text");
+            Missing(report, target, itemObject, "Item Text");
+
             Reenable(made);
             return made;
         }
 
-        /// <summary>Every field the two dropdowns share, moved whole.</summary>
-        private static void Carry(SerializedObject from, SerializedObject to)
+        private static void Missing(MigrationReport report, MigrationTarget target,
+            GameObject named, string field)
         {
-            foreach (string path in new[]
+            if (named == null || Label(named) != null) return;
+            report.Add(target.Note(DoctorSeverity.Warning, "no-counterpart",
+                $"{field} named '{named.name}', which this run did not convert, so the new " +
+                "dropdown has none. Assign a OneTextLabel to it by hand, or look for the finding " +
+                "on that object saying why it was left alone."));
+        }
+
+        /// <summary>
+        /// The input field swap, which is the dropdown's for the same reason and
+        /// a smaller one: everything an input field carries in its own right was
+        /// read at scan time into <see cref="MigrationValues"/>, but Selectable's
+        /// state was not and could not be — a colour block is a structure.
+        /// </summary>
+        private static Component ReplaceInputField(MigrationTarget target, GameObject go,
+            FontAssetCache fonts, bool undo)
+        {
+            var old = target.Source;
+
+            var scratch = new GameObject("OneText input field carrier", typeof(RectTransform))
             {
-                // Selectable's own state, which a dropdown is as much as it is a
-                // dropdown: lose it and the thing stops highlighting, stops
-                // navigating and may stop taking clicks at all.
-                "m_Navigation", "m_Transition", "m_Colors", "m_SpriteState",
-                "m_AnimationTriggers", "m_Interactable", "m_TargetGraphic",
-                // And the dropdown's own.
-                "m_Template", "m_CaptionImage", "m_ItemImage", "m_Value",
-                "m_Options", "m_OnValueChanged", "m_AlphaFadeSpeed",
-            })
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+            OneTextInputField made;
+            try
+            {
+                var carrier = scratch.AddComponent<OneTextInputField>();
+                if (carrier == null)
+                    throw new InvalidOperationException("the carrier would not take a OneTextInputField");
+                Carry(new SerializedObject(old), new SerializedObject(carrier), SelectableFields);
+
+                if (undo) Undo.DestroyObjectImmediate(old);
+                else UnityEngine.Object.DestroyImmediate(old);
+
+                EnsureGraphicParts(go, undo);
+                made = Add<OneTextInputField>(go, undo);
+                if (made == null)
+                    throw new InvalidOperationException(
+                        "the object would not take a OneTextInputField after the old one was removed");
+                Carry(new SerializedObject(carrier), new SerializedObject(made), SelectableFields);
+            }
+            finally { UnityEngine.Object.DestroyImmediate(scratch); }
+
+            ApplyValues(made, target, fonts, undo);
+            return made;
+        }
+
+        /// <summary>
+        /// Selectable's own state, which a dropdown or an input field is as much
+        /// as it is either of those: lose it and the thing stops highlighting,
+        /// stops navigating and may stop taking clicks at all.
+        /// </summary>
+        private static readonly string[] SelectableFields =
+        {
+            "m_Navigation", "m_Transition", "m_Colors", "m_SpriteState",
+            "m_AnimationTriggers", "m_Interactable", "m_TargetGraphic",
+        };
+
+        /// <summary>What a dropdown carries on top of Selectable's own state.</summary>
+        private static readonly string[] DropdownFields =
+        {
+            "m_Template", "m_CaptionImage", "m_ItemImage", "m_Value",
+            "m_Options", "m_OnValueChanged", "m_AlphaFadeSpeed",
+        };
+
+        /// <summary>Every named field that exists on both, moved whole.</summary>
+        private static void Carry(SerializedObject from, SerializedObject to,
+            params string[] paths)
+        {
+            foreach (string path in paths)
             {
                 var property = from.FindProperty(path);
                 if (property != null) to.CopyFromSerializedProperty(property);
             }
             to.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static string[] Both(string[] first, string[] second)
+        {
+            var all = new string[first.Length + second.Length];
+            first.CopyTo(all, 0);
+            second.CopyTo(all, first.Length);
+            return all;
         }
 
         /// <summary>The OneText label on an object the old dropdown named, if it has one yet.</summary>
@@ -1052,6 +1424,8 @@ namespace OneText.Editor
             SetInt(serialized, "_wrap", (int)values.Wrap);
             SetInt(serialized, "_overflow", (int)values.Overflow);
             SetFloat(serialized, "_lineSpacing", values.LineSpacing);
+
+            SetDecoration(serialized, "_decoration", values.Decoration);
 
             // The label's colour is the Graphic's; the mesh's is its own.
             SetColor(serialized, "m_Color", values.Color);
@@ -1135,6 +1509,7 @@ namespace OneText.Editor
             CarryListeners(serialized, "_onValueChanged", values.ValueChangedCalls, replaced,
                 target, report);
             CarryListeners(serialized, "_onSubmit", values.SubmitCalls, replaced, target, report);
+            CarryListeners(serialized, "_onEndEdit", values.EndEditCalls, replaced, target, report);
 
             // The labels arrived after the field did, so the field has never
             // looked at them. Pushing its visuals once now is not cosmetic: the
@@ -1438,6 +1813,58 @@ namespace OneText.Editor
             var property = serialized.FindProperty(path);
             if (property != null && property.propertyType == SerializedPropertyType.Color)
                 property.colorValue = value;
+        }
+
+        /// <summary>
+        /// The outline, shadow and glow, written field by field because the
+        /// whole struct cannot be handed over at once.
+        /// </summary>
+        private static void SetDecoration(SerializedObject serialized, string path,
+            in TextDecoration decoration)
+        {
+            if (serialized.FindProperty(path) == null) return; // a mesh, which has none
+
+            SetInt(serialized, path + ".Set", (int)decoration.Set);
+            SetColor32(serialized, path + ".OutlineColor", decoration.OutlineColor);
+            SetFloat(serialized, path + ".OutlineWidth", decoration.OutlineWidth);
+            SetColor32(serialized, path + ".ShadowColor", decoration.ShadowColor);
+            SetVector2(serialized, path + ".ShadowOffset", decoration.ShadowOffset);
+            SetFloat(serialized, path + ".ShadowSoftness", decoration.ShadowSoftness);
+            SetColor32(serialized, path + ".GlowColor", decoration.GlowColor);
+            SetFloat(serialized, path + ".GlowRadius", decoration.GlowRadius);
+        }
+
+        /// <summary>
+        /// A <c>Color32</c>, which Unity may hand back as a colour or as four
+        /// bytes depending on how it decided to serialize the struct.
+        ///
+        /// Both are written rather than one being assumed, and a round-trip test
+        /// says which branch is the live one — the alternative is a comment
+        /// asserting something nobody measured, and a migration that quietly
+        /// leaves every outline black.
+        /// </summary>
+        private static void SetColor32(SerializedObject serialized, string path, Color32 value)
+        {
+            var property = serialized.FindProperty(path);
+            if (property == null) return;
+
+            if (property.propertyType == SerializedPropertyType.Color)
+            {
+                property.colorValue = value;
+                return;
+            }
+
+            SetInt(serialized, path + ".r", value.r);
+            SetInt(serialized, path + ".g", value.g);
+            SetInt(serialized, path + ".b", value.b);
+            SetInt(serialized, path + ".a", value.a);
+        }
+
+        private static void SetVector2(SerializedObject serialized, string path, Vector2 value)
+        {
+            var property = serialized.FindProperty(path);
+            if (property != null && property.propertyType == SerializedPropertyType.Vector2)
+                property.vector2Value = value;
         }
 
         private static void SetObject(SerializedObject serialized, string path,

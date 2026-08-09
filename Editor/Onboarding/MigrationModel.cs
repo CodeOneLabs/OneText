@@ -147,6 +147,17 @@ namespace OneText.Editor
         public bool RaycastTarget;
 
         /// <summary>
+        /// Outline, shadow and glow, read off the material rather than the
+        /// component.
+        ///
+        /// TextMesh Pro keeps them there and OneText keeps them on the label, so
+        /// a migration that reads only the component carries none of them — and
+        /// on a real project that is most of the look. Measured on Five-Dice: 69
+        /// of 70 TMP materials carry an effect, 67 of them an outline.
+        /// </summary>
+        public TextDecoration Decoration;
+
+        /// <summary>
         /// Asset path of the <c>.ttf</c>/<c>.otf</c> behind the source font, or
         /// null when there is none to be had. Not a font asset: the engine owns
         /// creating those, once per source file, however many labels share it.
@@ -166,6 +177,7 @@ namespace OneText.Editor
         public bool Interactable;
         public List<MigrationPersistentCall> ValueChangedCalls;
         public List<MigrationPersistentCall> SubmitCalls;
+        public List<MigrationPersistentCall> EndEditCalls;
 
         /// <summary>
         /// Instance ids of the components the old field pointed at, captured

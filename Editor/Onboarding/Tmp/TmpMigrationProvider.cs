@@ -50,6 +50,7 @@ namespace OneText.Editor
             if (typeof(TextMeshProUGUI).IsAssignableFrom(scriptType)) return MigrationKind.Label;
             if (typeof(TextMeshPro).IsAssignableFrom(scriptType)) return MigrationKind.Mesh;
             if (typeof(TMP_InputField).IsAssignableFrom(scriptType)) return MigrationKind.InputField;
+            if (typeof(TMP_Dropdown).IsAssignableFrom(scriptType)) return MigrationKind.Dropdown;
             return MigrationKind.None;
         }
 
@@ -102,6 +103,7 @@ namespace OneText.Editor
             values.AutoSizeMax = text.fontSizeMax;
             values.Color = text.color;
             values.RaycastTarget = text.raycastTarget;
+            values.Decoration = DecorationOf(text, target);
 
             MigrationMapping.FromTmpAlignment((int)text.alignment,
                 out var horizontal, out var vertical, out bool approximated, out string what);
@@ -323,17 +325,9 @@ namespace OneText.Editor
             var serialized = new SerializedObject(field);
             values.ValueChangedCalls = UnityEventTransfer.Read(serialized, "m_OnValueChanged");
             values.SubmitCalls = UnityEventTransfer.Read(serialized, "m_OnSubmit");
-            var endEdit = UnityEventTransfer.Read(serialized, "m_OnEndEdit");
+            values.EndEditCalls = UnityEventTransfer.Read(serialized, "m_OnEndEdit");
 
             target.Values = values;
-
-            if (endEdit.Count > 0)
-            {
-                target.Note(DoctorSeverity.Warning, "event-listeners",
-                    $"{endEdit.Count:n0} persistent listener(s) on On End Edit cannot be carried: " +
-                    "OneTextInputField has no such event. On Submit fires when the user commits " +
-                    "with Return; there is no event for losing focus. Re-wire these by hand.");
-            }
 
             if (field.contentType != TMP_InputField.ContentType.Standard)
             {
@@ -365,6 +359,141 @@ namespace OneText.Editor
 
         private static int InstanceId(Object component) =>
             component == null ? 0 : component.GetInstanceID();
+
+        // ------------------------------------------------------- decoration
+
+        /// <summary>
+        /// The material a label actually draws with, without making one.
+        ///
+        /// Never through <c>TMP_Text.fontMaterial</c>: that getter calls
+        /// <c>GetMaterial(m_sharedMaterial)</c>, which <em>instantiates</em>.
+        /// Reading it during a scan would leave a new material asset behind for
+        /// every label in the project, from a pass whose whole promise is that
+        /// it writes nothing.
+        ///
+        /// The instance wins when there is one, because that is what somebody
+        /// made when they changed the outline on one label rather than on the
+        /// preset every label shares.
+        /// </summary>
+        private static Material MaterialOf(TMP_Text text)
+        {
+            SerializedObject serialized;
+            try { serialized = new SerializedObject(text); }
+            catch (System.Exception) { return null; }
+
+            if (serialized.FindProperty("m_fontMaterial")?.objectReferenceValue is Material own)
+                return own;
+            return serialized.FindProperty("m_sharedMaterial")?.objectReferenceValue as Material;
+        }
+
+        /// <summary>
+        /// Outline, shadow and glow as OneText holds them, read off the material
+        /// TextMesh Pro holds them on.
+        ///
+        /// The four numbers that come across do so unscaled, because the two
+        /// definitions agree: TMP's <c>_OutlineWidth</c>, <c>_UnderlaySoftness</c>
+        /// and <c>_GlowOuter</c> are 0..1 and OneText quantises 0..1;
+        /// <c>_UnderlayOffsetX/Y</c> are -1..1 and OneText quantises -1..1.
+        /// Checked against a real asset rather than against the documentation:
+        /// a shipped material's underlay offset of (0.32, -0.4) sits next to
+        /// OneText's own default of (0.5, -0.5).
+        ///
+        /// What has no counterpart is named rather than approximated. A face
+        /// dilate silently dropped is a label that is the wrong weight and says
+        /// nothing about it, and this module has spent long enough being wrong
+        /// quietly.
+        /// </summary>
+        private static TextDecoration DecorationOf(TMP_Text text, MigrationTarget target)
+        {
+            var decoration = TextDecoration.None;
+            var material = MaterialOf(text);
+            if (material == null) return decoration;
+
+            if (Number(material, "_OutlineWidth") > 0f &&
+                Colour(material, "_OutlineColor").a > 0f)
+            {
+                decoration.Set |= TextDecoration.Parts.Outline;
+                decoration.OutlineColor = Colour(material, "_OutlineColor");
+                decoration.OutlineWidth = Mathf.Clamp01(Number(material, "_OutlineWidth"));
+            }
+
+            var underlay = Colour(material, "_UnderlayColor");
+            float dx = Number(material, "_UnderlayOffsetX");
+            float dy = Number(material, "_UnderlayOffsetY");
+            float dilate = Number(material, "_UnderlayDilate");
+            float softness = Number(material, "_UnderlaySoftness");
+            if (underlay.a > 0f && (dx != 0f || dy != 0f || dilate != 0f || softness > 0f))
+            {
+                decoration.Set |= TextDecoration.Parts.Shadow;
+                decoration.ShadowColor = underlay;
+                decoration.ShadowOffset = new Vector2(Mathf.Clamp(dx, -1f, 1f),
+                    Mathf.Clamp(dy, -1f, 1f));
+                decoration.ShadowSoftness = Mathf.Clamp01(softness);
+            }
+
+            var glow = Colour(material, "_GlowColor");
+            if (material.IsKeywordEnabled("GLOW_ON") && glow.a > 0f)
+            {
+                decoration.Set |= TextDecoration.Parts.Glow;
+                decoration.GlowColor = glow;
+                decoration.GlowRadius = Mathf.Clamp01(Number(material, "_GlowOuter"));
+            }
+
+            LintMaterial(material, decoration, target);
+            return decoration;
+        }
+
+        /// <summary>Everything on the material that OneText has no field for.</summary>
+        private static void LintMaterial(Material material, in TextDecoration decoration,
+            MigrationTarget target)
+        {
+            var lost = new List<string>();
+
+            float faceDilate = Number(material, "_FaceDilate");
+            if (faceDilate != 0f)
+                lost.Add($"face dilate {faceDilate:0.##} (the face is drawn thicker or thinner " +
+                         "than the font draws it)");
+
+            float outlineSoftness = Number(material, "_OutlineSoftness");
+            if (decoration.HasOutline && outlineSoftness > 0f)
+                lost.Add($"outline softness {outlineSoftness:0.##} (the outline comes across " +
+                         "with a hard edge)");
+
+            float underlayDilate = Number(material, "_UnderlayDilate");
+            if (decoration.HasShadow && underlayDilate != 0f)
+                lost.Add($"underlay dilate {underlayDilate:0.##} (the shadow comes across at the " +
+                         "face's own weight)");
+
+            bool innerGlow = Number(material, "_GlowInner") > 0f;
+            bool shapedGlow = material.HasProperty("_GlowPower") &&
+                              material.GetFloat("_GlowPower") != 1f;
+            if (decoration.HasGlow && (innerGlow || shapedGlow))
+                lost.Add("the glow's inner reach and power (OneText's glow is one outward radius)");
+
+            if (material.HasProperty("_FaceColor"))
+            {
+                Color face = material.GetColor("_FaceColor");
+                if (face != Color.white)
+                {
+                    lost.Add($"face colour ({face.r:0.##}, {face.g:0.##}, {face.b:0.##}, " +
+                             $"{face.a:0.##}) — TextMesh Pro multiplies it into the label's own " +
+                             "colour and OneText has no second colour to multiply by. It is not " +
+                             "folded into the colour here because that has not been checked on " +
+                             "screen; look at this label and set its colour to what you see");
+                }
+            }
+
+            if (lost.Count == 0) return;
+            target.Note(DoctorSeverity.Warning, "material-effect",
+                $"'{material.name}' carries {lost.Count:n0} thing(s) the label cannot: " +
+                string.Join("; ", lost) + ".");
+        }
+
+        private static float Number(Material material, string property) =>
+            material.HasProperty(property) ? material.GetFloat(property) : 0f;
+
+        private static Color Colour(Material material, string property) =>
+            material.HasProperty(property) ? material.GetColor(property) : new Color(0, 0, 0, 0);
 
         // ----------------------------------------------------------- dropdown
 

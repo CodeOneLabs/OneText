@@ -101,42 +101,90 @@ namespace OneText.Editor
 
             var documents = Split(text);
 
-            // Stubs first: a reference is only interesting if it lands on one,
-            // and the stub is what says where it lands.
+            // Where a reference can land, which is two different places. A
+            // stripped stub stands for an object in another file and carries
+            // that file's guid; an ordinary document is an object in this one
+            // and carries nothing but itself.
+            //
+            // Both are read, because both are severed by the same thing. The
+            // cross-file case was the one that could be seen — the field went
+            // empty and a prefab in another folder was visibly wrong — and for a
+            // long time it was the only one this returned. The same-file case is
+            // commoner and quieter: a controller and the label it drives usually
+            // live in one prefab, so the field empties, nothing outside that file
+            // changes, and the migration's own census cannot see it either
+            // because the loaded object no longer holds the pointer.
             var stubs = new Dictionary<long, Stub>();
+            var inside = new Dictionary<long, string>();
             foreach (var document in documents)
             {
-                if (!document.Stripped) continue;
-                var stub = new Stub
+                if (document.Stripped)
                 {
-                    Script = Guid(document, "m_Script"),
-                    SourceGuid = Guid(document, "m_CorrespondingSourceObject"),
-                    SourceFileId = FileId(document, "m_CorrespondingSourceObject"),
-                };
-                if (string.IsNullOrEmpty(stub.SourceGuid)) continue;
-                stubs[document.Id] = stub;
+                    var stub = new Stub
+                    {
+                        Script = Guid(document, "m_Script"),
+                        SourceGuid = Guid(document, "m_CorrespondingSourceObject"),
+                        SourceFileId = FileId(document, "m_CorrespondingSourceObject"),
+                    };
+                    if (!string.IsNullOrEmpty(stub.SourceGuid)) stubs[document.Id] = stub;
+                    continue;
+                }
+
+                // Only the ones with a script: a reference to a Transform or a
+                // RectTransform is not something this migration ever breaks.
+                string script = Guid(document, "m_Script");
+                if (!string.IsNullOrEmpty(script)) inside[document.Id] = script;
             }
-            if (stubs.Count == 0) return found;
+            if (stubs.Count == 0 && inside.Count == 0) return found;
 
             foreach (var document in documents)
             {
                 if (document.Stripped) continue;
+                string referrerScript = Guid(document, "m_Script");
+
                 foreach (var reference in References(document))
                 {
-                    if (!stubs.TryGetValue(reference.Value, out var stub)) continue;
+                    if (stubs.TryGetValue(reference.Value, out var stub))
+                    {
+                        found.Add(new StoredReference
+                        {
+                            Referrer = document.Id,
+                            ReferrerScript = referrerScript,
+                            PropertyPath = reference.Path,
+                            TargetGuid = stub.SourceGuid,
+                            TargetFileId = stub.SourceFileId,
+                            TargetScript = stub.Script,
+                        });
+                        continue;
+                    }
+
+                    // A component naming itself is a back-pointer, not a
+                    // reference something else has to mend.
+                    if (reference.Value == document.Id) continue;
+
+                    if (!inside.TryGetValue(reference.Value, out string targetScript)) continue;
                     found.Add(new StoredReference
                     {
                         Referrer = document.Id,
-                        ReferrerScript = Guid(document, "m_Script"),
+                        ReferrerScript = referrerScript,
                         PropertyPath = reference.Path,
-                        TargetGuid = stub.SourceGuid,
-                        TargetFileId = stub.SourceFileId,
-                        TargetScript = stub.Script,
+                        TargetGuid = null, // in this file; there is no other file to name
+                        TargetFileId = reference.Value,
+                        TargetScript = targetScript,
                     });
                 }
             }
             return found;
         }
+
+        /// <summary>
+        /// Whether this reference names something in the same file as the field
+        /// that holds it. The two cases are mended by different code in different
+        /// passes, and the difference is exactly whether there is another
+        /// container to go and open.
+        /// </summary>
+        public static bool IsInside(StoredReference reference) =>
+            reference != null && string.IsNullOrEmpty(reference.TargetGuid);
 
         /// <summary>
         /// What a script guid says the component is, asked of the providers so
@@ -202,7 +250,14 @@ namespace OneText.Editor
                     int amp = line.IndexOf('&');
                     if (amp >= 0)
                     {
+                        // The minus first, and then the digits. An anchor can be
+                        // negative — Unity writes them in imported prefabs, and
+                        // this project has them — and eating only the digits
+                        // parsed '&-123' as nothing, so a stub with a negative
+                        // anchor could never be matched and the reference that
+                        // landed on it was dropped without a word.
                         int end = amp + 1;
+                        if (end < line.Length && line[end] == '-') end++;
                         while (end < line.Length && char.IsDigit(line[end])) end++;
                         long.TryParse(line.Substring(amp + 1, end - amp - 1),
                             NumberStyles.Integer, CultureInfo.InvariantCulture, out current.Id);

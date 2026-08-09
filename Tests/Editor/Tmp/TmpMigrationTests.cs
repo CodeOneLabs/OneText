@@ -292,7 +292,7 @@ namespace OneText.Tests
         }
 
         [Test]
-        public void ContentTypeAndEndEdit_AreNamedRatherThanLost()
+        public void ContentType_IsNamed_AndEndEditListeners_AreCarried()
         {
             var root = NewObject("Password");
             var textGo = NewObject("Text", root.transform);
@@ -303,12 +303,23 @@ namespace OneText.Tests
             field.contentType = TMP_InputField.ContentType.Password;
             UnityEventTools.AddPersistentListener(field.onEndEdit, ListenerOn(fieldText));
 
-            var report = ComponentMigration.ScanInPlace(new[] { root }, "(test)");
-
-            Assert.GreaterOrEqual(CountOf(report, "no-counterpart"), 1,
+            var scan = ComponentMigration.ScanInPlace(new[] { root }, "(test)");
+            Assert.GreaterOrEqual(CountOf(scan, "no-counterpart"), 1,
                 "a password field silently became a plain one");
-            Assert.AreEqual(1, CountOf(report, "event-listeners"),
-                "On End Edit listeners were not reported as uncarryable");
+
+            var report = ComponentMigration.ConvertInPlace(new[] { root }, "(test)", false);
+            var made = root.GetComponent<OneTextInputField>();
+            Assert.NotNull(made, "no OneTextInputField arrived");
+
+            // OneTextInputField grew an onEndEdit, so these listeners stopped
+            // being something to apologise for and became something to move.
+            Assert.AreEqual(1, made.onEndEdit.GetPersistentEventCount(),
+                "the On End Edit wiring was dropped, and a designer's inspector wiring is not " +
+                "recoverable from anywhere else");
+            Assert.AreSame(textGo.GetComponent<OneTextLabel>(),
+                made.onEndEdit.GetPersistentTarget(0),
+                "the listener still points at the component that was destroyed");
+            Assert.GreaterOrEqual(CountOf(report, "event-listeners"), 1);
         }
 
         // ----------------------------------------------------------- dropdown
