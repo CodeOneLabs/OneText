@@ -192,7 +192,13 @@ namespace OneText.Tests
             }
         }
 
-        [Test]
+        // Every assigned codepoint in the coverage fonts, shaped and rasterized.
+        // It takes about two minutes on an idle machine, and Unity's default
+        // budget is three — which is not headroom, it is a coin toss: the same
+        // test passed at 124 s alone and failed at 224 s while the rest of the
+        // suite was running. Ten minutes is the distance between "slow" and
+        // "hung", which is the only thing a timeout should be measuring.
+        [Test, Timeout(600000)]
         public void Every_Assigned_Codepoint_Survives_Shaping_And_The_Atlas()
         {
             var fonts = FontFiles();

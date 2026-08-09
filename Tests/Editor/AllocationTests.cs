@@ -6,11 +6,7 @@ using OneText.UGUI;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Profiling;
-using UnityEngine.TestTools.Constraints;
 using UnityEngine.UI;
-// The namespace carries the extension that puts AllocatingGCMemory on Is.Not;
-// the alias resolves Is itself, which NUnit also defines.
-using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace OneText.Tests
 {
@@ -110,6 +106,61 @@ namespace OneText.Tests
 
         private const int Iterations = 2000;
 
+        /// <summary>
+        /// Asserts a warmed path allocates nothing, without asking a single
+        /// measurement to be right.
+        ///
+        /// <para><c>Is.Not.AllocatingGCMemory()</c> reads one invocation. That
+        /// is sound when nothing else can allocate on this thread during it,
+        /// and in an editor running a test suite that is not true: a finalizer,
+        /// an asset-database callback or the profiler itself can land inside
+        /// the window, and the test fails on someone else's allocation. Which
+        /// is exactly what these tests did — the same case passing and failing
+        /// on consecutive runs with no change to the code, which meant a
+        /// failure here carried no information at all.</para>
+        ///
+        /// <para>So this measures many times and keeps the <em>smallest</em>
+        /// count. Noise can only add allocations, never remove them: one clean
+        /// reading proves the steady state is clean, and a path that really
+        /// allocates cannot produce one, however many attempts it gets.</para>
+        /// </summary>
+        private static void AssertAllocationFree(Action work, string because,
+            int warmup = 200, int attempts = 24)
+        {
+            for (int i = 0; i < warmup; i++) work();
+
+            var recorder = Recorder.Get("GC.Alloc");
+            recorder.enabled = false;
+            recorder.FilterToCurrentThread();
+            recorder.enabled = true;
+
+            // The counter is per frame, and an editor frame can end mid-run;
+            // deltas are taken against the previous reading and a negative one
+            // (the frame rolled over) is thrown away rather than believed.
+            work();
+            int previous = recorder.sampleBlockCount;
+            int best = int.MaxValue;
+
+            for (int attempt = 0; attempt < attempts && best > 0; attempt++)
+            {
+                work();
+                int now = recorder.sampleBlockCount;
+                int delta = now - previous;
+                previous = now;
+                if (delta >= 0 && delta < best) best = delta;
+            }
+
+            recorder.enabled = false;
+            recorder.CollectFromAllThreads();
+
+            // NUnit's own constraints are not reachable here: this file aliases
+            // Is to the Unity constraint class that carries AllocatingGCMemory.
+            Assert.AreNotEqual(int.MaxValue, best,
+                "no usable measurement: every attempt straddled a frame boundary");
+            Assert.AreEqual(0, best,
+                $"{because} (best of {attempts} attempts: {best} allocation call(s))");
+        }
+
         [Test]
         public void Rebuild_Stages_Report_Where_Allocation_Happens()
         {
@@ -179,10 +230,8 @@ namespace OneText.Tests
             // The case a static label hits every frame: nothing changed, the
             // layout and the quads are both cached, and only the emit runs. If
             // anything here allocates, every label in a scene pays it forever.
-            Assert.That(() =>
-            {
-                _label.EnsureLayout();
-            }, Is.Not.AllocatingGCMemory(), "re-reading a cached layout must not allocate");
+            AssertAllocationFree(() => _label.EnsureLayout(),
+                "re-reading a cached layout must not allocate");
         }
 
         [Test]
@@ -191,9 +240,8 @@ namespace OneText.Tests
             _label.Text = Sample;
             _label.EnsureLayout();
 
-            // Braces, not an expression body: an expression lambda here returns
-            // the layout and binds as a Func, which the constraint rejects.
-            Assert.That(() => { _label.EnsureLayout(); }, Is.Not.AllocatingGCMemory());
+            AssertAllocationFree(() => _label.EnsureLayout(),
+                "laying out text that has not changed must not allocate");
         }
 
         [Test]
@@ -211,18 +259,12 @@ namespace OneText.Tests
                 shaper.Shape(font, Sample, 0, Sample.Length, Shaper.Direction.LeftToRight, glyphs, null);
             }
 
-            // The measured delegate is part of what has to be warm: its first
-            // invocation JIT-compiles the lambda body, and the recorder blames
-            // that one-time allocation on shaping. Bisected per-step, the run
-            // itself is clean from the second invocation on, forever.
-            TestDelegate warmedRun = () =>
+            AssertAllocationFree(() =>
             {
                 glyphs.Clear();
-                shaper.Shape(font, Sample, 0, Sample.Length, Shaper.Direction.LeftToRight, glyphs, null);
-            };
-            warmedRun();
-
-            Assert.That(warmedRun, Is.Not.AllocatingGCMemory(), "shaping a warmed run must not allocate");
+                shaper.Shape(font, Sample, 0, Sample.Length, Shaper.Direction.LeftToRight,
+                    glyphs, null);
+            }, "shaping a warmed run must not allocate");
         }
 
         [Test]
@@ -251,11 +293,11 @@ namespace OneText.Tests
             for (int i = 0; i < 50; i++) engine.Layout(i % 2 == 0 ? a : b, settings, result);
 
             bool flip = false;
-            Assert.That(() =>
+            AssertAllocationFree(() =>
             {
                 flip = !flip;
                 engine.Layout(flip ? a : b, settings, result);
-            }, Is.Not.AllocatingGCMemory(), "laying out text of a size already seen must not allocate");
+            }, "laying out text of a size already seen must not allocate");
         }
 
         [Test]
@@ -271,8 +313,7 @@ namespace OneText.Tests
             // test for an effect's declared settle time: it runs per span, and
             // written as a cast of a boxed struct rather than a type test it
             // would box one back on every frame of every label in the scene.
-            Assert.That(() => { if (_label.IsAnimating) { } },
-                Is.Not.AllocatingGCMemory(),
+            AssertAllocationFree(() => { if (_label.IsAnimating) { } },
                 "the per-frame idle decision must not allocate");
         }
     }
