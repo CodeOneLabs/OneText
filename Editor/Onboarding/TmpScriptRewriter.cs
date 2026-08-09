@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace OneText.Editor
@@ -291,6 +293,25 @@ namespace OneText.Editor
             ("TMPro.TextMeshProUGUI", "OneText.UGUI.OneTextLabel"),
             ("TMPro.TMP_InputField", "OneText.UGUI.OneTextInputField"),
             ("TMPro.TextMeshPro", "OneText.OneTextMesh"),
+            // The per-character surface, before TMP_Text: every one of these
+            // begins with it, and read in the other order "TMP_TextInfo" would
+            // come back as "OneTextLabelInfo".
+            ("TMPro.TMP_TextInfo", "OneText.UGUI.OneTextTextInfo"),
+            ("TMPro.TMP_CharacterInfo", "OneText.UGUI.OneTextCharacterInfo"),
+            ("TMPro.TMP_LineInfo", "OneText.UGUI.OneTextLineInfo"),
+            ("TMPro.TMP_WordInfo", "OneText.UGUI.OneTextWordInfo"),
+            ("TMPro.TMP_LinkInfo", "OneText.UGUI.OneTextLinkInfo"),
+            ("TMPro.TMP_MeshInfo", "OneText.UGUI.OneTextMeshInfo"),
+            ("TMPro.TMP_VertexDataUpdateFlags", "OneText.UGUI.OneTextVertexDataUpdateFlags"),
+            ("TMPro.TMPro_EventManager", "OneText.UGUI.OneTextEvents"),
+            // Not a TextMesh Pro name, and here anyway: converting the labels a
+            // dropdown points at forces the dropdown itself to be swapped, and a
+            // field still typed UnityEngine.UI.Dropdown would then be holding
+            // something it cannot hold. Only the qualified form is mapped —
+            // "Dropdown" on its own is a name a project may well have given
+            // something of its own, and the cost of being wrong about it is
+            // someone else's class quietly renamed.
+            ("UnityEngine.UI.Dropdown", "OneText.UGUI.OneTextDropdown"),
             ("TMPro.TMP_Text", "OneText.UGUI.OneTextLabel"),
             // The two enums the parity aliases take. Only the qualified forms
             // are here: OneText declares these under the names TMP used, so an
@@ -303,7 +324,26 @@ namespace OneText.Editor
             ("TextMeshProUGUI", "OneTextLabel"),
             ("TMP_InputField", "OneTextInputField"),
             ("TextMeshPro", "OneTextMesh"),
+            ("TMP_TextInfo", "OneTextTextInfo"),
+            ("TMP_CharacterInfo", "OneTextCharacterInfo"),
+            ("TMP_LineInfo", "OneTextLineInfo"),
+            ("TMP_WordInfo", "OneTextWordInfo"),
+            ("TMP_LinkInfo", "OneTextLinkInfo"),
+            ("TMP_MeshInfo", "OneTextMeshInfo"),
+            ("TMP_VertexDataUpdateFlags", "OneTextVertexDataUpdateFlags"),
+            ("TMPro_EventManager", "OneTextEvents"),
             ("TMP_Text", "OneTextLabel"),
+            // Guarded: only substituted in a file that imports UnityEngine.UI —
+            // see UsesUGui. "Dropdown" is a name a project may have given
+            // something of its own, and the one place it certainly means uGUI's
+            // is a file that asked for uGUI's namespace.
+            ("Dropdown", "OneTextDropdown"),
+        };
+
+        /// <summary>Short names that only mean what they say inside a uGUI-importing file.</summary>
+        private static readonly HashSet<string> UGuiOnly = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Dropdown",
         };
 
         /// <summary>The namespace the aliases live in.</summary>
@@ -344,6 +384,21 @@ namespace OneText.Editor
             // question, and the gap between them is a file left with rewritten
             // type names and no namespace to find them in.
             bool sawUsing = false, convertedUsing = false;
+
+            // Where a using would go in a file that has no TMPro one to convert.
+            // Everything the rewriter used to touch came in through that line,
+            // so replacing it was enough; a Dropdown does not, and a file that
+            // gains OneTextDropdown without gaining the namespace it lives in
+            // is a file the rewrite has broken.
+            int lastUsing = -1;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                string text = lines[i].Text.TrimStart();
+                if (text.StartsWith("using ", StringComparison.Ordinal)) lastUsing = i;
+                else if (text.Length > 0 && !text.StartsWith("//", StringComparison.Ordinal) &&
+                         !text.StartsWith("/*", StringComparison.Ordinal) &&
+                         !text.StartsWith("*", StringComparison.Ordinal) && lastUsing >= 0) break;
+            }
 
             var builder = new StringBuilder(source.Length + 32);
             int edit = 0;
@@ -387,6 +442,31 @@ namespace OneText.Editor
                 if (rewritten == null) continue; // the line, and its newline, go
                 builder.Append(rewritten);
                 builder.Append(source, line.Start + line.Length, line.EndingLength);
+
+                // A file with no TMPro using still needs the namespace for
+                // whatever it just gained, so it goes in after the last using
+                // the file already had.
+                if (i == lastUsing && !convertedUsing && (needsUGui || needsCore))
+                {
+                    string newline = line.EndingLength == 2 ? "\r\n" : "\n";
+                    var added = new StringBuilder();
+                    if (needsCore && !hasCore)
+                    {
+                        added.Append("using ").Append(CoreNamespace).Append(';').Append(newline);
+                        hasCore = true;
+                    }
+                    if (needsUGui && !hasUGui)
+                    {
+                        added.Append("using ").Append(UGuiNamespace).Append(';').Append(newline);
+                        hasUGui = true;
+                    }
+                    if (added.Length > 0)
+                    {
+                        builder.Append(added);
+                        changes.Add(new TmpRewriteChange(i + 1, original,
+                            original + newline + added.ToString().TrimEnd('\r', '\n')));
+                    }
+                }
             }
 
             string output = builder.ToString();
@@ -571,6 +651,48 @@ namespace OneText.Editor
         /// which was going to happen anyway. A file left out of one is a
         /// compile error the Hub promised would not happen.
         /// </summary>
+        private static HashSet<string> _replacedExtensions;
+
+        /// <summary>
+        /// Extension methods OneText itself offers for its own text components:
+        /// the ones a converted call site will bind to without its old provider
+        /// moving anywhere.
+        ///
+        /// Read off the loaded assemblies, so it is whatever is actually
+        /// installed and compiled right now — an integration switched off by its
+        /// define contributes nothing, which is the correct answer rather than a
+        /// special case.
+        /// </summary>
+        private static HashSet<string> ReplacedExtensions()
+        {
+            if (_replacedExtensions != null) return _replacedExtensions;
+
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = assembly.GetTypes(); }
+                catch (Exception) { continue; } // a half-loaded assembly is not worth a stack trace
+
+                foreach (var type in types)
+                {
+                    if (!type.IsSealed || !type.IsAbstract || type.IsNested) continue; // static class
+                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    {
+                        if (!method.IsDefined(typeof(ExtensionAttribute), false)) continue;
+                        var parameters = method.GetParameters();
+                        if (parameters.Length == 0) continue;
+
+                        string owner = parameters[0].ParameterType.FullName;
+                        if (owner == null || !owner.StartsWith("OneText.", StringComparison.Ordinal))
+                            continue;
+                        found.Add(method.Name);
+                    }
+                }
+            }
+            return _replacedExtensions = found;
+        }
+
         private static List<TmpFileGroup> Groups(List<TmpScriptFinding> findings,
             List<string> sources)
         {
@@ -590,10 +712,29 @@ namespace OneText.Editor
             var why = new string[count];
             for (int i = 0; i < count; i++) owner[i] = i;
 
+            var replaced = ReplacedExtensions();
+
             for (int provider = 0; provider < count; provider++)
             {
                 foreach (string name in exports[provider])
                 {
+                    // A group exists because a caller and the extension method it
+                    // calls cannot move apart. That stops being true the moment
+                    // something else offers the same method for the type the
+                    // caller is moving to: OneText ships DOText, DOColor and the
+                    // rest for its own components, so a call site can convert on
+                    // its own and bind to those, and the file that used to
+                    // provide them is best left exactly where it is — rewriting
+                    // it would put a second DOText(this OneTextLabel, …) in the
+                    // same namespace and make every call ambiguous.
+                    //
+                    // Asked of the assemblies rather than a list kept here,
+                    // because a list would be a second copy of the shortcuts file
+                    // and would be wrong the first time anyone edited it. When
+                    // the integration is switched off there is nothing to find
+                    // and the grouping goes back to holding.
+                    if (replaced.Contains(name)) continue;
+
                     for (int consumer = 0; consumer < count; consumer++)
                     {
                         if (consumer == provider || !words[consumer].Contains(name)) continue;
@@ -751,10 +892,22 @@ namespace OneText.Editor
             }
         }
 
-        /// <summary>Worth lexing at all?</summary>
+        /// <summary>
+        /// Worth lexing at all?
+        ///
+        /// TextMesh Pro's names are the bulk of it, and <c>Dropdown</c> is here
+        /// because converting the labels a dropdown owns forces the dropdown
+        /// itself to be swapped, and Unity refuses to remove a component another
+        /// script declares it requires. A file holding
+        /// <c>[RequireComponent(typeof(Dropdown))]</c> and nothing of TMP's is a
+        /// file that has to be rewritten first or the swap cannot happen at all —
+        /// measured on a real project, where one such file blocked nine
+        /// dropdowns across eight scenes.
+        /// </summary>
         private static bool MightMentionTmp(string source) =>
             source.IndexOf("TMP", StringComparison.Ordinal) >= 0 ||
-            source.IndexOf("TextMeshPro", StringComparison.Ordinal) >= 0;
+            source.IndexOf("TextMeshPro", StringComparison.Ordinal) >= 0 ||
+            source.IndexOf("Dropdown", StringComparison.Ordinal) >= 0;
 
         // ============================================================== types
 
@@ -789,6 +942,9 @@ namespace OneText.Editor
         private static List<Edit> TypeEdits(string source, bool[] code,
             List<EnumBody> enums, out bool needsCore, out bool needsUGui, out bool anyShortForm)
         {
+            // A file that never asked for uGUI's namespace cannot be talking
+            // about uGUI's Dropdown by its short name.
+            bool usesUGui = source.IndexOf("using UnityEngine.UI;", StringComparison.Ordinal) >= 0;
             var edits = new List<Edit>();
             needsCore = false;
             needsUGui = false;
@@ -806,6 +962,7 @@ namespace OneText.Editor
                 foreach (var map in Types)
                 {
                     if (!chain.StartsWith(map.From, StringComparison.Ordinal)) continue;
+                    if (UGuiOnly.Contains(map.From) && !usesUGui) continue;
                     // A whole name, or a whole name followed by a member: never
                     // a prefix of a longer identifier.
                     if (chain.Length != map.From.Length && chain[map.From.Length] != '.') continue;
@@ -1210,7 +1367,13 @@ namespace OneText.Editor
                 i = end - 1;
 
                 string name = null;
-                if (word.StartsWith("TMP_", StringComparison.Ordinal)) name = word;
+                // Both prefixes: TextMesh Pro ships TMP_Text and TMPro_EventManager
+                // side by side, and a gate that only knew the first let the
+                // second through — the using line went, the name stayed, and the
+                // file was written in a state that does not compile. Exactly what
+                // the gate exists to prevent, missed on a spelling.
+                if (word.StartsWith("TMP_", StringComparison.Ordinal) ||
+                    word.StartsWith("TMPro_", StringComparison.Ordinal)) name = word;
                 else if (word == "TMPro" || word == "TextMeshPro" || word == "TextMeshProUGUI")
                     name = word;
                 if (name == null) continue;

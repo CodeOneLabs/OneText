@@ -480,14 +480,21 @@ namespace OneText.Tests
             // DOTweenTextMeshPro.cs, in miniature. It reported eighteen
             // residuals and rewrote the file regardless, taking `using TMPro;`
             // with it and leaving every one of those eighteen names unresolved.
+            //
+            // The names here used to be TMP_MeshInfo and TMP_CharacterInfo,
+            // which is what that file actually blocked on. They are no longer
+            // blockers because OneText grew counterparts for them, so this
+            // stands on two that still have none — the gate is what is being
+            // tested, not any particular name, and it needs a name that is
+            // genuinely in the way to test it with.
             const string source =
                 "using TMPro;\n" +
                 "public static class DOTweenTMP\n" +
                 "{\n" +
                 "    public static void Shake(TMP_Text target)\n" +
                 "    {\n" +
-                "        TMP_MeshInfo[] info = target.textInfo.meshInfo;\n" +
-                "        TMP_CharacterInfo c = target.textInfo.characterInfo[0];\n" +
+                "        TMP_FontAsset font = target.font;\n" +
+                "        TMP_SpriteAsset sprites = target.spriteAsset;\n" +
                 "    }\n" +
                 "}\n";
 
@@ -496,9 +503,47 @@ namespace OneText.Tests
             Assert.AreEqual(source, result.Text, "a file that cannot compile was written anyway");
             Assert.IsFalse(result.Changed);
             Assert.IsFalse(result.Viable);
-            CollectionAssert.AreEqual(new[] { "TMP_MeshInfo", "TMP_CharacterInfo" },
+            CollectionAssert.AreEqual(new[] { "TMP_FontAsset", "TMP_SpriteAsset" },
                 result.BlockingNames);
             Assert.IsNotEmpty(result.Blocker);
+        }
+
+        [Test]
+        public void APerCharacter_Animator_IsRewritten_NowThatItsTypes_HaveCounterparts()
+        {
+            // The other half of the test above, and the reason it had to move.
+            //
+            // This shape is why a real project stalls: DOTweenPro's text
+            // animator reaches into per-character mesh data, nothing in OneText
+            // answered to those names, and the file was refused. A refused file
+            // holds back every file grouped with it — on Five-Dice that was one
+            // vendored file stopping twenty-eight of the project's own scripts,
+            // and 171 of 188 broken references traced back to it.
+            const string source =
+                "using TMPro;\n" +
+                "public static class DOTweenTMP\n" +
+                "{\n" +
+                "    public static void Shake(TMP_Text target)\n" +
+                "    {\n" +
+                "        TMP_MeshInfo[] info = target.textInfo.meshInfo;\n" +
+                "        TMP_CharacterInfo c = target.textInfo.characterInfo[0];\n" +
+                "        target.UpdateVertexData(TMP_VertexDataUpdateFlags.Vertices);\n" +
+                "    }\n" +
+                "}\n";
+
+            var result = TmpScriptRewriter.Rewrite(source);
+
+            Assert.IsTrue(result.Viable, "the file was refused: " + result.Blocker);
+            Assert.IsTrue(result.Changed);
+            CollectionAssert.IsEmpty(result.BlockingNames);
+            StringAssert.Contains("OneTextMeshInfo[] info", result.Text);
+            StringAssert.Contains("OneTextCharacterInfo c", result.Text);
+            StringAssert.Contains("OneTextVertexDataUpdateFlags.Vertices", result.Text);
+            StringAssert.DoesNotContain("TMPro", result.Text,
+                "the using line stayed, so something in the file still needs it");
+            // The prefix trap: read longest-first, TMP_Text would eat the front
+            // of TMP_TextInfo and leave OneTextLabelInfo behind.
+            StringAssert.DoesNotContain("OneTextLabelInfo", result.Text);
         }
 
         [Test]

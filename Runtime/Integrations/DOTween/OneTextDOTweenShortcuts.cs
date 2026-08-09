@@ -334,6 +334,60 @@ namespace DG.Tweening
         /// <paramref name="final"/>: the length of the text DOTween has actually
         /// typed, whatever it has appended behind it.
         /// </summary>
+        // ------------------------------------------------- DOTween Pro parity
+        //
+        // DOTween Pro's TMP module defines these on TMP_Text and nothing else
+        // does. They are here for the same reason as everything above — a
+        // migrated call site has to compile unchanged — and they matter for one
+        // more: while OneText offers a method by name, the migration knows a
+        // caller of it can convert without dragging DOTween Pro's own source
+        // along, and a vendored file that never moves is a vendored file that
+        // never conflicts with these.
+
+        /// <summary>Tweens a OneTextLabel's face colour to the given value.
+        /// Also stores the label as the tween's target so it can be used for filtered operations</summary>
+        /// <param name="endValue">The end value to reach</param><param name="duration">The duration of the tween</param>
+        public static TweenerCore<Color, Color, ColorOptions> DOFaceColor(this OneTextLabel target, Color32 endValue, float duration)
+        {
+            TweenerCore<Color, Color, ColorOptions> t = DOTween.To(
+                () => target.faceColor, x => target.faceColor = x, (Color)endValue, duration);
+            t.SetTarget(target);
+            return t;
+        }
+
+        /// <summary>Tweens a OneTextLabel's face alpha to the given value.
+        /// Also stores the label as the tween's target so it can be used for filtered operations</summary>
+        /// <param name="endValue">The end value to reach</param><param name="duration">The duration of the tween</param>
+        public static TweenerCore<Color, Color, ColorOptions> DOFaceFade(this OneTextLabel target, float endValue, float duration)
+        {
+            TweenerCore<Color, Color, ColorOptions> t = DOTween.ToAlpha(
+                () => target.faceColor, x => target.faceColor = x, endValue, duration);
+            t.SetTarget(target);
+            return t;
+        }
+
+        /// <summary>Tweens a OneTextLabel's outline colour to the given value.
+        /// Also stores the label as the tween's target so it can be used for filtered operations</summary>
+        /// <param name="endValue">The end value to reach</param><param name="duration">The duration of the tween</param>
+        public static TweenerCore<Color, Color, ColorOptions> DOOutlineColor(this OneTextLabel target, Color32 endValue, float duration)
+        {
+            TweenerCore<Color, Color, ColorOptions> t = DOTween.To(
+                () => target.outlineColor, x => target.outlineColor = x, (Color)endValue, duration);
+            t.SetTarget(target);
+            return t;
+        }
+
+        /// <summary>Tweens a OneTextLabel's glow colour to the given value.
+        /// Also stores the label as the tween's target so it can be used for filtered operations</summary>
+        /// <param name="endValue">The end value to reach</param><param name="duration">The duration of the tween</param>
+        public static TweenerCore<Color, Color, ColorOptions> DOGlowColor(this OneTextLabel target, Color32 endValue, float duration)
+        {
+            TweenerCore<Color, Color, ColorOptions> t = DOTween.To(
+                () => target.glowColor, x => target.glowColor = x, (Color)endValue, duration);
+            t.SetTarget(target);
+            return t;
+        }
+
         private static int MatchingPrefix(string typed, string final)
         {
             if (string.IsNullOrEmpty(typed)) return 0;
