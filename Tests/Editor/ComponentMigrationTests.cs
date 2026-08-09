@@ -296,5 +296,316 @@ namespace OneText.Tests
                 AssetDatabase.Refresh();
             }
         }
+
+        // ------------------------------------------------- across containers
+
+        // The other half of the reference problem, and the half that is silent.
+        //
+        // These touch the asset database, which the tests above go out of their
+        // way not to, because the failure only exists on disk: a field in one
+        // file naming a component in another is broken by writing the second
+        // file, at a moment when the first is not open and nothing in memory
+        // knows it exists. So each of these builds real prefabs and real assets,
+        // runs the whole of Apply over them, and reads the files back — which is
+        // the only vantage point the bug is visible from.
+
+        private const string CrossFolder = "Assets/OneTextCrossContainerTest";
+
+        private static void MakeFolder()
+        {
+            System.IO.Directory.CreateDirectory(CrossFolder);
+            AssetDatabase.Refresh();
+        }
+
+        private static void DropFolder()
+        {
+            AssetDatabase.DeleteAsset(CrossFolder);
+            AssetDatabase.Refresh();
+        }
+
+        private static ComponentMigration.Options Only(params string[] containers) =>
+            new ComponentMigration.Options
+            {
+                IncludeScenes = false,
+                OnlyContainers = new List<string>(containers),
+            };
+
+        /// <summary>
+        /// A prefab with the label one level down, which is the shape that
+        /// breaks: anything pointing at it is naming a component in a file of
+        /// its own.
+        /// </summary>
+        private static string Leaf(string name, bool withAScript = false)
+        {
+            string path = $"{CrossFolder}/{name}.prefab";
+
+            var root = new GameObject(name, typeof(RectTransform));
+            if (withAScript) root.AddComponent<LayoutElement>();
+
+            var label = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer));
+            label.transform.SetParent(root.transform, false);
+
+            var text = label.AddComponent<Text>();
+            text.font = null; // no font file behind it, so the run writes no font asset anywhere
+            text.text = "across the file boundary";
+
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            Object.DestroyImmediate(root);
+            return path;
+        }
+
+        /// <summary>
+        /// A prefab that nests another one. With <paramref name="pointAtTheText"/>
+        /// it also holds a field naming the label inside it; without, it holds no
+        /// component of its own at all, which is what makes it a middle link
+        /// rather than an end of the chain.
+        /// </summary>
+        private static string Wrapper(string name, string nestedPath, bool pointAtTheText)
+        {
+            string path = $"{CrossFolder}/{name}.prefab";
+
+            var root = new GameObject(name, typeof(RectTransform));
+            var nested = (GameObject)PrefabUtility.InstantiatePrefab(
+                AssetDatabase.LoadAssetAtPath<GameObject>(nestedPath));
+            nested.transform.SetParent(root.transform, false);
+
+            // A Graphic field is wide enough to hold a OneTextLabel, so the only
+            // way it can end up reading None is that nobody re-pointed it.
+            if (pointAtTheText)
+                root.AddComponent<Button>().targetGraphic = nested.GetComponentInChildren<Text>(true);
+
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            Object.DestroyImmediate(root);
+            return path;
+        }
+
+        private static string Host(string leafPath) => Wrapper("Host", leafPath, true);
+
+        private static string Holder(string name, Graphic wide, Text narrow)
+        {
+            string path = $"{CrossFolder}/{name}.asset";
+            var holder = ScriptableObject.CreateInstance<CrossContainerHolder>();
+            holder.Label = wide;
+            holder.Typed = narrow;
+            AssetDatabase.CreateAsset(holder, path);
+            AssetDatabase.SaveAssets();
+            return path;
+        }
+
+        private static Text LabelIn(string prefabPath) =>
+            AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).GetComponentInChildren<Text>(true);
+
+        [Test]
+        public void APrefabPointingIntoAnotherPrefab_IsPointedAtWhatReplacedIt()
+        {
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string host = Host(leaf);
+                AssetDatabase.Refresh();
+
+                var report = ComponentMigration.Apply(Only(leaf, host));
+
+                var button = AssetDatabase.LoadAssetAtPath<GameObject>(host).GetComponent<Button>();
+                Assert.IsFalse(button.targetGraphic == null,
+                    "the field reads None: the prefab it named was converted and nothing went " +
+                    "back to the file that was pointing at it");
+                Assert.IsInstanceOf<OneTextLabel>(button.targetGraphic,
+                    "the field holds something other than the OneText component that replaced " +
+                    "its target");
+                Assert.AreEqual("Label", button.targetGraphic.gameObject.name,
+                    "the field was pointed at the wrong object");
+
+                Assert.Greater(report.Relinked, 0, "nothing was counted as re-linked");
+                Assert.Greater(CountOf(report, ContainerReferences.Rule), 0,
+                    "the reference that crossed files was never mentioned in the report");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void APrefabPointingTwoLevelsDownIntoANestedPrefab_IsStillMended()
+        {
+            // Measured on a real project: this shape was silent. The field names
+            // a component whose file is two prefabs away — Outer nests Middle
+            // nests Leaf, and the label is written in Leaf. Asking Unity once
+            // where the component came from answers "Middle", and Middle is the
+            // one file in the chain that converts nothing, holds no component of
+            // its own and is never written. A reference recorded against it
+            // waits for a change that is never announced, while Leaf, which did
+            // change, goes unmentioned. Neither mended nor reported, which is
+            // the one outcome this module exists to make impossible.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string middle = Wrapper("Middle", leaf, pointAtTheText: false);
+                string outer = Wrapper("Outer", middle, pointAtTheText: true);
+                AssetDatabase.Refresh();
+
+                var report = ComponentMigration.Apply(Only(leaf, middle, outer));
+
+                var button = AssetDatabase.LoadAssetAtPath<GameObject>(outer).GetComponent<Button>();
+                Assert.IsFalse(button.targetGraphic == null,
+                    "the field reads None: the label two files down was converted and nothing " +
+                    "went back to the file that was pointing at it");
+                Assert.IsInstanceOf<OneTextLabel>(button.targetGraphic,
+                    "the field holds something other than the OneText component that replaced " +
+                    "its target");
+                Assert.AreEqual("Label", button.targetGraphic.gameObject.name,
+                    "the field was pointed at the wrong object");
+                Assert.Greater(report.Relinked, 0, "nothing was counted as re-linked");
+
+                // Whatever else happens, this shape must never be silent again.
+                Assert.Greater(CountOf(report, ContainerReferences.Rule), 0,
+                    "a reference that crossed two files was neither mended nor named");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void AScriptableObjectPointingIntoAPrefab_IsPointedAtWhatReplacedIt()
+        {
+            // The second half of the same hole. Nothing in the migration has ever
+            // opened a ScriptableObject, and a TMP_Text field on a settings asset
+            // is an ordinary thing for a project to have.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string asset = Holder("Wide", LabelIn(leaf), null);
+                AssetDatabase.Refresh();
+
+                var report = ComponentMigration.Apply(Only(leaf));
+
+                var holder = AssetDatabase.LoadAssetAtPath<CrossContainerHolder>(asset);
+                Assert.IsFalse(holder.Label == null,
+                    "the asset's field reads None after the prefab it named was converted");
+                Assert.IsInstanceOf<OneTextLabel>(holder.Label,
+                    "the asset's field was not pointed at the replacement");
+                Assert.Greater(report.Relinked, 0, "nothing was counted as re-linked");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void AFieldStillDeclaredAsTheOldType_IsReportedRatherThanLeftInSilence()
+        {
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string asset = Holder("Narrow", null, LabelIn(leaf));
+                AssetDatabase.Refresh();
+
+                var report = ComponentMigration.Apply(Only(leaf));
+
+                var holder = AssetDatabase.LoadAssetAtPath<CrossContainerHolder>(asset);
+                Assert.IsTrue(holder.Typed == null,
+                    "a Text-typed field somehow accepted a OneTextLabel");
+
+                bool named = false;
+                foreach (var finding in report.Findings)
+                {
+                    if (finding.Rule != ContainerReferences.Rule ||
+                        finding.Severity != DoctorSeverity.Error) continue;
+                    StringAssert.Contains("Typed", finding.Message);
+                    StringAssert.Contains(leaf, finding.Message);
+                    named = true;
+                }
+                Assert.IsTrue(named,
+                    "a field that refused the replacement was left to be discovered at runtime");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void ATargetThatCouldNotBeSaved_LeavesTheAssetsPointingAtItAlone()
+        {
+            // A prefab holding a missing script is refused before anything in it
+            // is converted, so it is unchanged on disk — which means every
+            // reference into it is still perfectly good, and re-pointing one
+            // would be a write nobody asked for in a file nobody expected to see
+            // in the diff.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf", withAScript: true);
+                string asset = Holder("Wide", LabelIn(leaf), null);
+                BreakTheScriptOn(leaf, ScriptGuidOf<LayoutElement>());
+
+                var report = ComponentMigration.Apply(Only(leaf));
+
+                var holder = AssetDatabase.LoadAssetAtPath<CrossContainerHolder>(asset);
+                Assert.IsInstanceOf<Text>(holder.Label,
+                    "the prefab was refused and never written, so nothing changed under this " +
+                    "asset and its field should still hold the component it always held");
+                Assert.AreEqual(0, report.Relinked,
+                    "a reference was re-pointed at a container that was never converted");
+                Assert.Greater(CountOf(report, "unsaveable-container"), 0,
+                    "the prefab with the missing script was not refused");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void RunningItTwice_RePointsNothingTheSecondTime()
+        {
+            // The first run leaves every one of these fields holding a live
+            // OneText component, and a field that holds something was not broken
+            // by anything — so the second run has to leave it exactly alone
+            // rather than count it again or write the file again.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string host = Host(leaf);
+                AssetDatabase.Refresh();
+
+                ComponentMigration.Apply(Only(leaf, host));
+                var second = ComponentMigration.Apply(Only(leaf, host));
+
+                Assert.AreEqual(0, second.Converted, "a second run swapped something");
+                Assert.AreEqual(0, second.Relinked, "a second run re-pointed something");
+
+                var button = AssetDatabase.LoadAssetAtPath<GameObject>(host).GetComponent<Button>();
+                Assert.IsInstanceOf<OneTextLabel>(button.targetGraphic,
+                    "the second run undid what the first one mended");
+            }
+            finally { DropFolder(); }
+        }
+
+        /// <summary>
+        /// Points one component's script at a guid nothing owns, which is how a
+        /// prefab comes to hold a missing script without anybody having to ship
+        /// one.
+        /// </summary>
+        private static void BreakTheScriptOn(string assetPath, string scriptGuid)
+        {
+            string file = System.IO.Path.GetFullPath(assetPath);
+            string yaml = System.IO.File.ReadAllText(file);
+            if (!yaml.Contains(scriptGuid))
+            {
+                Assert.Ignore("this test rewrites a prefab's YAML and this project does not " +
+                              "serialize prefabs as text.");
+            }
+
+            System.IO.File.WriteAllText(file,
+                yaml.Replace(scriptGuid, "0123456789abcdef0123456789abcdef"));
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+            AssetDatabase.Refresh();
+        }
+
+        private static string ScriptGuidOf<T>() where T : MonoBehaviour
+        {
+            var probe = new GameObject("probe");
+            try
+            {
+                var script = MonoScript.FromMonoBehaviour(probe.AddComponent<T>());
+                return AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(script));
+            }
+            finally { Object.DestroyImmediate(probe); }
+        }
     }
 }

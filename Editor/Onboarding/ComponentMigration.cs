@@ -27,6 +27,12 @@ namespace OneText.Editor
     /// never trusts the scan's findings, because the scan's component
     /// references stopped being valid the moment its scene closed, and a
     /// migration that acted on a stale reference would act on the wrong object.
+    ///
+    /// One container at a time is not the whole job, though, and
+    /// <see cref="ContainerReferences"/> is the part that is not: a field in one
+    /// prefab that names a component in another is broken by converting the
+    /// second and can only be mended while the first is open. That pass is
+    /// arranged around this one and runs from inside it.
     /// </summary>
     public static class ComponentMigration
     {
@@ -44,6 +50,23 @@ namespace OneText.Editor
 
             /// <summary>Whether Apply may set the project's default font from TMP's.</summary>
             public bool AdoptProjectFontDefaults;
+
+            /// <summary>
+            /// Whether to follow the references that leave one container and
+            /// land in another — see <see cref="ContainerReferences"/>.
+            ///
+            /// On by default, and the default is the recommendation: off is a
+            /// migration that silently blanks a field in a prefab it never
+            /// reported on. It is a flag at all because it is the one part of
+            /// this that is not free. A scan pays nothing for it, because the
+            /// containers are open anyway and nothing has been destroyed yet; an
+            /// apply pays one extra open of every asset that depends on a
+            /// container this run will touch, because the only moment those
+            /// references still exist is before the first save. On a project
+            /// whose prefabs nest nothing that is no assets at all, and on one
+            /// where they nest heavily it is most of them.
+            /// </summary>
+            public bool CrossContainerReferences = true;
 
             public bool Wants(string container) =>
                 OnlyContainers == null || OnlyContainers.Count == 0 ||
@@ -100,11 +123,15 @@ namespace OneText.Editor
         {
             var report = new MigrationReport();
 
-            // Every container is opened in Single mode, so anything unsaved in
-            // the editor right now is about to be closed. Asking is the whole
-            // of the protection; batch mode has nobody to ask and nothing to
-            // lose.
-            if (!Application.isBatchMode &&
+            var prefabs = options.IncludePrefabs ? OrderedPrefabPaths() : new List<string>();
+            var scenes = options.IncludeScenes ? ScenePaths(options.AllScenes) : new List<string>();
+
+            // Every scene this touches is opened in Single mode, so anything
+            // unsaved in the editor right now is about to be closed. Asking is
+            // the whole of the protection; batch mode has nobody to ask and
+            // nothing to lose, and a run that opens no scene at all has nothing
+            // to protect against.
+            if (scenes.Count > 0 && !Application.isBatchMode &&
                 !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
             {
                 report.Add(new MigrationFinding
@@ -117,13 +144,26 @@ namespace OneText.Editor
                 return report;
             }
 
+            var references = Watch(options, convert, prefabs, scenes, report);
+
             var fonts = new FontAssetCache(report);
             if (convert && options.AdoptProjectFontDefaults) AdoptDefaults(fonts, report);
 
             try
             {
-                if (options.IncludePrefabs) RunPrefabs(options, convert, report, fonts);
-                if (options.IncludeScenes) RunScenes(options, convert, report, fonts);
+                RunPrefabs(prefabs, options, convert, report, fonts, references);
+                RunScenes(scenes, options, convert, report, fonts, references);
+
+                if (references != null && !convert) references.Report(report);
+                else if (references != null)
+                {
+                    // ScriptableObjects last, because they are the one referrer
+                    // that is never opened for its own sake, and by now every
+                    // component they could name has a replacement.
+                    references.RelinkAssets(report);
+                    references.Settle(report);
+                    Narrowed(options, references, report);
+                }
             }
             finally
             {
@@ -134,6 +174,68 @@ namespace OneText.Editor
                 }
             }
             return report;
+        }
+
+        /// <summary>
+        /// Sets up the cross-container reference pass, and — for an apply — takes
+        /// its census before anything is destroyed.
+        ///
+        /// The census has to happen here, in front of everything, because it is
+        /// the only moment those references still exist. A scan needs no census:
+        /// it destroys nothing, so every container it opens on its ordinary walk
+        /// still holds whole references, and <see cref="ContainerReferences.Record"/>
+        /// is called there instead for nothing.
+        /// </summary>
+        private static ContainerReferences Watch(Options options, bool convert,
+            List<string> prefabs, List<string> scenes, MigrationReport report)
+        {
+            if (!options.CrossContainerReferences) return null;
+
+            var scope = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string path in prefabs) if (options.Wants(path)) scope.Add(path);
+            foreach (string path in scenes) if (options.Wants(path)) scope.Add(path);
+            if (scope.Count == 0) return null;
+
+            var references = new ContainerReferences(ContainerReferences.Candidates(scope));
+            if (convert) references.Census(report);
+            return references;
+        }
+
+        /// <summary>
+        /// Says, once, that a run over part of a project can only mend the
+        /// references held by the part it was given.
+        ///
+        /// The census reads the assets in the run. A prefab left out of it, or a
+        /// scene outside the build when only the build's scenes were opened, is
+        /// never opened and so is never even asked whether it points at anything
+        /// that changed — and if it does, that field is reading None from now on
+        /// with nothing anywhere saying so. This is the one place that can say
+        /// it, because this is the only place that knows the run was narrow.
+        /// </summary>
+        private static void Narrowed(Options options, ContainerReferences references,
+            MigrationReport report)
+        {
+            if (references == null || references.Changes == 0) return;
+
+            var left = new List<string>();
+            if (!options.IncludePrefabs) left.Add("prefabs were excluded");
+            if (!options.IncludeScenes) left.Add("scenes were excluded");
+            else if (!options.AllScenes) left.Add("only the build's scenes were opened");
+            if (options.OnlyContainers != null && options.OnlyContainers.Count > 0)
+                left.Add($"only {options.OnlyContainers.Count:n0} container(s) were selected");
+            if (left.Count == 0) return;
+
+            report.Add(new MigrationFinding
+            {
+                Severity = DoctorSeverity.Warning,
+                Rule = ContainerReferences.Rule,
+                Message = $"{references.Changes:n0} container(s) were converted, and " +
+                          string.Join(", ", left) + ". A field in a prefab, scene or asset that " +
+                          "was not part of this run and pointed at a component in one that was is " +
+                          "reading None now, and nothing here has looked at it. Convert the whole " +
+                          "project — All Scenes included — and every one of those is found and " +
+                          "re-pointed.",
+            });
         }
 
         /// <summary>
@@ -148,10 +250,10 @@ namespace OneText.Editor
         /// OneText label and there is simply nothing there to convert — the
         /// same reason the whole module has to be idempotent.
         /// </summary>
-        private static void RunPrefabs(Options options, bool convert, MigrationReport report,
-            FontAssetCache fonts)
+        private static void RunPrefabs(List<string> paths, Options options, bool convert,
+            MigrationReport report, FontAssetCache fonts, ContainerReferences references)
         {
-            foreach (string path in OrderedPrefabPaths())
+            foreach (string path in paths)
             {
                 if (!options.Wants(path)) continue;
                 report.ContainersScanned++;
@@ -175,8 +277,47 @@ namespace OneText.Editor
 
                 try
                 {
-                    bool changed = Process(new[] { root }, path, report, convert, fonts, undo: false);
-                    if (convert && changed) PrefabUtility.SaveAsPrefabAsset(root, path);
+                    var roots = new[] { root };
+                    var broken = MissingScripts(roots);
+                    if (convert && broken.Count > 0)
+                    {
+                        report.Add(new MigrationFinding
+                        {
+                            Severity = DoctorSeverity.Error,
+                            Rule = "unsaveable-container",
+                            Message = "this prefab holds a script Unity cannot resolve, and Unity " +
+                                      "refuses to save a prefab in that state — so nothing here " +
+                                      "was converted, because a conversion that cannot be written " +
+                                      "is worse than none. Remove or restore the missing script " +
+                                      $"on {string.Join(", ", broken.GetRange(0, Math.Min(3, broken.Count)))}" +
+                                      (broken.Count > 3 ? $" and {broken.Count - 3} more" : string.Empty) +
+                                      ", then convert again.",
+                            Container = path,
+                        });
+                    }
+
+                    int made = Process(roots, path, report, convert, fonts,
+                        undo: false, saveable: broken.Count == 0);
+
+                    // A prefab with nothing of its own to convert can still be a
+                    // prefab holding a field that pointed into one that did, so
+                    // this is asked whether or not anything was swapped here —
+                    // and not at all when the file could not be written, because
+                    // then nothing under it changed either.
+                    int relinked = 0;
+                    if (references != null)
+                    {
+                        if (!convert) references.Record(roots, path);
+                        else if (broken.Count == 0) relinked = references.Relink(roots, path, report);
+                        else references.Refused(roots, path);
+                    }
+
+                    if (convert && (made > 0 || relinked > 0))
+                    {
+                        PrefabUtility.SaveAsPrefabAsset(root, path, out bool saved);
+                        if (!saved) Unsaved(report, path, made, relinked, references);
+                        else if (made > 0) references?.Changed(path);
+                    }
                 }
                 finally
                 {
@@ -185,10 +326,9 @@ namespace OneText.Editor
             }
         }
 
-        private static void RunScenes(Options options, bool convert, MigrationReport report,
-            FontAssetCache fonts)
+        private static void RunScenes(List<string> paths, Options options, bool convert,
+            MigrationReport report, FontAssetCache fonts, ContainerReferences references)
         {
-            var paths = ScenePaths(options.AllScenes);
             if (paths.Count == 0) return;
 
             var setup = EditorSceneManager.GetSceneManagerSetup();
@@ -216,9 +356,41 @@ namespace OneText.Editor
                         continue;
                     }
 
-                    bool changed = Process(scene.GetRootGameObjects(), path, report, convert,
-                        fonts, undo: convert);
-                    if (convert && changed) EditorSceneManager.SaveScene(scene);
+                    var roots = scene.GetRootGameObjects();
+                    var broken = MissingScripts(roots);
+                    if (convert && broken.Count > 0)
+                    {
+                        report.Add(new MigrationFinding
+                        {
+                            Severity = DoctorSeverity.Error,
+                            Rule = "unsaveable-container",
+                            Message = "this scene holds a script Unity cannot resolve. Saving a " +
+                                      "scene in that state drops the broken component rather than " +
+                                      "preserving it, so nothing here was converted. Remove or " +
+                                      "restore the missing script, then convert again.",
+                            Container = path,
+                        });
+                    }
+
+                    int made = Process(roots, path, report, convert,
+                        fonts, undo: convert, saveable: broken.Count == 0);
+
+                    // Scenes are converted last, so a field here that pointed
+                    // into a prefab converted much earlier in the run has been
+                    // reading None ever since, and this is the only visit it
+                    // gets in which to be given the replacement.
+                    int relinked = 0;
+                    if (references != null)
+                    {
+                        if (!convert) references.Record(roots, path);
+                        else if (broken.Count == 0) relinked = references.Relink(roots, path, report);
+                        else references.Refused(roots, path);
+                    }
+                    if (relinked > 0) EditorSceneManager.MarkSceneDirty(scene);
+
+                    if (convert && (made > 0 || relinked > 0) && !EditorSceneManager.SaveScene(scene))
+                        Unsaved(report, path, made, relinked, references);
+                    else if (convert && made > 0) references?.Changed(path);
                 }
             }
             finally
@@ -309,11 +481,22 @@ namespace OneText.Editor
 
         // -------------------------------------------------------- one container
 
-        private static bool Process(GameObject[] roots, string container, MigrationReport report,
-            bool convert, FontAssetCache fonts, bool undo)
+        /// <summary>Returns how many components were swapped, so a caller whose save fails can take them back.</summary>
+        private static int Process(GameObject[] roots, string container, MigrationReport report,
+            bool convert, FontAssetCache fonts, bool undo, bool saveable = true)
         {
             var targets = Collect(roots, container);
-            if (targets.Count == 0) return false;
+            if (targets.Count == 0) return 0;
+
+            // A container that cannot be written is reported and left exactly as
+            // it is. Swapping its components first would be the same mistake the
+            // script rewriter makes when it starts a file it cannot finish: the
+            // work is real, the report says so, and the disk disagrees.
+            if (convert && !saveable)
+            {
+                foreach (var target in targets) report.Add(target);
+                return 0;
+            }
 
             var convertible = new List<MigrationTarget>();
             foreach (var target in targets) if (target.Convertible) convertible.Add(target);
@@ -332,7 +515,7 @@ namespace OneText.Editor
             }
 
             foreach (var target in targets) report.Add(target);
-            if (!convert) return false;
+            if (!convert) return 0;
 
             // Labels and meshes first: an input field's text and placeholder
             // have to exist as OneText components before the field that names
@@ -371,12 +554,76 @@ namespace OneText.Editor
             Relink(references, replaced, report);
 
             report.Converted += made.Count;
-            return made.Count > 0;
+            return made.Count;
         }
 
         private static int Rank(MigrationKind kind) => kind == MigrationKind.InputField ? 1 : 0;
 
         // ------------------------------------------------------------ collect
+
+        /// <summary>
+        /// A container whose components were swapped and whose file then refused
+        /// to be written.
+        ///
+        /// The count has to come back out of the report. Unity's save failures
+        /// arrive as console errors rather than exceptions, so without this the
+        /// run ends with a large, encouraging number that includes components
+        /// still sitting on disk exactly as they were — and a second run finds
+        /// them, swaps them, fails to save them, and reports them converted
+        /// again, for as long as anybody is willing to press the button.
+        /// </summary>
+        private static void Unsaved(MigrationReport report, string container, int made,
+            int relinked, ContainerReferences references)
+        {
+            report.Converted -= made;
+            report.Relinked -= relinked;
+            references?.Unwind(container);
+
+            report.Add(new MigrationFinding
+            {
+                Severity = DoctorSeverity.Error,
+                Rule = "save-failed",
+                Message = $"{made:n0} component(s) here were swapped" +
+                          (relinked > 0
+                              ? $" and {relinked:n0} reference(s) into other containers re-pointed"
+                              : string.Empty) +
+                          ", and then Unity refused to write the file, so this container is " +
+                          "unchanged on disk. The console holds Unity's reason; a missing script " +
+                          "somewhere in it is much the commonest one.",
+                Container = container,
+            });
+        }
+
+        /// <summary>
+        /// The GameObjects in this hierarchy carrying a script Unity can no
+        /// longer resolve.
+        ///
+        /// This matters for one blunt reason: Unity refuses to save a prefab
+        /// that holds a missing script, and refuses it after the components in
+        /// memory have already been swapped. Converting such a prefab and then
+        /// asking for it back produces an error in the console, an unchanged
+        /// file on disk, and — if nobody is checking — a report that counts the
+        /// swap as done. Asset packs are full of these, left behind when a
+        /// dependency was removed, so this is not a rare shape.
+        /// </summary>
+        private static List<string> MissingScripts(GameObject[] roots)
+        {
+            var broken = new List<string>();
+            foreach (var root in roots)
+            {
+                if (root == null) continue;
+                foreach (var transform in root.GetComponentsInChildren<Transform>(true))
+                {
+                    foreach (var component in transform.GetComponents<Component>())
+                    {
+                        if (component != null) continue;
+                        broken.Add(PathOf(transform));
+                        break;
+                    }
+                }
+            }
+            return broken;
+        }
 
         private static List<MigrationTarget> Collect(GameObject[] roots, string container)
         {
@@ -733,10 +980,18 @@ namespace OneText.Editor
         /// be worse than the thing it replaced. An asset that already exists
         /// beside the font file is reused untouched: re-importing it would put
         /// every font in the project in the diff for no reason.
+        ///
+        /// The same rule applies to the fonts there is no file for. Those get a
+        /// placeholder — see <see cref="FontRecovery"/> — one per source font,
+        /// however many labels and however many baked font assets asked for it.
         /// </summary>
         private sealed class FontAssetCache
         {
             private readonly Dictionary<string, OneFontAsset> _byPath =
+                new Dictionary<string, OneFontAsset>();
+
+            /// <summary>Placeholders, by the name of the font asset that lacked a file.</summary>
+            private readonly Dictionary<string, OneFontAsset> _recovered =
                 new Dictionary<string, OneFontAsset>();
 
             private readonly MigrationReport _report;
@@ -750,7 +1005,8 @@ namespace OneText.Editor
 
             public OneFontAsset Get(string sourcePath, MigrationTarget target)
             {
-                if (!_enabled || string.IsNullOrEmpty(sourcePath)) return null;
+                if (!_enabled) return null;
+                if (string.IsNullOrEmpty(sourcePath)) return Recovered(target);
                 if (_byPath.TryGetValue(sourcePath, out var cached))
                 {
                     if (cached == null) NoteMissing(sourcePath, target);
@@ -772,6 +1028,66 @@ namespace OneText.Editor
 
                 _byPath[sourcePath] = asset;
                 return asset;
+            }
+
+            /// <summary>
+            /// The font for a label whose font asset had no file behind it.
+            ///
+            /// This used to be a null, and a null is a correct answer that ends
+            /// the conversation: the label loses its font, the reference graph
+            /// loses an edge, and the only record of which font it wanted is a
+            /// line in a report. On a project whose font packs shipped atlases
+            /// and no <c>.ttf</c> that is most of the labels in it.
+            ///
+            /// So the answer is a placeholder instead — a real OneFontAsset
+            /// carrying everything recovered from the old font asset except the
+            /// bytes. Every label that used that font points at the same one, so
+            /// finding the file once fixes all of them, and until somebody does
+            /// the placeholder reports itself as unfilled and draws in the
+            /// project default, which is exactly what the null did.
+            ///
+            /// Which font it was comes from the finding the provider already
+            /// raised: providers are gated adapters that report in prose, and
+            /// the first <c>font-source-missing</c> on a target is its primary
+            /// font, because that is the order they read a component in.
+            /// </summary>
+            private OneFontAsset Recovered(MigrationTarget target)
+            {
+                if (target == null) return null;
+
+                string name = null;
+                foreach (var finding in target.Findings)
+                {
+                    if (finding.Rule != FontRecovery.Rule) continue;
+                    name = FontRecovery.NamedFont(finding.Message);
+                    if (name != null) break;
+                }
+                if (name == null) return null;
+
+                if (_recovered.TryGetValue(name, out var known)) return known;
+
+                var placeholder = FontRecovery.PlaceholderFor(_report, name);
+                _recovered[name] = placeholder;
+                if (placeholder != null) NoteRecovered(name, placeholder, target);
+                return placeholder;
+            }
+
+            /// <summary>
+            /// Said once per font, not once per label, and as a note rather than
+            /// an error: the error is still there, above this, saying the font
+            /// asset had nothing to convert. This says what was done about it.
+            /// </summary>
+            private void NoteRecovered(string fontAssetName, OneFontAsset placeholder,
+                MigrationTarget target)
+            {
+                string expected = placeholder.Recovery.ExpectedFileName;
+                _report.Add(target.Note(DoctorSeverity.Info, FontRecovery.RecoveredRule,
+                    $"'{fontAssetName}' has no font file, so the migration made a placeholder " +
+                    $"font at {AssetDatabase.GetAssetPath(placeholder)} and pointed this label — " +
+                    "and every other label that used it — at that instead of at nothing. Drop " +
+                    $"{(string.IsNullOrEmpty(expected) ? "the source font file" : expected)} " +
+                    "into the project and all of them have their font back; until then they draw " +
+                    "in the project default."));
             }
 
             /// <summary>

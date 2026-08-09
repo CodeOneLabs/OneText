@@ -265,6 +265,23 @@ namespace OneText.Editor
         /// <summary>Font assets created from source font files during Apply.</summary>
         public int FontsCreated;
 
+        /// <summary>
+        /// Placeholder font assets created during Apply for fonts whose source
+        /// file is missing — one per source font, not per label.
+        /// </summary>
+        public int PlaceholdersCreated;
+
+        /// <summary>
+        /// The fonts this project needs files for, deduplicated by source font.
+        ///
+        /// Filled by <see cref="FontRecovery.Collect"/>, which reads it out of
+        /// the findings below rather than out of anything the conversion did, so
+        /// a scan produces the same list as an apply. Empty on a project whose
+        /// fonts all converted, which is the project this list wishes it were
+        /// describing.
+        /// </summary>
+        public readonly FontRecoveryManifest Recovery = new FontRecoveryManifest();
+
         /// <summary>References to a converted component that were pointed at the new one.</summary>
         public int Relinked;
 
