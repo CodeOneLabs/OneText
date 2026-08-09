@@ -61,6 +61,10 @@ namespace OneText.Tests
 
             material = _material = new Material(Shader.Find("TextMeshPro/Distance Field"));
             material.name = "Outlined SDF";
+            // The keywords, because TMP draws neither effect without them and a
+            // fixture that only sets values is standing where the bug was.
+            material.EnableKeyword("OUTLINE_ON");
+            material.EnableKeyword("UNDERLAY_ON");
             material.SetColor("_OutlineColor", new Color(1f, 0f, 0f, 1f));
             material.SetFloat("_OutlineWidth", 0.25f);
             material.SetColor("_UnderlayColor", new Color(0f, 0f, 1f, 0.75f));
@@ -105,6 +109,43 @@ namespace OneText.Tests
 
             Assert.IsFalse(decoration.HasGlow,
                 "a glow arrived that the material never asked for");
+        }
+
+        /// <summary>
+        /// A material carrying every value and none of the keywords, which is
+        /// what most of a real project's materials are: the numbers came with
+        /// whatever preset they were made from and the checkbox that turns the
+        /// effect on was never ticked.
+        ///
+        /// Reading the values alone put an outline on some two thousand seven
+        /// hundred labels in one project and a drop shadow on two thousand eight
+        /// hundred, none of which TextMesh Pro had ever drawn. The face dilate
+        /// is the one that must still come across, because that one TMP applies
+        /// with no keyword at all — and it is the reason the text looked thin.
+        /// </summary>
+        [Test]
+        public void ValuesWithoutTheirKeywords_DrawNothing_ExceptTheFace()
+        {
+            var text = Build(out var material);
+            material.DisableKeyword("OUTLINE_ON");
+            material.DisableKeyword("UNDERLAY_ON");
+            material.SetFloat("_FaceDilate", 0.237f);
+
+            ComponentMigration.ConvertInPlace(new[] { _root }, "(test)", false);
+            var decoration = (TextDecoration)new SerializedObject(
+                _root.GetComponent<OneTextLabel>()).FindProperty("_decoration").boxedValue;
+
+            Assert.IsFalse(decoration.HasOutline,
+                "an outline was drawn that TextMesh Pro was not drawing: the width is set on the " +
+                "material but OUTLINE_ON is not, and the shader gates on the keyword");
+            Assert.IsFalse(decoration.HasShadow,
+                "a drop shadow was added that nothing asked for — _UnderlayColor defaults to an " +
+                "alpha of 0.5, so reading the value alone finds a shadow on almost every material");
+
+            Assert.IsTrue(decoration.HasFace,
+                "the face dilate did not come across, and it is the one TMP applies without a " +
+                "keyword — the whole visible difference between the two renderers");
+            Assert.AreEqual(0.237f, decoration.FaceDilate, 1e-3f);
         }
 
         [Test]

@@ -409,7 +409,20 @@ namespace OneText.Editor
             var material = MaterialOf(text);
             if (material == null) return decoration;
 
-            if (Number(material, "_OutlineWidth") > 0f &&
+            // Keywords, not values. TextMesh Pro's SDF shader gates the outline
+            // behind OUTLINE_ON and the underlay behind UNDERLAY_ON, so a
+            // material can carry a width of 0.33 and a border colour and draw
+            // neither — which most of them do, because the values are whatever
+            // the preset was made from and the keyword is what the inspector's
+            // checkbox writes. Reading the values alone put an outline on some
+            // two thousand seven hundred labels that never had one, and a drop
+            // shadow on two thousand eight hundred more.
+            //
+            // The face dilate is the exception, and it is the one that mattered:
+            // it is folded into the weight unconditionally, no keyword, which is
+            // why text that looked right in TMP came out thin here.
+            if (material.IsKeywordEnabled("OUTLINE_ON") &&
+                Number(material, "_OutlineWidth") > 0f &&
                 Colour(material, "_OutlineColor").a > 0f)
             {
                 decoration.Set |= TextDecoration.Parts.Outline;
@@ -428,9 +441,8 @@ namespace OneText.Editor
             var underlay = Colour(material, "_UnderlayColor");
             float dx = Number(material, "_UnderlayOffsetX");
             float dy = Number(material, "_UnderlayOffsetY");
-            float dilate = Number(material, "_UnderlayDilate");
             float softness = Number(material, "_UnderlaySoftness");
-            if (underlay.a > 0f && (dx != 0f || dy != 0f || dilate != 0f || softness > 0f))
+            if (material.IsKeywordEnabled("UNDERLAY_ON") && underlay.a > 0f)
             {
                 decoration.Set |= TextDecoration.Parts.Shadow;
                 decoration.ShadowColor = underlay;
@@ -457,6 +469,13 @@ namespace OneText.Editor
             MigrationTarget target)
         {
             var lost = new List<string>();
+
+            if (material.IsKeywordEnabled("UNDERLAY_INNER"))
+            {
+                lost.Add("an inner underlay — TextMesh Pro draws that one inside the letter and " +
+                         "OneText's shadow is always outside, so carrying it would have put the " +
+                         "shadow on the wrong side of the ink");
+            }
 
             float underlayDilate = Number(material, "_UnderlayDilate");
             if (decoration.HasShadow && underlayDilate != 0f)
