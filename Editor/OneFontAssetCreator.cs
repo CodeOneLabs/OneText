@@ -37,17 +37,6 @@ namespace OneText.Editor
         /// <summary>Creates (or overwrites) the font asset beside a font file.</summary>
         public static OneFontAsset CreateFromFontFile(string fontPath)
         {
-            byte[] bytes;
-            try
-            {
-                bytes = File.ReadAllBytes(fontPath);
-            }
-            catch (IOException error)
-            {
-                Debug.LogError($"OneText: cannot read {fontPath}: {error.Message}");
-                return null;
-            }
-
             string directory = Path.GetDirectoryName(fontPath) ?? "Assets";
             string baseName = Path.GetFileNameWithoutExtension(fontPath);
             string assetPath = Path.Combine(directory, baseName + " Font.asset").Replace('\\', '/');
@@ -56,14 +45,85 @@ namespace OneText.Editor
             bool isNew = asset == null;
             if (isNew) asset = ScriptableObject.CreateInstance<OneFontAsset>();
 
-            asset.Initialize(bytes, ReadFamilyName(bytes, baseName), fontPath);
+            if (!FillFromFontFile(asset, fontPath))
+            {
+                if (isNew) Object.DestroyImmediate(asset);
+                return null;
+            }
+
             if (isNew) AssetDatabase.CreateAsset(asset, assetPath);
+            EditorUtility.SetDirty(asset);
+            return asset;
+        }
+
+        /// <summary>
+        /// Reads a font file into an existing asset, wherever that asset lives.
+        ///
+        /// Split out of <see cref="CreateFromFontFile"/> for the migration's
+        /// recovery path, which has an asset already — a placeholder that
+        /// several hundred labels are pointing at — and needs the font to land
+        /// in <em>that</em> asset rather than in a new one beside the file. It
+        /// is the same read, the same family-name lookup and the same packing;
+        /// having two of those would be having two answers to what a font asset
+        /// contains.
+        /// </summary>
+        public static bool FillFromFontFile(OneFontAsset asset, string fontPath)
+        {
+            if (asset == null) return false;
+
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(fontPath);
+            }
+            catch (IOException error)
+            {
+                Debug.LogError($"OneText: cannot read {fontPath}: {error.Message}");
+                return false;
+            }
+
+            string baseName = Path.GetFileNameWithoutExtension(fontPath);
+            try
+            {
+                // Under a second for a CJK face now, but a person who just
+                // dropped in a 16 MB font is watching a frozen editor either
+                // way, and a bar that names the font says which one.
+                EditorUtility.DisplayProgressBar("OneText",
+                    $"Packing {baseName} ({bytes.Length / (1024 * 1024f):0.#} MB)…", 0.5f);
+                asset.Initialize(bytes, ReadFamilyName(bytes, baseName), fontPath);
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
             EditorUtility.SetDirty(asset);
 
             float ratio = bytes.Length > 0 ? asset.StoredSize / (float)bytes.Length : 1f;
-            Debug.Log($"OneText: {assetPath} ({bytes.Length / 1024} KB font, " +
-                      $"stored {asset.StoredSize / 1024} KB, {ratio:P0})");
-            return asset;
+            string where = AssetDatabase.GetAssetPath(asset);
+            Debug.Log($"OneText: {(string.IsNullOrEmpty(where) ? asset.name : where)} " +
+                      $"({bytes.Length / 1024} KB font, stored {asset.StoredSize / 1024} KB, " +
+                      $"{ratio:P0})");
+            return true;
+        }
+
+        /// <summary>
+        /// The family name a font file declares, or its file name when the name
+        /// table cannot be read. Public because the recovery path has to decide
+        /// which placeholders a dropped file answers <em>before</em> it fills
+        /// any of them, and the font's own opinion of what it is beats the file
+        /// name every time.
+        /// </summary>
+        public static string FamilyNameOf(string fontPath)
+        {
+            try
+            {
+                var bytes = File.ReadAllBytes(fontPath);
+                return ReadFamilyName(bytes, Path.GetFileNameWithoutExtension(fontPath));
+            }
+            catch (IOException)
+            {
+                return Path.GetFileNameWithoutExtension(fontPath);
+            }
         }
 
         private static string[] SelectedFontPaths()

@@ -7,6 +7,45 @@ using UnityEngine;
 namespace OneText
 {
     /// <summary>
+    /// What a font asset knows about a font file it does not have yet.
+    ///
+    /// Everything here was read off a baked TextMesh Pro font asset during a
+    /// migration, which is the one situation where a font asset has to exist
+    /// before its font does: the atlas was shipped, the <c>.ttf</c> was not, and
+    /// OneText rasterises from the <c>.ttf</c>. None of these numbers change how
+    /// OneText renders — it sizes and pads its own atlas — they are provenance,
+    /// so the person holding the placeholder can see which font it is waiting
+    /// for and what the old one was built to do.
+    /// </summary>
+    [System.Serializable]
+    public struct OneFontRecovery
+    {
+        /// <summary>File name the migration expects, e.g. <c>Cairo-Bold.ttf</c>.</summary>
+        public string ExpectedFileName;
+
+        /// <summary>Asset path of the font asset this was recovered from.</summary>
+        public string RecoveredFrom;
+
+        /// <summary>Style name as the old asset reported it: Regular, Bold, …</summary>
+        public string StyleName;
+
+        /// <summary>Point size the old atlas was baked at.</summary>
+        public float PointSize;
+
+        /// <summary>Atlas padding, in pixels, of the old atlas.</summary>
+        public int Padding;
+
+        public int AtlasWidth;
+        public int AtlasHeight;
+
+        /// <summary>How many characters the old atlas held.</summary>
+        public int CharacterCount;
+
+        /// <summary>Those characters as hex ranges, e.g. <c>0020-007E,00A0-00FF</c>.</summary>
+        public string CharacterRanges;
+    }
+
+    /// <summary>
     /// A font in the project: the font file itself, stored compressed inside
     /// the asset so nothing has to be renamed to <c>.bytes</c> and nothing is
     /// read from disk at runtime.
@@ -24,6 +63,11 @@ namespace OneText
         [SerializeField, HideInInspector] private int _uncompressedLength;
         [SerializeField, HideInInspector] private Codec _codec = Codec.Deflate;
 
+        // How hard the font was packed. Assets made before this existed were
+        // packed as hard as possible, which is what Smallest means, and the
+        // enum's zero value says so rather than telling them to repack.
+        [SerializeField, HideInInspector] private FontPacking _packing = FontPacking.Smallest;
+
         /// <summary>
         /// How the embedded font file is packed. Stored per asset so fonts
         /// imported before a codec changed keep loading; the field defaults to
@@ -35,8 +79,31 @@ namespace OneText
             Brotli,
         }
 
+        /// <summary>
+        /// How hard the font file was packed on the way into the asset.
+        ///
+        /// Smallest is the zero value because an asset that predates this field
+        /// deserializes to zero and was, in fact, packed as small as brotli
+        /// goes. Fast is what an import chooses now: see
+        /// <see cref="Initialize(byte[], string, string)"/> for the minute it
+        /// saves and the 15 % it costs.
+        /// </summary>
+        public enum FontPacking
+        {
+            Smallest = 0,
+            Fast = 1,
+        }
+
+        /// <summary>How hard this asset's font is packed.</summary>
+        public FontPacking Packing => _packing;
+
         [SerializeField] private string _familyName;
         [SerializeField] private string _sourcePath;
+
+        [SerializeField, HideInInspector] private bool _awaitingSource;
+        [SerializeField, HideInInspector] private OneFontRecovery _recovery;
+
+        [SerializeField, HideInInspector] private FontVariation[] _baseVariations;
 
         [Tooltip("Language this face is designed for: ja, zh-Hans, zh-Hant, ko. Optional, and " +
             "only meaningful for the unified scripts: a Japanese label with a tagged Japanese " +
@@ -63,6 +130,28 @@ namespace OneText
         /// </summary>
         public string Language { get => _language; set => _language = value; }
 
+        /// <summary>
+        /// True while this asset stands for a font whose file nobody has
+        /// supplied yet.
+        ///
+        /// The migration makes these so that a project leaving TextMesh Pro with
+        /// no source fonts still comes out with a coherent reference graph:
+        /// every label points at the asset for the font it used to have, and
+        /// dropping one <c>.ttf</c> in fixes all of them at once. Both halves of
+        /// the condition matter — the flag says what this asset is <em>for</em>,
+        /// the byte check says whether it has been answered — because filling
+        /// one is exactly <see cref="Initialize"/>, and an asset that has bytes
+        /// is a font whatever it used to be.
+        /// </summary>
+        public bool IsPlaceholder => _awaitingSource && (_data == null || _data.Length == 0);
+
+        /// <summary>
+        /// What was recovered from the font asset this one replaced. Meaningful
+        /// on a placeholder, and kept after it is filled: knowing a font arrived
+        /// through a migration is worth more later than the two strings cost.
+        /// </summary>
+        public OneFontRecovery Recovery => _recovery;
+
         /// <summary>Size of the embedded font file in bytes, before compression.</summary>
         public int FontFileSize => _uncompressedLength;
 
@@ -77,7 +166,7 @@ namespace OneText
                 if (_font == null || !_font.IsValid)
                 {
                     var bytes = GetFontBytes();
-                    if (bytes == null || bytes.Length == 0) return null;
+                    if (bytes == null || bytes.Length == 0) return StandIn();
                     _font = FontData.Load(bytes);
                 }
                 return _font;
@@ -85,24 +174,155 @@ namespace OneText
         }
 
         /// <summary>
+        /// What a placeholder draws with until somebody gives it a font file:
+        /// the project default, borrowed.
+        ///
+        /// A label whose font field is null already falls back to the project
+        /// default, so pointing 6,000 labels at a placeholder would be a
+        /// regression if the placeholder answered null — the field is no longer
+        /// empty, and the label would find nothing to draw with and draw
+        /// nothing. Answering with the default keeps the migration's promise
+        /// that assigning the placeholder is not worse than leaving the field
+        /// blank, and the warning is what stops that being silent.
+        ///
+        /// The face is borrowed, never cached in <c>_font</c> and never
+        /// disposed here: it belongs to the default font asset, which every
+        /// other label in the project is also drawing with.
+        /// </summary>
+        private FontData StandIn()
+        {
+            if (!_awaitingSource) return null;
+
+            // A placeholder that is itself the project default, or a default
+            // that is another placeholder, would ask the same question forever.
+            if (s_standingIn) return null;
+
+            var settings = OneTextSettings.Instance;
+            var basis = settings != null ? settings.DefaultFont : null;
+            bool usable = basis != null && !ReferenceEquals(basis, this);
+
+            // Said whether or not there is anything to stand in with, and said
+            // where the drawing happens rather than where the migration ran: a
+            // build made from a project with an unfilled placeholder in it is
+            // exactly the case nobody was watching the editor for.
+            if (!_warned)
+            {
+                _warned = true;
+                Debug.LogWarning($"OneText: the font '{FamilyName}' has no font file yet — it is a " +
+                                 "placeholder the TextMesh Pro migration left behind, waiting for " +
+                                 (string.IsNullOrEmpty(_recovery.ExpectedFileName)
+                                     ? "its source .ttf/.otf"
+                                     : _recovery.ExpectedFileName) + ". " +
+                                 (usable
+                                     ? "Text using it is drawn in the project default font until then."
+                                     : "There is no project default font to stand in either, so " +
+                                       "text using it does not draw at all."),
+                    this);
+            }
+
+            if (!usable) return null;
+
+            s_standingIn = true;
+            try { return basis.Font; }
+            finally { s_standingIn = false; }
+        }
+
+        private static bool s_standingIn;
+
+        [System.NonSerialized] private bool _warned;
+
+        /// <summary>
+        /// The axis settings this asset <em>is</em>, as opposed to the ones a
+        /// label asks for.
+        ///
+        /// One file, four faces: a TextMesh Pro project with Pretendard-Regular,
+        /// -Medium, -Bold and -ExtraBold recovers a single variable
+        /// <c>Pretendard.ttf</c>, and the four assets standing in for those four
+        /// faces have to differ somehow. They differ here. The weight belongs to
+        /// the asset because that is where "this is the ExtraBold" is true once
+        /// rather than on each of the several thousand labels that happen to
+        /// point at it, and because a label that sets nothing — which is nearly
+        /// all of them — still has to come out extra bold.
+        ///
+        /// A label's own axes win per tag: this is the face, not a lock on it.
+        /// </summary>
+        public IReadOnlyList<FontVariation> BaseVariations =>
+            _baseVariations ?? System.Array.Empty<FontVariation>();
+
+        /// <summary>
+        /// Records what face this asset stands for. Editor-side setup, written
+        /// by the migration's recovery when it works out which weight a name was
+        /// asking for; nothing at runtime changes it.
+        /// </summary>
+        public void SetBaseVariations(FontVariation[] variations)
+        {
+            _baseVariations = variations != null && variations.Length > 0 ? variations : null;
+            // The cached instances were built against the old answer, including
+            // the unvaried one handed out for an empty request.
+            Release();
+        }
+
+        /// <summary>
         /// A shared instance of this font with the given variation axes applied.
         /// Instances are cached, so two labels asking for <c>wght 700</c> get the
         /// same handle, and therefore the same atlas entries.
+        ///
+        /// What the label asks for is layered over <see cref="BaseVariations"/>,
+        /// tag by tag, so a label on a recovered ExtraBold asset that sets
+        /// nothing gets extra bold and one that sets <c>wght 300</c> gets 300.
+        /// An asset with no base variations resolves to exactly what it always
+        /// did, key and all.
         /// </summary>
         public FontData GetVariant(IReadOnlyList<FontVariation> variations)
         {
             var basis = Font;
-            if (basis == null || variations == null || variations.Count == 0) return basis;
+            if (basis == null) return null;
 
-            string key = VariationKey(variations);
+            var applied = Applied(variations);
+            if (applied == null) return basis;
+
+            string key = VariationKey(applied);
             _variants ??= new Dictionary<string, FontData>();
             if (_variants.TryGetValue(key, out var cached) && cached.IsValid) return cached;
 
-            var array = new FontVariation[variations.Count];
-            for (int i = 0; i < variations.Count; i++) array[i] = variations[i];
-            var variant = basis.CreateVariant(array);
+            var variant = basis.CreateVariant(applied);
             _variants[key] = variant;
             return variant;
+        }
+
+        /// <summary>
+        /// This asset's own axes with the caller's laid over them, or null when
+        /// between them they come to nothing.
+        /// </summary>
+        private FontVariation[] Applied(IReadOnlyList<FontVariation> requested)
+        {
+            int mine = _baseVariations?.Length ?? 0;
+            int asked = requested?.Count ?? 0;
+            if (mine == 0 && asked == 0) return null;
+
+            if (mine == 0)
+            {
+                var only = new FontVariation[asked];
+                for (int i = 0; i < asked; i++) only[i] = requested[i];
+                return only;
+            }
+
+            var merged = new List<FontVariation>(mine + asked);
+            for (int i = 0; i < mine; i++) merged.Add(_baseVariations[i]);
+            for (int i = 0; i < asked; i++)
+            {
+                var wanted = requested[i];
+                int at = -1;
+                for (int j = 0; j < merged.Count; j++)
+                {
+                    if (merged[j].Tag != wanted.Tag) continue;
+                    at = j;
+                    break;
+                }
+                if (at >= 0) merged[at] = wanted;
+                else merged.Add(wanted);
+            }
+            return merged.ToArray();
         }
 
         private static string VariationKey(IReadOnlyList<FontVariation> variations)
@@ -138,41 +358,149 @@ namespace OneText
         /// Fills the asset from a font file. Editor-side setup.
         ///
         /// Brotli rather than deflate: font tables are repetitive enough that
-        /// the difference is not marginal. A 55 MB Korean face measured 30.9 MB
-        /// deflated and 12.0 MB brotli'd: 21.6 % of the original against
-        /// 55.8 %, or 19 MB off the build for one font. Packing is slow (tens
-        /// of seconds for a face that size) but happens once, at import;
-        /// unpacking, which is what a player waits for, stays in the same range
-        /// as deflate: 119 ms against 77 ms for that same 55 MB face, once at
-        /// load rather than per frame.
+        /// the difference is not marginal, and unpacking — the part a player
+        /// waits for — costs about what deflate costs.
+        ///
+        /// <para>What packing costs is a different question, and the honest
+        /// answer put a Korean font import at over a minute. Measured on this
+        /// machine, Noto Sans CJK KR (15.7 MB): quality 11 takes <b>64
+        /// seconds</b> and stores 10.9 MB; quality 6 takes <b>0.6 seconds</b>
+        /// and stores 12.6 MB. Pretendard (6.4 MB): 8.0 s → 2.04 MB against
+        /// 0.14 s → 2.30 MB. So a hundred times the wait, with the editor
+        /// frozen, for the last 15 % of the bytes. Importing packs fast;
+        /// <see cref="Repack"/> spends the minute deliberately, on the one
+        /// occasion — shipping — where 15 % of a font is worth a minute.</para>
         /// </summary>
-        public void Initialize(byte[] fontBytes, string familyName, string sourcePath)
+        public void Initialize(byte[] fontBytes, string familyName, string sourcePath) =>
+            Initialize(fontBytes, familyName, sourcePath, FontPacking.Fast);
+
+        /// <inheritdoc cref="Initialize(byte[], string, string)"/>
+        public void Initialize(byte[] fontBytes, string familyName, string sourcePath,
+            FontPacking packing)
         {
             _uncompressedLength = fontBytes.Length;
             _familyName = familyName;
             _sourcePath = sourcePath;
 
-            using var output = new MemoryStream();
-            using (var packer = new BrotliStream(output, CompressionLevel.Optimal, leaveOpen: true))
-                packer.Write(fontBytes, 0, fontBytes.Length);
-            var compressed = output.ToArray();
+            // Whatever this asset was before, it has a font in it now. Filling a
+            // placeholder is this call and nothing else, which is what makes
+            // "drop the .ttf in" a single action rather than a checklist.
+            _awaitingSource = false;
+            _warned = false;
+
+            // A different font file is a different face, and the axis settings
+            // that said which face the last one stood for do not survive it: a
+            // placeholder filled with the ExtraBold and then refilled with the
+            // Regular must not stay at 800.
+            _baseVariations = null;
+
+            var compressed = Pack(fontBytes, packing);
 
             // Some fonts (already-compressed tables) do not shrink; keep whichever is smaller.
-            if (compressed.Length < fontBytes.Length)
+            if (compressed != null && compressed.Length < fontBytes.Length)
             {
                 _data = compressed;
                 _compressed = true;
                 _codec = Codec.Brotli;
+                _packing = packing;
             }
             else
             {
                 _data = fontBytes;
                 _compressed = false;
                 _codec = Codec.Brotli;
+                _packing = packing;
             }
 
             Release();
         }
+
+        /// <summary>
+        /// Packs the font again at a different setting, keeping everything else
+        /// about the asset. Returns false when there is nothing to pack or the
+        /// asset is already packed that way.
+        ///
+        /// This is the slow one, on purpose and on demand: see
+        /// <see cref="Initialize(byte[], string, string)"/> for what the minute
+        /// buys.
+        /// </summary>
+        public bool Repack(FontPacking packing)
+        {
+            if (_packing == packing) return false;
+            var fontBytes = GetFontBytes();
+            if (fontBytes == null || fontBytes.Length == 0) return false;
+
+            Initialize(fontBytes, _familyName, _sourcePath, packing);
+            return true;
+        }
+
+        /// <summary>
+        /// Brotli, at a quality the caller chose.
+        ///
+        /// Through <c>BrotliEncoder</c> rather than <c>BrotliStream</c> because
+        /// the stream only offers Fastest (quality 1) and Optimal (quality 11),
+        /// and everything worth having is between them. The stream is still the
+        /// fallback for any runtime that does not carry the encoder struct.
+        /// </summary>
+        private static byte[] Pack(byte[] fontBytes, FontPacking packing)
+        {
+            int quality = packing == FontPacking.Smallest ? 11 : 6;
+            try
+            {
+                var destination = new byte[fontBytes.Length + 1024];
+                if (BrotliEncoder.TryCompress(fontBytes, destination, out int written,
+                        quality, 22))
+                {
+                    var packed = new byte[written];
+                    System.Buffer.BlockCopy(destination, 0, packed, 0, written);
+                    return packed;
+                }
+            }
+            catch (System.Exception)
+            {
+                // No encoder on this runtime; the stream below is always there.
+            }
+
+            using var output = new MemoryStream();
+            using (var packer = new BrotliStream(output,
+                       packing == FontPacking.Smallest
+                           ? CompressionLevel.Optimal
+                           : CompressionLevel.Fastest,
+                       leaveOpen: true))
+                packer.Write(fontBytes, 0, fontBytes.Length);
+            return output.ToArray();
+        }
+
+        /// <summary>
+        /// Sets this asset up as a font that is expected but not yet here.
+        ///
+        /// The counterpart to <see cref="Initialize"/> for the one case where
+        /// there are no bytes to pass: a TextMesh Pro font asset that shipped
+        /// its baked atlas and not the font it was baked from. Everything that
+        /// could be recovered is kept, so the only thing still missing when the
+        /// user finds the file is the file.
+        /// </summary>
+        public void InitializePlaceholder(string familyName, OneFontRecovery recovery)
+        {
+            _familyName = familyName;
+            _sourcePath = null;
+            _recovery = recovery;
+            _awaitingSource = true;
+            _warned = false;
+
+            _data = null;
+            _compressed = false;
+            _uncompressedLength = 0;
+            _baseVariations = null;
+
+            Release();
+        }
+
+        /// <summary>
+        /// Records where a filled font came from, when it was recovered rather
+        /// than imported. Provenance only; nothing reads it to render.
+        /// </summary>
+        public void SetRecovery(OneFontRecovery recovery) => _recovery = recovery;
 
         private void OnDisable() => Release();
 
