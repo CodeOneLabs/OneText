@@ -1,0 +1,27 @@
+{
+    "name": "OneText.Integrations.DOTween",
+    "rootNamespace": "DG.Tweening",
+    "references": [
+        "OneText",
+        "OneText.UGUI",
+        "OneText.Mesh",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "ONETEXT_DOTWEEN"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.demigiant.dotween",
+            "expression": "1.0.0",
+            "define": "ONETEXT_DOTWEEN"
+        }
+    ],
+    "noEngineReferences": false
+}
