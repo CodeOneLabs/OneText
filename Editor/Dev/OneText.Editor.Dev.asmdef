@@ -1,15 +1,13 @@
 {
-    "name": "OneText.Tests",
-    "rootNamespace": "OneText.Tests",
+    "name": "OneText.Editor.Dev",
+    "rootNamespace": "OneText.Editor",
     "references": [
         "OneText",
         "OneText.UGUI",
         "OneText.Mesh",
         "OneText.Editor",
-        "OneText.Editor.Dev",
         "UnityEngine.UI",
-        "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner",
+        "UnityEditor.UI",
         "Unity.Burst"
     ],
     "includePlatforms": [
@@ -17,11 +15,9 @@
     ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
-    "overrideReferences": true,
-    "precompiledReferences": [
-        "nunit.framework.dll"
-    ],
-    "autoReferenced": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS"
     ],
