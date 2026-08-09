@@ -127,11 +127,27 @@ namespace OneText.Tests
         [UnityTest]
         public IEnumerator RasterizerBuffers_AreNotCarriedBetweenSessions()
         {
-            var fontBytes = File.ReadAllBytes(Path.GetFullPath(LatinFontPath));
-
             for (int session = 0; session < 2; session++)
             {
                 yield return new EnterPlayMode();
+
+                // Read inside the loop, after the session has started, and not
+                // once before it.
+                //
+                // The [SetUp] above turns Domain Reload off, but a project that
+                // had it on when the run started still reloads on the way into
+                // the first play session — the setting lands, and the entry
+                // already under way does not get it. A reload discards this
+                // iterator's locals, so bytes read before the loop come back
+                // empty and FontData.Load throws on an empty array, in the
+                // first test of the class only. The dev project this is written
+                // against already has Domain Reload off in its EditorSettings,
+                // so the first entry never reloads and the failure cannot
+                // happen there. It is CI-only for that reason and nothing else.
+                //
+                // Reading per session is also just accurate: two sessions each
+                // rasterising from their own bytes is the thing being tested.
+                var fontBytes = File.ReadAllBytes(Path.GetFullPath(LatinFontPath));
 
                 // Rasterizing at all is the assertion: the persistent NativeArrays
                 // behind the batch path are Allocator.Persistent, and a leftover
