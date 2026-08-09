@@ -1,0 +1,44 @@
+# What a published package does not need.
+#
+# This is the tarball's list, not git's: a registry publish (npm pack, upm-ci)
+# reads it, and installing straight from the git URL does not — that clones the
+# repository as it stands. So it is one of two halves. The other is the
+# UNITY_INCLUDE_TESTS constraint on OneText.Editor.Dev and the test assemblies,
+# which is what keeps the golden-image harness, the benchmarks and the proof
+# generators from compiling into a project that installed this from anywhere at
+# all.
+#
+# Samples~ stays: package.json declares it, and the Package Manager offers it as
+# an import. README, CHANGELOG, LICENSE and THIRD-PARTY-NOTICES stay, because
+# the Package Manager shows them.
+
+# The test suite and its fixtures — 27 MB, none of it compiled in a project
+# that has not asked to run our tests.
+Tests/
+
+# Editor tooling that only this repository runs: golden images, benchmarks,
+# the proof-image generators, the native plugin importer batch.
+Editor/Dev/
+Editor/Onboarding/Tmp/Dev/
+
+# The site, the wasm harness and the developer docs.
+page~/
+Web~/
+Docs/
+
+# Build and maintenance scripts, and the smoke-test projects they drive.
+Tools/
+
+# Repository furniture.
+.github/
+.claude/
+.omx/
+CONTRIBUTING.md
+
+# The .meta files of the folders above. Unity generates one per folder and they
+# are tracked, so excluding a folder leaves its meta behind pointing at nothing.
+Tests.meta
+Docs.meta
+Tools.meta
+Dev.meta
+CONTRIBUTING.md.meta
