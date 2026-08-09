@@ -103,7 +103,7 @@ namespace OneText.Tests
         {
             string fontPath = Path.GetFullPath(EmojiFontPath);
             if (!File.Exists(fontPath))
-                Assert.Inconclusive("No colour emoji font. Run: python3 Tools/fetch_coverage_fonts.py");
+                Assert.Ignore("No colour emoji font. Run: python3 Tools/fetch_coverage_fonts.py");
 
             var sequences = FullyQualified();
             Assert.That(sequences.Count, Is.GreaterThan(3000),
@@ -144,7 +144,7 @@ namespace OneText.Tests
         {
             string fontPath = Path.GetFullPath(EmojiFontPath);
             if (!File.Exists(fontPath))
-                Assert.Inconclusive("No colour emoji font. Run: python3 Tools/fetch_coverage_fonts.py");
+                Assert.Ignore("No colour emoji font. Run: python3 Tools/fetch_coverage_fonts.py");
 
             using var font = FontData.Load(File.ReadAllBytes(fontPath));
             using var shaper = new Shaper();
@@ -186,7 +186,7 @@ namespace OneText.Tests
             // three sequences in, three tiles out, in the order they were typed.
             string fontPath = Path.GetFullPath(EmojiFontPath);
             if (!File.Exists(fontPath))
-                Assert.Inconclusive("No colour emoji font. Run: python3 Tools/fetch_coverage_fonts.py");
+                Assert.Ignore("No colour emoji font. Run: python3 Tools/fetch_coverage_fonts.py");
 
             var canvas = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
             var go = new GameObject("Label",

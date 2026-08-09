@@ -562,7 +562,7 @@ namespace OneText.Tests
             // The Japanese face is a coverage font, which is a download rather
             // than repository content; without it this case cannot be posed.
             if (!File.Exists(Path.GetFullPath(JapaneseFontPath)))
-                Assert.Inconclusive("No NotoSansCJKjp-Regular.otf. " +
+                Assert.Ignore("No NotoSansCJKjp-Regular.otf. " +
                                     "Run: python3 Tools/fetch_coverage_fonts.py");
             var label = NewLabel("<mark><u>あ</u></mark>", JapaneseFontPath);
             label.WritingMode = TextWritingMode.VerticalRightToLeft;

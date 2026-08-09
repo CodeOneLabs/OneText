@@ -432,7 +432,7 @@ namespace OneText.Tests
             var report = OnboardingGit.Ask(new List<string> { "Assets/A.cs" }, _folder);
 
             if (report.Answered)
-                Assert.Inconclusive("the temporary folder is inside a git repository");
+                Assert.Ignore("the temporary folder is inside a git repository");
 
             Assert.AreEqual("this project is not inside a git repository", report.Trouble);
         }
@@ -462,7 +462,7 @@ namespace OneText.Tests
         private static void RequireGit()
         {
             if (!OnboardingGit.Execute("--version", 5000, Path.GetTempPath()).Ok)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     "No git on the PATH. These cover the half of OnboardingGit that is a " +
                     "process; the half that decides anything is covered above without one.");
         }
@@ -509,7 +509,7 @@ namespace OneText.Tests
         {
             var outcome = OnboardingGit.Execute(arguments, 20000, root);
             if (!outcome.Ok)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     $"`git {arguments}` would not build the fixture: {outcome.Error.Trim()}");
         }
     }

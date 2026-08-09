@@ -104,7 +104,7 @@ namespace OneText.Tests
         private static void RequireFonts(string[] fonts)
         {
             if (fonts.Length == 0)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     $"No coverage fonts in {FontDirPath}. Run: python3 Tools/fetch_coverage_fonts.py");
         }
 

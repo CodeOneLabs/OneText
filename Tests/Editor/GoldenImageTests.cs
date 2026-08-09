@@ -46,7 +46,7 @@ namespace OneText.Tests
 
             string missing = golden.MissingFont();
             if (missing != null)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     $"'{name}' needs {missing}, which is fetched rather than committed. " +
                     "Run: python3 Tools/fetch_coverage_fonts.py");
 
@@ -96,7 +96,7 @@ namespace OneText.Tests
                     "OneText.Editor.GoldenRegen.RegenerateAll.");
 
             if (committed != GoldenCases.RendererStamp)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     "The baselines were drawn by a different renderer, so a pixel comparison " +
                     $"would be measuring the driver rather than the text.\n  baselines: {committed}" +
                     $"\n  this machine: {GoldenCases.RendererStamp}");

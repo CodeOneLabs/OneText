@@ -33,7 +33,7 @@ namespace OneText.Tests
             // failed: say so, the way EmojiSequenceTests does.
             string full = Path.GetFullPath(packagePath);
             if (!File.Exists(full))
-                Assert.Inconclusive($"No {Path.GetFileName(packagePath)}. " +
+                Assert.Ignore($"No {Path.GetFileName(packagePath)}. " +
                                     "Run: python3 Tools/fetch_coverage_fonts.py");
             return FontData.Load(File.ReadAllBytes(full));
         }

@@ -335,7 +335,7 @@ namespace OneText.Tests
                 .FirstOrDefault(a => a.GetName().Name == AssemblyName);
 
             if (assembly == null)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     $"{AssemblyName} is not compiled in this project, which is what a project " +
                     "without DOTween is supposed to look like: the asmdef's ONETEXT_DOTWEEN " +
                     "constraint takes the assembly out entirely rather than leaving it to fail " +
@@ -408,7 +408,7 @@ namespace OneText.Tests
                 // do with this package — DOTween initialising itself outside
                 // play mode, mostly. Anything our own setters do wrong happens
                 // in Drive, which is left to fail properly.
-                Assert.Inconclusive(
+                Assert.Ignore(
                     $"DOTween could not create a {name} tween in edit mode: {e.InnerException?.Message}. " +
                     "The signature tests above still ran.");
                 return null;
@@ -443,7 +443,7 @@ namespace OneText.Tests
                 .FirstOrDefault(m => m.Name == name && m.GetParameters().Length == parameterCount);
 
             if (verb == null)
-                Assert.Inconclusive(
+                Assert.Ignore(
                     $"this DOTween has no TweenExtensions.{name} taking {parameterCount} " +
                     "arguments, so there is no way to step a tween from an edit-mode test. " +
                     "The signature tests above still ran.");
