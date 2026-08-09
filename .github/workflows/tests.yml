@@ -291,6 +291,14 @@ jobs:
           buildMethod: SmokeBuildCI.Windows
           customParameters: -smokeOut build/windows/OneTextSmoke.exe
           allowDirtyBuild: true
+          # The builder derives a build number from git by default, and it runs
+          # git at the workspace root. The checkout lives in package/ now, so
+          # the root is not a repository and `git rev-parse
+          # --is-shallow-repository` exits 128 before the build starts. Nothing
+          # here reads the version it would have produced — the smoke player is
+          # thrown away after the marker is grepped out of its log — so the
+          # cheapest correct answer is to not ask git.
+          versioning: None
 
       - uses: actions/upload-artifact@v4
         with:
