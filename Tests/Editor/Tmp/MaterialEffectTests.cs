@@ -124,12 +124,44 @@ namespace OneText.Tests
                 "outline on every plain label in a project");
         }
 
+        /// <summary>
+        /// Face dilate and outline softness, which the label had no field for
+        /// when this was first written and was told to report as lost. The
+        /// channels found room for them, so the assertion is now that they
+        /// arrive — and that nothing still calls them missing, because a report
+        /// that apologises for something it did is its own kind of wrong.
+        /// </summary>
         [Test]
-        public void WhatCannotCrossOver_IsNamedRatherThanDropped()
+        public void TheFaceDilateAndTheOutlineSoftness_ArriveRatherThanBeingApologisedFor()
         {
             var text = Build(out var material);
             material.SetFloat("_FaceDilate", 0.3f);
             material.SetFloat("_OutlineSoftness", 0.4f);
+
+            ComponentMigration.ConvertInPlace(new[] { _root }, "(test)", false);
+            var label = _root.GetComponent<OneTextLabel>();
+            var decoration = (TextDecoration)new SerializedObject(label)
+                .FindProperty("_decoration").boxedValue;
+
+            Assert.IsTrue(decoration.HasFace, "the face dilate did not come across");
+            Assert.AreEqual(0.3f, decoration.FaceDilate, 1e-3f);
+            Assert.AreEqual(0.4f, decoration.OutlineSoftness, 1e-3f,
+                "the outline came across with a hard edge");
+
+            var report = ComponentMigration.ScanInPlace(new[] { _root }, "(test)");
+            foreach (var finding in report.Findings)
+            {
+                if (finding.Rule != "material-effect") continue;
+                StringAssert.DoesNotContain("face dilate", finding.Message);
+                StringAssert.DoesNotContain("outline softness", finding.Message);
+            }
+        }
+
+        [Test]
+        public void WhatStillCannotCrossOver_IsNamedRatherThanDropped()
+        {
+            var text = Build(out var material);
+            material.SetFloat("_UnderlayDilate", 0.17f);
 
             var report = ComponentMigration.ScanInPlace(new[] { _root }, "(test)");
 
@@ -137,14 +169,11 @@ namespace OneText.Tests
             foreach (var finding in report.Findings)
             {
                 if (finding.Rule != "material-effect") continue;
-                StringAssert.Contains("face dilate", finding.Message);
-                StringAssert.Contains("outline softness", finding.Message);
+                StringAssert.Contains("underlay dilate", finding.Message);
                 named = true;
             }
             Assert.IsTrue(named,
-                "the material carries two things the label has no field for and the report says " +
-                "nothing, so the label comes out the wrong weight with a hard edge and nobody is " +
-                "told why");
+                "the shadow comes across at the wrong weight and the report says nothing");
         }
 
         [Test]

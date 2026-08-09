@@ -181,11 +181,21 @@
 
   Imports pack fast now — the whole `Create Font Asset` on that 6.4 MB face went
   from **10.1 s to 0.21 s** — and the Fonts section grew a **Pack smaller**
-  button per font, which spends the minute deliberately on the build that ships
-  it. Font assets made before this keep their existing packing and read back
-  exactly as they did; the new field's zero value means "as small as it goes",
-  which is what they are. Unpacking is unchanged, and it is the only half a
-  player ever pays for.
+  button per font, which spends the seconds deliberately on the build that ships
+  it.
+
+  That button packs at **quality 10, not 11**, because ten is where brotli stops
+  paying. The expensive search switches on at ten, so nine gives back most of the
+  win and eleven doubles ten's wait for what is left. Same Korean face, measured
+  through the same `BrotliEncoder` call: q9 **3.2 s → 11.96 MB**, q10 **17.2 s →
+  11.12 MB**, q11 **35.1 s → 10.93 MB**. Eleven costs eighteen more seconds for
+  1.7 % more compression, and ten is the last setting whose seconds buy
+  something.
+
+  Font assets made before this keep their existing packing and read back exactly
+  as they did — they hold quality 11 bytes, which are smaller still, and nothing
+  repacks them. Unpacking is unchanged, and it is the only half a player ever
+  pays for.
 
 - **Forensics opens in a tenth of the time.** Measured on a real project, that
   section took **433 ms** to appear: composing it shaped the sample string and
@@ -200,6 +210,21 @@
   every click in the window. They ask the search index for a count now.
 
 ### Fixed
+
+- **A font asset unpacked its font file on every request, and handed out the
+  array the renderer was reading from.** `GetFontBytes()` ran brotli and
+  allocated the whole font each time it was called — 67 ms and 15.7 MB for a
+  Korean face. The `Font` property hid that by caching the parsed face; every
+  other caller paid in full. The bytes are now unpacked once and kept beside
+  the face that is using them.
+
+  The array is no longer the one handed out, either. `FontData.Load` pins it and
+  HarfBuzz reads through that pointer for as long as the face lives, so the
+  cached array is what every label in the project is drawing out of — a caller
+  writing one byte into it would have corrupted the font everywhere at once, and
+  this is a public method. Callers get a copy. The cache is dropped in `Release`,
+  which is what runs when the bytes are replaced, so a placeholder that has just
+  been given its font file no longer answers with the old one.
 
 - **CI has never once been able to load an asset out of this package, and now
   can.** The throwaway project the suite runs from was created *inside* the

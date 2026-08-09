@@ -64,8 +64,8 @@ namespace OneText
         [SerializeField, HideInInspector] private Codec _codec = Codec.Deflate;
 
         // How hard the font was packed. Assets made before this existed were
-        // packed as hard as possible, which is what Smallest means, and the
-        // enum's zero value says so rather than telling them to repack.
+        // packed as hard as this asset packs, which is what Smallest means, and
+        // the enum's zero value says so rather than telling them to repack.
         [SerializeField, HideInInspector] private FontPacking _packing = FontPacking.Smallest;
 
         /// <summary>
@@ -83,10 +83,15 @@ namespace OneText
         /// How hard the font file was packed on the way into the asset.
         ///
         /// Smallest is the zero value because an asset that predates this field
-        /// deserializes to zero and was, in fact, packed as small as brotli
-        /// goes. Fast is what an import chooses now: see
-        /// <see cref="Initialize(byte[], string, string)"/> for the minute it
-        /// saves and the 15 % it costs.
+        /// deserializes to zero and was, in fact, packed hard. Fast is what an
+        /// import chooses now: see <see cref="Initialize(byte[], string, string)"/>
+        /// for the seconds it saves and the 12 % it costs.
+        ///
+        /// <para>Those older assets were packed at quality 11, where Smallest
+        /// now means 10, so they hold slightly fewer bytes than a repack would
+        /// produce today. Nothing needs doing about that — they are already
+        /// smaller, and <see cref="Repack"/> declines to redo a font that is
+        /// packed the way it was asked for.</para>
         /// </summary>
         public enum FontPacking
         {
@@ -112,6 +117,11 @@ namespace OneText
 
         private FontData _font;
         private Dictionary<string, FontData> _variants;
+
+        // The unpacked font file, kept alive next to the face that is reading
+        // it. Cleared by Release, which is what runs whenever _data is replaced
+        // — a refilled placeholder must not go on serving the old font.
+        [System.NonSerialized] private byte[] _unpacked;
 
         /// <summary>Family name read from the font's name table at import time.</summary>
         public string FamilyName => string.IsNullOrEmpty(_familyName) ? name : _familyName;
@@ -165,7 +175,7 @@ namespace OneText
             {
                 if (_font == null || !_font.IsValid)
                 {
-                    var bytes = GetFontBytes();
+                    var bytes = Unpacked();
                     if (bytes == null || bytes.Length == 0) return StandIn();
                     _font = FontData.Load(bytes);
                 }
@@ -333,24 +343,51 @@ namespace OneText
             return builder.ToString();
         }
 
-        /// <summary>The raw font file bytes (decompressed on demand).</summary>
+        /// <summary>
+        /// The raw font file bytes, unpacked once and kept, as a copy the caller
+        /// owns.
+        ///
+        /// Unpacking is not free: Noto Sans CJK KR is 93 ms of brotli and a
+        /// 15.7 MB allocation on this machine, and a phone is several times
+        /// that. It used to be paid on every call — <see cref="Font"/> hid that
+        /// by caching the parsed face, and everyone else paid in full.
+        ///
+        /// The copy is not waste. <see cref="FontData.Load"/> pins the array it
+        /// is handed and the native face reads through that pointer for as long
+        /// as the face lives, so the kept array is the one every label in the
+        /// project is drawing out of. A caller that writes one byte into it
+        /// would corrupt the font everywhere at once, and this is a public
+        /// method. Callers get their own.
+        /// </summary>
         public byte[] GetFontBytes()
+        {
+            var bytes = Unpacked();
+            return bytes == null ? null : (byte[])bytes.Clone();
+        }
+
+        /// <summary>
+        /// The kept bytes themselves, for the one caller allowed to hold them:
+        /// the face this asset owns, loads and disposes.
+        /// </summary>
+        private byte[] Unpacked()
         {
             if (_data == null || _data.Length == 0) return null;
             if (!_compressed) return _data;
+            if (_unpacked != null) return _unpacked;
 
             using var input = new MemoryStream(_data);
-            using Stream deflate = _codec == Codec.Brotli
+            using Stream packed = _codec == Codec.Brotli
                 ? new BrotliStream(input, CompressionMode.Decompress)
                 : new DeflateStream(input, CompressionMode.Decompress);
             var output = new byte[_uncompressedLength];
             int read = 0;
             while (read < output.Length)
             {
-                int chunk = deflate.Read(output, read, output.Length - read);
+                int chunk = packed.Read(output, read, output.Length - read);
                 if (chunk <= 0) break;
                 read += chunk;
             }
+            _unpacked = output;
             return output;
         }
 
@@ -362,14 +399,22 @@ namespace OneText
         /// waits for — costs about what deflate costs.
         ///
         /// <para>What packing costs is a different question, and the honest
-        /// answer put a Korean font import at over a minute. Measured on this
-        /// machine, Noto Sans CJK KR (15.7 MB): quality 11 takes <b>64
-        /// seconds</b> and stores 10.9 MB; quality 6 takes <b>0.6 seconds</b>
-        /// and stores 12.6 MB. Pretendard (6.4 MB): 8.0 s → 2.04 MB against
-        /// 0.14 s → 2.30 MB. So a hundred times the wait, with the editor
-        /// frozen, for the last 15 % of the bytes. Importing packs fast;
-        /// <see cref="Repack"/> spends the minute deliberately, on the one
-        /// occasion — shipping — where 15 % of a font is worth a minute.</para>
+        /// answer put a Korean font import at half a minute. Measured through
+        /// this same <c>BrotliEncoder</c> call, Noto Sans CJK KR (15.7 MB):
+        /// quality 10 takes <b>17 seconds</b> and stores 11.1 MB; quality 6
+        /// takes <b>0.4 seconds</b> and stores 12.6 MB. Pretendard (6.4 MB):
+        /// 4.6 s → 2.09 MB against 0.15 s → 2.30 MB. So forty times the wait,
+        /// with the editor frozen, for the last 12 % of the bytes. Importing
+        /// packs fast; <see cref="Repack"/> spends the seconds deliberately, on
+        /// the one occasion — shipping — where 12 % of a font is worth
+        /// them.</para>
+        ///
+        /// <para>Ten rather than eleven because that is where brotli stops
+        /// paying. Same font: q9 is 3.2 s → 11.96 MB, q10 is 17.2 s →
+        /// 11.12 MB, q11 is 35.1 s → 10.93 MB. The expensive search switches on
+        /// at ten, so nine gives back most of the win; eleven doubles the wait
+        /// for the 1.7 % that is left. Ten is the last setting whose seconds buy
+        /// something.</para>
         /// </summary>
         public void Initialize(byte[] fontBytes, string familyName, string sourcePath) =>
             Initialize(fontBytes, familyName, sourcePath, FontPacking.Fast);
@@ -444,7 +489,7 @@ namespace OneText
         /// </summary>
         private static byte[] Pack(byte[] fontBytes, FontPacking packing)
         {
-            int quality = packing == FontPacking.Smallest ? 11 : 6;
+            int quality = packing == FontPacking.Smallest ? 10 : 6;
             try
             {
                 var destination = new byte[fontBytes.Length + 1024];
@@ -513,6 +558,10 @@ namespace OneText
             }
             _font?.Dispose();
             _font = null;
+
+            // Dropped with the face, never before it: the face is reading
+            // through a pointer into this array.
+            _unpacked = null;
         }
     }
 }

@@ -44,6 +44,14 @@ namespace OneText
             Outline = 1 << 0,
             Shadow = 1 << 1,
             Glow = 1 << 2,
+
+            /// <summary>
+            /// The face itself, which is not drawn around the glyph but is the
+            /// glyph. It is a part like the others so that it inherits like the
+            /// others: a style that thickens the face and says nothing about
+            /// outlines has to be layerable over one that does.
+            /// </summary>
+            Face = 1 << 3,
         }
 
         public Parts Set;
@@ -60,6 +68,16 @@ namespace OneText
         /// <summary>Outline thickness in reaches, 0..1.</summary>
         public float OutlineWidth;
 
+        /// <summary>
+        /// How far the outline's own edge is smeared, in reaches, 0..1.
+        ///
+        /// Zero is the hard edge the outline had before this existed, so a
+        /// decoration written by anything that predates it draws exactly as it
+        /// did. TextMesh Pro calls this Outline Softness and keeps it on the
+        /// material.
+        /// </summary>
+        public float OutlineSoftness;
+
         /// <summary>TextMesh Pro calls this the underlay.</summary>
         public Color32 ShadowColor;
 
@@ -75,8 +93,29 @@ namespace OneText
 
         public Color32 GlowColor;
 
-        /// <summary>How far the glow reaches past the ink, in reaches, 0..1.</summary>
+        /// <summary>
+        /// How far the glow reaches past the ink, in reaches, 0..1. Kept under
+        /// its original name so that every decoration serialized before the glow
+        /// grew an inside still means what it meant.
+        /// </summary>
         public float GlowRadius;
+
+        /// <summary>
+        /// How far the glow reaches <em>into</em> the ink from its edge, in
+        /// reaches, 0..1. Zero draws the glow entirely outside, which is what it
+        /// did before this existed.
+        /// </summary>
+        public float GlowInner;
+
+        /// <summary>
+        /// How much thicker the face is drawn than the font draws it, -1..1.
+        ///
+        /// The one parameter here that is not something added around the glyph:
+        /// it moves the threshold the face itself is cut at. TextMesh Pro calls
+        /// it Face Dilate and keeps it on the material, where the migration
+        /// found it on both of a real project's two main fonts.
+        /// </summary>
+        public float FaceDilate;
 
         /// <summary>Nothing drawn around the glyph: what a plain label carries.</summary>
         public static TextDecoration None => default;
@@ -85,11 +124,13 @@ namespace OneText
         public bool IsNone =>
             (!HasOutline || OutlineWidth <= 0f) &&
             (!HasShadow || ShadowColor.a == 0) &&
-            (!HasGlow || GlowColor.a == 0 || GlowRadius <= 0f);
+            (!HasGlow || GlowColor.a == 0 || (GlowRadius <= 0f && GlowInner <= 0f)) &&
+            (!HasFace || FaceDilate == 0f);
 
         public bool HasOutline => (Set & Parts.Outline) != 0;
         public bool HasShadow => (Set & Parts.Shadow) != 0;
         public bool HasGlow => (Set & Parts.Glow) != 0;
+        public bool HasFace => (Set & Parts.Face) != 0;
 
         /// <summary>
         /// What each tag draws when it is written bare. Chosen to look like
@@ -134,6 +175,7 @@ namespace OneText
                 result.Set |= Parts.Outline;
                 result.OutlineColor = OutlineColor;
                 result.OutlineWidth = OutlineWidth;
+                result.OutlineSoftness = OutlineSoftness;
             }
             if (HasShadow)
             {
@@ -147,6 +189,12 @@ namespace OneText
                 result.Set |= Parts.Glow;
                 result.GlowColor = GlowColor;
                 result.GlowRadius = GlowRadius;
+                result.GlowInner = GlowInner;
+            }
+            if (HasFace)
+            {
+                result.Set |= Parts.Face;
+                result.FaceDilate = FaceDilate;
             }
             return result;
         }
@@ -160,7 +208,28 @@ namespace OneText
                 Mathf.Clamp(ShadowOffset.x, -1f, 1f), Mathf.Clamp(ShadowOffset.y, -1f, 1f));
             result.ShadowSoftness = Mathf.Clamp01(ShadowSoftness);
             result.GlowRadius = Mathf.Clamp01(GlowRadius);
+            result.GlowInner = Mathf.Clamp01(GlowInner);
+            result.OutlineSoftness = Mathf.Clamp01(OutlineSoftness);
+            result.FaceDilate = Mathf.Clamp(FaceDilate, -1f, 1f);
             return result;
+        }
+
+        /// <summary>
+        /// Two 0..1 parameters in one byte, four bits each.
+        ///
+        /// The only place here that puts two things in one byte rather than two,
+        /// and it is deliberately the two that can least hurt each other: the
+        /// glow's inside and outside reach, same effect, same units, both soft
+        /// by nature. An interpolator error that borrows across their boundary
+        /// changes the glow's shape by a sixteenth, where the same error across
+        /// a colour boundary would change a channel by 255. Sixteen steps of a
+        /// blur is not a thing an eye finds.
+        /// </summary>
+        public static byte PackNibbles(float hi, float lo)
+        {
+            int h = Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(hi) * 15f), 0, 15);
+            int l = Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(lo) * 15f), 0, 15);
+            return (byte)((h << 4) | l);
         }
 
         // ------------------------------------------------------------- packing
@@ -196,11 +265,14 @@ namespace OneText
             Set == other.Set &&
             ColorEquals(OutlineColor, other.OutlineColor) &&
             OutlineWidth.Equals(other.OutlineWidth) &&
+            OutlineSoftness.Equals(other.OutlineSoftness) &&
             ColorEquals(ShadowColor, other.ShadowColor) &&
             ShadowOffset.Equals(other.ShadowOffset) &&
             ShadowSoftness.Equals(other.ShadowSoftness) &&
             ColorEquals(GlowColor, other.GlowColor) &&
-            GlowRadius.Equals(other.GlowRadius);
+            GlowRadius.Equals(other.GlowRadius) &&
+            GlowInner.Equals(other.GlowInner) &&
+            FaceDilate.Equals(other.FaceDilate);
 
         private static bool ColorEquals(Color32 a, Color32 b) =>
             a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
@@ -222,6 +294,9 @@ namespace OneText
                 hash = hash * 397 ^ (GlowColor.r << 24 | GlowColor.g << 16 |
                                      GlowColor.b << 8 | GlowColor.a);
                 hash = hash * 397 ^ GlowRadius.GetHashCode();
+                hash = hash * 397 ^ GlowInner.GetHashCode();
+                hash = hash * 397 ^ OutlineSoftness.GetHashCode();
+                hash = hash * 397 ^ FaceDilate.GetHashCode();
                 return hash;
             }
         }

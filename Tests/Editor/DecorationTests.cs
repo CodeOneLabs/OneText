@@ -471,20 +471,28 @@ namespace OneText.Tests
             {
                 // The fourth value of the discriminator the colour and precise
                 // atlases already ride in; the shader answers it before it
-                // reaches a sampler.
+                // reaches a sampler. It shares its float with the face dilate
+                // now, so it is the high byte rather than the whole number.
                 if (quads[q].IsSolid)
                 {
                     sawBar = true;
-                    Assert.AreEqual(3f, bounds[q * 4].w, 1e-6f);
+                    Assert.AreEqual(3f, Discriminator(bounds[q * 4].w), 1e-6f);
                 }
                 else
                 {
                     sawGlyph = true;
-                    Assert.AreEqual(0f, bounds[q * 4].w, 1e-6f);
+                    Assert.AreEqual(0f, Discriminator(bounds[q * 4].w), 1e-6f);
                 }
             }
             Assert.IsTrue(sawBar && sawGlyph);
         }
+
+        /// <summary>
+        /// Which atlas, out of the float it now shares with the face dilate.
+        /// The shader recovers it the same way; this is that arithmetic said
+        /// once so the assertions above read as what they are asking.
+        /// </summary>
+        private static float Discriminator(float packed) => Mathf.Floor(packed / 256f);
 
         [Test]
         public void UnderlinedAndPlainLabels_ShareOneMaterial()

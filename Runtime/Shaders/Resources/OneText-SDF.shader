@@ -341,6 +341,22 @@ Shader "OneText/SDF"
                 half clipA = 1.0;
                 #endif
 
+                // Two floats that were each spending themselves on four bits now
+                // carry a passenger in the byte below. Unpacked once, here,
+                // before anything reads either: every test that used to compare
+                // the raw float has to compare the recovered one instead, and a
+                // missed site would sample the wrong atlas slice rather than
+                // fail loudly.
+                float2 layerSoft = Unpack(i.uv.z);
+                float layer = layerSoft.x * 255.0;          // 0..15, a slice index
+                float outlineSoftness = layerSoft.y;        // 0..1
+
+                float2 atlasFace = Unpack(i.bounds.w);
+                float atlasKind = atlasFace.x * 255.0;      // 0..3, which atlas
+                // 128 is no change, so text that says nothing about its face
+                // lands on exactly zero rather than near it.
+                float faceDilate = (atlasFace.y * 255.0 - 128.0) * (1.0 / 127.0);
+
                 // A colour tile is a picture, not a distance field: sample it
                 // straight and tint by the vertex colour, which is what lets a
                 // label fade its emoji out with the rest of its text.
@@ -365,17 +381,17 @@ Shader "OneText/SDF"
                 // the discriminator rather than a second material, for the same
                 // reason colour and precise are: an underlined word has to
                 // batch with the sentence around it.
-                if (i.bounds.w > 2.5)
+                if (atlasKind > 2.5)
                 {
                     fixed4 bar = i.color;
                     bar.a *= clipA;
                     ONETEXT_RETURN(bar);
                 }
 
-                float precise = step(1.5, i.bounds.w);
-                if (i.bounds.w > 0.5 && precise < 0.5)
+                float precise = step(1.5, atlasKind);
+                if (atlasKind > 0.5 && precise < 0.5)
                 {
-                    float3 s = float3(i.uv.x, clamp(i.uv.y, i.uv.w, i.bounds.x), i.uv.z);
+                    float3 s = float3(i.uv.x, clamp(i.uv.y, i.uv.w, i.bounds.x), layer);
                     // Alpha only. Under SrcAlpha/OneMinusSrcAlpha the source
                     // contributes rgb*a, so attenuating a is the whole of
                     // clipping; scaling rgb as well would darken the tile
@@ -390,8 +406,8 @@ Shader "OneText/SDF"
                 // x thresholds, y sets the width of the band it is thresholded
                 // over. For the single-channel field they are the same number.
                 float2 field = precise > 0.5
-                    ? MsdfFieldAndWidth(i.uv.xy, tileMin, tileMax, i.uv.z)
-                    : Field(i.uv.xy, tileMin, tileMax, i.uv.z).xx;
+                    ? MsdfFieldAndWidth(i.uv.xy, tileMin, tileMax, layer)
+                    : Field(i.uv.xy, tileMin, tileMax, layer).xx;
                 float d = field.x;
 
                 // The antialiasing width comes off the TRUE distance, never off
@@ -418,13 +434,23 @@ Shader "OneText/SDF"
                 // the median's isoline as well, and it is smooth where the
                 // median kinks. It costs nothing: it arrived in the same fetch.
                 float aa = max(fwidth(field.y), 1e-4);
-                float faceA = i.color.a * smoothstep(0.5 - aa, 0.5 + aa, d);
+
+                // The face's own threshold, moved by the dilate. Positive
+                // thickens: the cut happens further out into the field, so the
+                // number the coverage is measured against comes down. Zero is
+                // 0.5, which is where it always was.
+                float faceT = 0.5 - faceDilate * REACH_FIELD;
+                float faceA = i.color.a * smoothstep(faceT - aa, faceT + aa, d);
 
                 // Every byte a decoration could be visible through is the low
                 // half of one of these three floats, so their sum is zero for
                 // undecorated text and the whole of the work below is skipped
                 // for the overwhelmingly common case.
-                if (i.decoA.y + i.decoA.w + i.decoB.y < 0.5)
+                // The face dilate is not in any of those three floats — it rides
+                // in the atlas discriminator's spare byte — so it has to be
+                // asked about separately or a label whose only decoration is a
+                // thicker face takes the plain path and is drawn thin.
+                if (i.decoA.y + i.decoA.w + i.decoB.y < 0.5 && abs(faceDilate) < 0.002)
                 {
                     fixed4 plain = i.color;
                     plain.a = faceA * clipA;
@@ -457,26 +483,46 @@ Shader "OneText/SDF"
                 float2 shadowUv = i.uv.xy - float2(Signed(offset.x), Signed(offset.y))
                     * REACH_TEXELS * texel;
                 float shadowD = precise > 0.5
-                    ? MsdfTrueField(shadowUv, tileMin, tileMax, i.uv.z)
-                    : Field(shadowUv, tileMin, tileMax, i.uv.z);
+                    ? MsdfTrueField(shadowUv, tileMin, tileMax, layer)
+                    : Field(shadowUv, tileMin, tileMax, layer);
                 float soft = max(aa, softRadius.x * REACH_FIELD);
                 float shadowA = shadowBA.y * i.color.a
                     * smoothstep(0.5 - soft, 0.5 + soft, shadowD);
 
                 // The glow: a falloff on the distance itself, so it costs no
-                // sample at all. Full inside the ink, where the face covers it.
+                // sample at all.
+                //
+                // Its byte holds two nibbles, inner then outer. Inner zero means
+                // the glow does not fade going inward — full under the face,
+                // which is exactly what it did when there was only one radius,
+                // so every glow written before this still draws as it did.
+                float glowByte = softRadius.y * 255.0;
+                float glowInnerN = floor(glowByte * (1.0 / 16.0));
+                float glowInner = glowInnerN * (1.0 / 15.0);
+                float glowOuter = (glowByte - glowInnerN * 16.0) * (1.0 / 15.0);
+
                 float outward = saturate((0.5 - d) * (1.0 / REACH_FIELD));
-                float glowA = glowBA.y * i.color.a
-                    * saturate(1.0 - outward / max(softRadius.y, 1e-3));
+                float inward = saturate((d - 0.5) * (1.0 / REACH_FIELD));
+                float outA = saturate(1.0 - outward / max(glowOuter, 1e-3));
+                float inA = glowInnerN < 0.5
+                    ? 1.0
+                    : saturate(1.0 - inward / max(glowInner, 1e-3));
+                float glowA = glowBA.y * i.color.a * (d < 0.5 ? outA : inA);
 
                 // The outline: the same field read at a second threshold, one
                 // width further out. The threshold is held above the
                 // antialiasing band because the field saturates at one reach;
                 // past that an outline stops thickening and starts fringing the
                 // whole background, and stopping is the honest answer.
+                //
+                // Its own softness widens that band, exactly as the shadow's
+                // does, and never narrows it below the antialiasing the screen
+                // needs — a zero here is the hard edge the outline has always
+                // had.
                 float outlineT = max(0.5 - REACH_FIELD * outlineBW.y, aa * 1.5);
+                float outlineSoft = max(aa, outlineSoftness * REACH_FIELD);
                 float outlineA = step(0.5 / 255.0, outlineBW.y) * i.color.a
-                    * smoothstep(outlineT - aa, outlineT + aa, d);
+                    * smoothstep(outlineT - outlineSoft, outlineT + outlineSoft, d);
 
                 float3 shadowRgb = float3(shadowRG, shadowBA.x);
                 float3 glowRgb = float3(glowRG, glowBA.x);

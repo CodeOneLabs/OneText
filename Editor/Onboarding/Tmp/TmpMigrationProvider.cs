@@ -415,6 +415,14 @@ namespace OneText.Editor
                 decoration.Set |= TextDecoration.Parts.Outline;
                 decoration.OutlineColor = Colour(material, "_OutlineColor");
                 decoration.OutlineWidth = Mathf.Clamp01(Number(material, "_OutlineWidth"));
+                decoration.OutlineSoftness = Mathf.Clamp01(Number(material, "_OutlineSoftness"));
+            }
+
+            float faceDilate = Number(material, "_FaceDilate");
+            if (faceDilate != 0f)
+            {
+                decoration.Set |= TextDecoration.Parts.Face;
+                decoration.FaceDilate = Mathf.Clamp(faceDilate, -1f, 1f);
             }
 
             var underlay = Colour(material, "_UnderlayColor");
@@ -437,6 +445,7 @@ namespace OneText.Editor
                 decoration.Set |= TextDecoration.Parts.Glow;
                 decoration.GlowColor = glow;
                 decoration.GlowRadius = Mathf.Clamp01(Number(material, "_GlowOuter"));
+                decoration.GlowInner = Mathf.Clamp01(Number(material, "_GlowInner"));
             }
 
             LintMaterial(material, decoration, target);
@@ -449,26 +458,15 @@ namespace OneText.Editor
         {
             var lost = new List<string>();
 
-            float faceDilate = Number(material, "_FaceDilate");
-            if (faceDilate != 0f)
-                lost.Add($"face dilate {faceDilate:0.##} (the face is drawn thicker or thinner " +
-                         "than the font draws it)");
-
-            float outlineSoftness = Number(material, "_OutlineSoftness");
-            if (decoration.HasOutline && outlineSoftness > 0f)
-                lost.Add($"outline softness {outlineSoftness:0.##} (the outline comes across " +
-                         "with a hard edge)");
-
             float underlayDilate = Number(material, "_UnderlayDilate");
             if (decoration.HasShadow && underlayDilate != 0f)
                 lost.Add($"underlay dilate {underlayDilate:0.##} (the shadow comes across at the " +
                          "face's own weight)");
 
-            bool innerGlow = Number(material, "_GlowInner") > 0f;
             bool shapedGlow = material.HasProperty("_GlowPower") &&
                               material.GetFloat("_GlowPower") != 1f;
-            if (decoration.HasGlow && (innerGlow || shapedGlow))
-                lost.Add("the glow's inner reach and power (OneText's glow is one outward radius)");
+            if (decoration.HasGlow && shapedGlow)
+                lost.Add("the glow's power curve (OneText's glow falls off linearly from the edge)");
 
             if (material.HasProperty("_FaceColor"))
             {

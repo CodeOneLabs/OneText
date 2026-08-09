@@ -766,7 +766,8 @@ namespace OneText.Tests
             var bounds = new List<Vector4>();
             mesh.GetUVs(2, bounds);
             Assert.AreEqual(quads.Count * 4, bounds.Count);
-            foreach (var vertex in bounds) Assert.AreEqual(2f, vertex.w, 1e-6f);
+            foreach (var vertex in bounds)
+                Assert.AreEqual(2f, Mathf.Floor(vertex.w / 256f), 1e-6f);
         }
 
         [Test]

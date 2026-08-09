@@ -185,19 +185,19 @@ namespace OneText.Editor
         }
 
         /// <summary>
-        /// How hard this font is packed, and the button that spends a minute to
-        /// pack it harder.
+        /// How hard this font is packed, and the button that spends the seconds
+        /// to pack it harder.
         ///
-        /// Importing packs fast, because packing a 16 MB Korean face as small
-        /// as brotli goes froze the editor for over a minute and 15 % of a font
-        /// is not worth that on every drag-and-drop. It is worth it once, on
-        /// the build that ships, and this is where that once happens.
+        /// Importing packs fast, because packing a 16 MB Korean face down for
+        /// the build freezes the editor for seventeen seconds and 12 % of a
+        /// font is not worth that on every drag-and-drop. It is worth it once,
+        /// on the build that ships, and this is where that once happens.
         /// </summary>
         private VisualElement PackingRow(OneFontAsset font)
         {
             bool smallest = font.Packing == OneFontAsset.FontPacking.Smallest;
             var row = HubUI.KeyValue("Packing", smallest
-                    ? "as small as it goes"
+                    ? "packed for the build"
                     : "packed for a fast import",
                 smallest ? HubTone.Good : HubTone.Neutral);
             if (smallest) return row;
@@ -215,7 +215,7 @@ namespace OneText.Editor
             try
             {
                 EditorUtility.DisplayProgressBar("OneText",
-                    $"Packing {font.FamilyName} as small as it goes — this takes a while…", 0.5f);
+                    $"Packing {font.FamilyName} for the build — this takes a while…", 0.5f);
                 done = font.Repack(OneFontAsset.FontPacking.Smallest);
             }
             finally

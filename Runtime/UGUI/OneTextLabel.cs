@@ -2016,7 +2016,7 @@ namespace OneText.UGUI
                 // what the mesh says matches what gets drawn.
                 var decoration = quad.IsColor || quad.IsSolid || quad.Decoration <= 0
                         || quad.Decoration >= _packedDecorations.Count
-                    ? default
+                    ? DecorationChannels.None
                     : _packedDecorations[quad.Decoration];
                 // A caller that edited textInfo's vertices and pushed them is
                 // drawn from those, corner by corner, while everything the mesh
@@ -2601,7 +2601,7 @@ namespace OneText.UGUI
             _decorations.Clear();
             _decorations.Add(TextDecoration.None);
             _packedDecorations.Clear();
-            _packedDecorations.Add(default);
+            _packedDecorations.Add(DecorationChannels.None);
 
             // Every wash first, before any glyph: a <mark> is behind all of the
             // text and not merely behind its own run, which is the difference
@@ -2883,11 +2883,32 @@ namespace OneText.UGUI
         {
             public readonly Vector4 Colors, Shape;
 
-            public DecorationChannels(Vector4 colors, Vector4 shape)
+            /// <summary>
+            /// The two that do not live in a channel of their own: they ride in
+            /// the spare byte of a float that was already being sent for another
+            /// reason. Carried here as bytes so that <see cref="AddVert"/> can
+            /// fold them into those floats without knowing what a decoration is.
+            /// </summary>
+            public readonly byte OutlineSoftness, FaceDilate;
+
+            public DecorationChannels(Vector4 colors, Vector4 shape,
+                byte outlineSoftness, byte faceDilate)
             {
                 Colors = colors;
                 Shape = shape;
+                OutlineSoftness = outlineSoftness;
+                FaceDilate = faceDilate;
             }
+
+            /// <summary>
+            /// What an undecorated tile writes, which is emphatically not
+            /// <c>default</c>. The face dilate is signed and its zero is 128; a
+            /// struct of zeroes says "thin this glyph by a whole reach", and
+            /// since every plain label in every project takes this path, that
+            /// is every glyph everywhere.
+            /// </summary>
+            public static DecorationChannels None => new DecorationChannels(
+                Vector4.zero, Vector4.zero, 0, TextDecoration.QuantizeSigned(0f, 1f));
         }
 
         /// <summary>
@@ -2916,18 +2937,40 @@ namespace OneText.UGUI
                     TextDecoration.QuantizeSigned(decoration.ShadowOffset.y, 1f)),
                 TextDecoration.Pack(
                     TextDecoration.Quantize(decoration.ShadowSoftness),
-                    TextDecoration.Quantize(decoration.GlowRadius)));
-            return new DecorationChannels(colors, shape);
+                    TextDecoration.PackNibbles(decoration.GlowInner, decoration.GlowRadius)));
+
+            // Zero softness when there is no outline and a signed zero for the
+            // face when nothing said anything about it, so an undecorated label
+            // writes exactly the bytes it wrote before either existed.
+            return new DecorationChannels(colors, shape,
+                decoration.HasOutline
+                    ? TextDecoration.Quantize(decoration.OutlineSoftness) : (byte)0,
+                TextDecoration.QuantizeSigned(
+                    decoration.HasFace ? decoration.FaceDilate : 0f, 1f));
         }
 
         /// <summary>
         /// The vertex-channel budget, in full, because it is a contract with
         /// <c>OneText-SDF.shader</c> and there is no compiler between the two.
         ///
-        /// TEXCOORD0  xy tile uv · z atlas layer · w tile v-min
+        /// TEXCOORD0  xy tile uv · z layer|outline soft · w tile v-min
         /// TEXCOORD1  outline R|G · outline B|width · shadow R|G · shadow B|A
-        /// TEXCOORD2  x tile v-max · y tile u-min · z tile u-max · w which atlas
-        /// TEXCOORD3  glow R|G · glow B|A · shadow dx|dy · shadow soft|glow radius
+        /// TEXCOORD2  x tile v-max · y tile u-min · z tile u-max · w atlas|face dilate
+        /// TEXCOORD3  glow R|G · glow B|A · shadow dx|dy · shadow soft|glow in:out
+        ///
+        /// TEXCOORD0.z and TEXCOORD2.w each hold two things because each was
+        /// already holding almost nothing: the layer indexes a texture array of
+        /// at most sixteen slices and the discriminator tells four things apart,
+        /// so both were spending a whole float on four bits. The outline's
+        /// softness and the face's dilate moved into the space beside them. No
+        /// channel was added, so no other graphic in the canvas pays for either.
+        ///
+        /// TEXCOORD3.w's low byte is the one place in this file where two
+        /// parameters share a byte, four bits each. They are the glow's inner and
+        /// outer reach: one effect, one unit, both soft, so the worst an
+        /// interpolator can do by borrowing across their boundary is change the
+        /// shape of a blur by a sixteenth. That is the whole reason it is those
+        /// two and not, say, a colour and a width.
         ///
         /// The list ends at TEXCOORD3 and the shader's does not: it also has a
         /// TEXCOORD4 for RectMask2D clipping. That one is <em>derived in the
@@ -2970,13 +3013,25 @@ namespace OneText.UGUI
         private static void AddVert(VertexHelper vh, float x, float y, float u, float v,
             int layer, Rect uvRect, Color32 c, float atlas, in DecorationChannels decoration)
         {
-            var uvA = new Vector4(u, v, layer, uvRect.yMin);
+            // The layer is an index into a texture array of at most sixteen
+            // slices, so it has been carrying four bits in a whole float since
+            // the day it was written. The outline's softness rides in the byte
+            // below it. Same for the atlas discriminator's float in vmax.w,
+            // which distinguishes four things and now carries the face dilate.
+            //
+            // Two whole bytes, found rather than made: no channel was added, so
+            // nothing in this canvas pays for them, and neither one is a field
+            // split inside a byte — the one place that happens is the glow's own
+            // inside and outside, which can only blur each other.
+            var uvA = new Vector4(u, v,
+                TextDecoration.Pack((byte)layer, decoration.OutlineSoftness), uvRect.yMin);
             // vmax.w picks the atlas: single-channel field, colour picture or
             // multi-channel field. It fits in a channel the mesh already
             // carries, so emoji and precise text cost no extra vertex data and
             // no second draw call, which is the whole reason both are flags
             // rather than submeshes.
-            var vmax = new Vector4(uvRect.yMax, uvRect.xMin, uvRect.xMax, atlas);
+            var vmax = new Vector4(uvRect.yMax, uvRect.xMin, uvRect.xMax,
+                TextDecoration.Pack((byte)atlas, decoration.FaceDilate));
             vh.AddVert(new Vector3(x, y), c, uvA, decoration.Colors, vmax, decoration.Shape,
                 s_Normal, s_Tangent);
         }

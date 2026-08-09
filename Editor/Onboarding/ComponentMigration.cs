@@ -1832,6 +1832,9 @@ namespace OneText.Editor
             SetFloat(serialized, path + ".ShadowSoftness", decoration.ShadowSoftness);
             SetColor32(serialized, path + ".GlowColor", decoration.GlowColor);
             SetFloat(serialized, path + ".GlowRadius", decoration.GlowRadius);
+            SetFloat(serialized, path + ".GlowInner", decoration.GlowInner);
+            SetFloat(serialized, path + ".OutlineSoftness", decoration.OutlineSoftness);
+            SetFloat(serialized, path + ".FaceDilate", decoration.FaceDilate);
         }
 
         /// <summary>
