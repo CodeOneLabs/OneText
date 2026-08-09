@@ -1,4 +1,8 @@
+// No `using System;` here on purpose: this file says `Object.DestroyImmediate`,
+// and pulling System in makes that ambiguous against System.Object. The two
+// names the helpers below need are written out instead.
 using System.Collections.Generic;
+using System.Reflection;
 using NUnit.Framework;
 using OneText.Editor;
 using OneText.UGUI;
@@ -6,6 +10,7 @@ using TMPro;
 using UnityEditor;
 using UnityEditor.Events;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.UI;
 
 namespace OneText.Tests
@@ -56,6 +61,47 @@ namespace OneText.Tests
             int n = 0;
             foreach (var finding in report.Findings) if (finding.Rule == rule) n++;
             return n;
+        }
+
+        /// <summary>
+        /// The one-string method a persistent listener can be pointed at, asked
+        /// for by signature rather than written as a method group.
+        ///
+        /// Writing <c>placeholder.SetText</c> compiles against the TextMesh Pro
+        /// inside Unity 6 and does not compile at all against TMP 3.0.7, which
+        /// is what 2022.3 resolves. 3.0.7 has only
+        /// <c>SetText(string, bool syncTextInputBox = true)</c>; the
+        /// one-argument overload arrived later. A method group whose only
+        /// candidate has an optional parameter does not convert to
+        /// <c>UnityAction&lt;string&gt;</c> — optional parameters are not filled
+        /// in by a method group conversion — so the generic
+        /// <c>AddPersistentListener</c> stops being applicable, overload
+        /// resolution falls back to the non-generic one, and the file fails to
+        /// build with a pair of CS1503s that name neither cause.
+        ///
+        /// Reflection names the signature it wants instead of letting overload
+        /// resolution choose, so the same source builds on both. Where the
+        /// one-argument <c>SetText</c> exists this is exactly what the method
+        /// group used to resolve to, and the test goes on proving what it did.
+        /// Where it does not, the <c>text</c> setter is the other method both
+        /// TMP_Text and OneTextLabel carry, and the case being tested — a
+        /// persistent listener whose target is itself about to be replaced — is
+        /// the same one either way. The caller asserts against
+        /// <see cref="MemberInfo.Name"/> rather than a literal for that reason.
+        /// </summary>
+        private static MethodInfo StringSink(System.Type type)
+        {
+            return type.GetMethod("SetText", new[] { typeof(string) })
+                   ?? type.GetProperty("text").GetSetMethod();
+        }
+
+        /// Resolved on TMP_Text rather than on the component's own type, so the
+        /// delegate wired here and the method name asserted afterwards are the
+        /// same MethodInfo and cannot drift apart.
+        private static UnityAction<string> ListenerOn(Component target)
+        {
+            return (UnityAction<string>)System.Delegate.CreateDelegate(
+                typeof(UnityAction<string>), target, StringSink(typeof(TMP_Text)));
         }
 
         // --------------------------------------------------------------- label
@@ -209,7 +255,7 @@ namespace OneText.Tests
 
             // SetText(string) exists on both TMP_Text and OneTextLabel, so this
             // listener has to survive both the retarget and the type change.
-            UnityEventTools.AddPersistentListener(field.onValueChanged, placeholder.SetText);
+            UnityEventTools.AddPersistentListener(field.onValueChanged, ListenerOn(placeholder));
             Assert.AreEqual(1, field.onValueChanged.GetPersistentEventCount(),
                 "the test did not manage to wire a listener");
 
@@ -240,7 +286,8 @@ namespace OneText.Tests
             Assert.AreSame(placeholderGo.GetComponent<OneTextLabel>(),
                 made.onValueChanged.GetPersistentTarget(0),
                 "the listener still points at the component that was destroyed");
-            Assert.AreEqual("SetText", made.onValueChanged.GetPersistentMethodName(0));
+            Assert.AreEqual(StringSink(typeof(TMP_Text)).Name,
+                made.onValueChanged.GetPersistentMethodName(0));
             Assert.AreEqual(1, CountOf(report, "event-listeners"));
         }
 
@@ -254,7 +301,7 @@ namespace OneText.Tests
             var field = root.AddComponent<TMP_InputField>();
             field.textComponent = fieldText;
             field.contentType = TMP_InputField.ContentType.Password;
-            UnityEventTools.AddPersistentListener(field.onEndEdit, fieldText.SetText);
+            UnityEventTools.AddPersistentListener(field.onEndEdit, ListenerOn(fieldText));
 
             var report = ComponentMigration.ScanInPlace(new[] { root }, "(test)");
 

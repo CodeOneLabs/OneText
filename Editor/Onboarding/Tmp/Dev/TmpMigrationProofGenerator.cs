@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using TMPro;
 using UnityEditor;
 using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
 using OneText.UGUI;
@@ -145,7 +147,7 @@ namespace OneText.Editor
             // SetText(string) is on both TMP_Text and OneTextLabel, so this
             // listener is exactly the case the carry has to get right: the
             // target is a component that is itself about to be replaced.
-            UnityEventTools.AddPersistentListener(field.onValueChanged, placeholder.SetText);
+            UnityEventTools.AddPersistentListener(field.onValueChanged, ListenerOn(placeholder));
 
             var caption = NewChild(canvasGo.transform, "Caption", new Rect(40f, 300f, 1320f, 60f));
             var captionText = caption.AddComponent<TextMeshProUGUI>();
@@ -170,6 +172,30 @@ namespace OneText.Editor
             transform.sizeDelta = new Vector2(rect.width, rect.height);
             transform.anchoredPosition = new Vector2(rect.x, -rect.y);
             return go;
+        }
+
+        /// <summary>
+        /// A <c>UnityAction&lt;string&gt;</c> pointed at the label's own
+        /// one-string method, asked for by signature rather than written as a
+        /// method group.
+        ///
+        /// Writing <c>placeholder.SetText</c> compiles against the TextMesh Pro
+        /// inside Unity 6 and does not compile at all against TMP 3.0.7, which
+        /// is what 2022.3 resolves: 3.0.7 has only
+        /// <c>SetText(string, bool syncTextInputBox = true)</c>, and a method
+        /// group whose only candidate has an optional parameter does not
+        /// convert to <c>UnityAction&lt;string&gt;</c>. The generic
+        /// <c>AddPersistentListener</c> then stops being applicable and the
+        /// file fails to build. Naming the signature through reflection builds
+        /// on both, and resolves to exactly what the method group did wherever
+        /// the one-argument overload exists.
+        /// </summary>
+        private static UnityAction<string> ListenerOn(Component target)
+        {
+            MethodInfo sink = target.GetType().GetMethod("SetText", new[] { typeof(string) })
+                              ?? target.GetType().GetProperty("text").GetSetMethod();
+            return (UnityAction<string>)Delegate.CreateDelegate(
+                typeof(UnityAction<string>), target, sink);
         }
 
         private static Font LegacyFont()
