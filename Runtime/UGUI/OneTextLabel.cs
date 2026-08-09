@@ -17,7 +17,7 @@ namespace OneText.UGUI
     /// <c>&lt;link=id&gt;</c> ranges all line up with what is drawn.
     /// </summary>
     [AddComponentMenu("OneText/OneText Label")]
-    public sealed class OneTextLabel : MaskableGraphic, ILayoutElement, IPointerClickHandler,
+    public sealed partial class OneTextLabel : MaskableGraphic, ILayoutElement, IPointerClickHandler,
         StyleInvalidation.IStyleUser
     {
         [Tooltip("Base style asset. The label stores the reference, not a copy; editing the " +
@@ -26,6 +26,21 @@ namespace OneText.UGUI
 
         [Tooltip("Styles <style=name> may reference. The asset's own name is the name markup uses.")]
         [SerializeField] private List<OneTextStyle> _namedStyles = new List<OneTextStyle>();
+
+        /// <summary>
+        /// An outline, shadow or glow this label wants under everything else.
+        ///
+        /// Separate from <see cref="_style"/> because that is a shared asset:
+        /// a label reaching for "give this one an outline" would be editing
+        /// every label using the same style, which is never what was meant. It
+        /// sits under the style rather than over it, so a theme still wins —
+        /// this is the label's opinion, not its final say.
+        ///
+        /// It exists because TextMesh Pro puts the outline on the component and
+        /// every project arriving from there expects to find it there,
+        /// including third-party code that tweens it by name.
+        /// </summary>
+        [SerializeField] private TextDecoration _decoration;
 
         [Tooltip("Fonts <font=name> may reference, by asset name.")]
         [SerializeField] private List<OneFontAsset> _namedFonts = new List<OneFontAsset>();
@@ -1128,6 +1143,11 @@ namespace OneText.UGUI
                 _layoutValid = true;
                 _quadsValid = false;
                 _layoutRuns++;
+                // Vertices a caller pushed were written against tiles that no
+                // longer exist. Drawing them over new text is worse than losing
+                // an animation frame.
+                DropVertexOverride();
+                OneTextEvents.RaiseTextChanged(this);
             }
 
             // Where the block's start corner sits, which is the corner both
@@ -1385,7 +1405,9 @@ namespace OneText.UGUI
         /// </summary>
         private int ResolveDecoration(int textIndex, in TextStyle style)
         {
-            var decoration = _style != null ? _style.Decoration : TextDecoration.None;
+            var decoration = _style != null
+                ? _style.Decoration.Over(_decoration)
+                : _decoration;
             if (style.NamedStyle >= 0 && style.NamedStyle < _namedStyles.Count)
             {
                 var named = _namedStyles[style.NamedStyle];
@@ -1996,6 +2018,12 @@ namespace OneText.UGUI
                         || quad.Decoration >= _packedDecorations.Count
                     ? default
                     : _packedDecorations[quad.Decoration];
+                // A caller that edited textInfo's vertices and pushed them is
+                // drawn from those, corner by corner, while everything the mesh
+                // needs and a vertex array cannot carry — which atlas, which
+                // layer, which decoration — still comes from the tile.
+                if (_vertexOverride && EmitOverrideQuad(vh, quad, decoration, _drawn.Count - 1))
+                    continue;
                 if (quad.Rotation != 0f)
                     EmitRotatedQuad(vh, quad, decoration);
                 else
