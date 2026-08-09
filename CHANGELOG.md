@@ -4,6 +4,39 @@
 
 ### Added
 
+- **The Hub is now Project Settings > OneText, and that page finally holds the
+  defaults a TextMesh Pro project goes looking for.** The window and the
+  settings page were two places holding one subject: the default font was on
+  the page, the fonts themselves were in the window, and the numbers a person
+  actually wanted to change — the size a new label starts at, whether it takes
+  clicks, whether it parses markup — were in neither, because they were C#
+  field initializers, which is to say they were not the project's to decide.
+
+  The page mounts the whole Hub, sidebar and all, with a new **Global
+  Settings** section first in the list. It writes the settings asset through a
+  SerializedObject, so every edit is undoable and marks the asset dirty the way
+  the inspector did, and it says what each field is for instead of showing what
+  it is called.
+
+  New in the asset, and new as project decisions: **font size**, **auto-size
+  bounds**, **wrapping**, **rich text**, **escape parsing**, **raycast target**,
+  and the **container size** a label (320 × 80) and a world text (20 × 5, TMP's)
+  are created with. A component reads them in `Reset`, which is what Unity runs
+  when it is added from the GameObject menu, from Add Component, or from its own
+  context menu; `OneTextLabel.ApplyProjectDefaults()` and the `OneTextMesh` one
+  are public, so a component that has drifted can be put back. Nothing walks the
+  project rewriting objects that already exist — a default decides the next one.
+
+  `Window > OneText > Hub` opens the settings page, and every "project settings"
+  button inside the Hub now goes to the Global Settings section rather than
+  opening the window it is already inside.
+
+- **A question, once, when the package is first installed.** A project that
+  already draws text with TextMesh Pro gets asked whether it wants to see what
+  moving off it involves, and is taken to Onboarding if it says yes. Asked once
+  per project and remembered either way; never in batch mode, so a test run
+  cannot stop on a modal dialog.
+
 - **The three parity names that were deliberately absent — `alignment`,
   `lineSpacing`, `textWrappingMode` — plus `enableWordWrapping`, the pre-3.2
   spelling.** They were absent because a straight alias for any of them would
@@ -40,6 +73,125 @@
   learned the two qualified enum names (`TMPro.TextAlignmentOptions`,
   `TMPro.TextWrappingModes`); unqualified uses were already covered by the
   `using` rewrite, because the new enums live under the names TMP used.
+
+### Changed
+
+- **A new label says `New Text` at size 36, not `مرحبا بالعالم` at 64.** The
+  Arabic was there to prove the shaper ran before anybody typed anything, which
+  it did; it is still the wrong thing to hand somebody who just added a
+  component, and 64 was never the size the settings asset claimed new labels
+  got. That claim is now true: `Default Font Size` had no reader at all before
+  this, and 36 is both its value and TMP's.
+
+- **Buttons, pills and badges are rounded rectangles rather than lozenges.** A
+  980px radius makes the curve a function of the control's height, so a tall
+  button and a short one disagreed about what the same corner looks like. They
+  are 6px now (4px on badges), which is one shape at every size.
+
+- **Onboarding says what to do before it says what it found.** The screen opens
+  with the four buttons in the order they are meant to be pressed and one
+  sentence each on what they do to the project, the two steps are labelled Step
+  1 and Step 2, and "What this cannot finish" is now "What you have to fix by
+  hand". The toggles say what turning them on does instead of naming the state
+  they are in.
+
+- **The system-font tier says where it runs.** It reads the fonts of the device
+  the game is running on — `/system/fonts` on an Android phone, the system font
+  folders elsewhere — in the build, not only in the editor. Every description
+  of it said "this machine", which read as "the editor" and made the feature
+  sound useless on a player's device.
+
+- **The atlas budget's readouts follow its controls.** Changing the texture size
+  or the layer count rewrites the memory and capacity figures under them
+  instead of leaving the old numbers on screen. The layer count is a typed
+  number rather than a sixteen-stop slider.
+
+- **A missing shader is said once, not eight thousand times.** `SharedGlyphAtlas.
+  Material` logged an error every time it was asked and the shader was not
+  there, and every label asks on enable. On CI that turned one missing file into
+  ~8,000 identical lines and roughly a hundred EditMode failures, every one of
+  them the words "Unhandled log message" and none of them about the code under
+  test. It is reported once per domain now, and it names the graphics device and
+  — in the editor — whether the asset is in the database at all, which is the
+  difference between an import problem and a compilation one. Reproduced by
+  hiding the shader locally: the same run went from ~100 failures to 1.
+
+  A process with **no graphics device** loads no shaders by design, so there the
+  report is a warning rather than an error: layout, measurement and the atlas
+  all still work, and only drawing is unavailable. That is a description of a
+  headless container, not of a fault.
+
+- **The allocation tests stopped disagreeing with themselves.** Five of them
+  asserted through `Is.Not.AllocatingGCMemory()`, which reads a single
+  invocation — sound only if nothing else can allocate on that thread inside the
+  window, which in an editor running a test suite is not true. The symptom was
+  a suite where the same case passed and failed on consecutive runs with nothing
+  changed, and two runs an hour apart failed disjoint sets: a failure there
+  carried no information. They now measure many times and keep the smallest
+  count. Noise can only add allocations, so one clean reading proves the steady
+  state is clean, and a path that really allocates cannot produce one however
+  many attempts it gets. Five consecutive full runs of the class: 6/6 passing,
+  every time.
+
+- **The Unicode coverage sweep gets a timeout that measures the right thing.**
+  It takes ~124 s on an idle machine against Unity's default 180 s budget, so
+  it failed at 224 s whenever the rest of the suite was competing for the
+  machine. Ten minutes now — the distance between "slow" and "hung".
+
+- **A project that installs this package no longer compiles the tools that
+  build it.** The golden-image harness, the benchmark suite, the proof-image
+  generators, the native-plugin importer batch and the Cluster debug dump were
+  all in `Editor/`, with no constraint on them, which meant every consumer
+  compiled them and got a `Tools > OneText > Golden Images` menu item for a
+  baseline set they do not have. They live in `Editor/Dev/` now, behind
+  `OneText.Editor.Dev` — an assembly constrained to `UNITY_INCLUDE_TESTS`, so it
+  builds in a project that lists this package in `testables` (which is how the
+  golden run, the benchmarks and the proof generators are driven) and nowhere
+  else. `TmpMigrationProofGenerator` gets the same treatment, one folder deeper,
+  since it also needs TextMesh Pro.
+
+  Verified rather than assumed: in a project with no `testables` entry, Unity
+  builds `OneText`, `OneText.UGUI`, `OneText.Mesh`, `OneText.Editor` and
+  `OneText.Editor.Onboarding.Tmp`, and `GoldenRegen` and `BenchSuite` are not
+  types that exist. In a project that does list it, all 843 tests still pass,
+  the 28 golden-image ones included.
+
+- **A published package carries the package.** `.npmignore` keeps `Tests/`,
+  `Editor/Dev/`, `Docs/`, `Tools/`, `page~/`, `Web~/` and the repository's own
+  furniture out of a registry tarball: 360 files, 32.6 MB unpacked, of which
+  27.6 MB is the native plugins for every platform and 4.2 MB is the dictionary
+  sample the Package Manager offers to import. Installing from the git URL still
+  clones the repository — nothing can change that — which is why the assembly
+  constraint above, not this file, is what actually keeps the dev tooling out of
+  a consumer's compile.
+
+- **Importing a font no longer freezes the editor for a minute.** Creating a
+  font asset packed the file with brotli at quality 11, and quality 11 is the
+  setting that costs a hundred times what the one below it costs. Measured
+  here: Noto Sans CJK KR (15.7 MB) took **64 seconds** and stored 10.9 MB;
+  Pretendard (6.4 MB) took **8.0 seconds** and stored 2.04 MB. At quality 6 the
+  same two take **0.6 s → 12.6 MB** and **0.14 s → 2.30 MB**. So the editor
+  froze for a minute to save the last 15 % of a font, on every drag-and-drop.
+
+  Imports pack fast now — the whole `Create Font Asset` on that 6.4 MB face went
+  from **10.1 s to 0.21 s** — and the Fonts section grew a **Pack smaller**
+  button per font, which spends the minute deliberately on the build that ships
+  it. Font assets made before this keep their existing packing and read back
+  exactly as they did; the new field's zero value means "as small as it goes",
+  which is what they are. Unpacking is unchanged, and it is the only half a
+  player ever pays for.
+
+- **Forensics opens in a tenth of the time.** Measured on a real project, that
+  section took **433 ms** to appear: composing it shaped the sample string and
+  rasterized every glyph in it, all before the panel existed. The panel is on
+  screen in **9 ms** now and the layout happens on the next frame, which is also
+  what makes typing in its text field feel like typing. Nothing else in the
+  window is over 20 ms, and the sidebar refresh is 3 ms.
+
+- **The sidebar stopped opening every font asset to count them.** The Fonts and
+  Styles badges asked for the assets themselves — each font carrying a
+  compressed copy of its .ttf — twice per refresh, and a refresh happens on
+  every click in the window. They ask the search index for a count now.
 
 ## [0.2.0] - 2026-08-08
 

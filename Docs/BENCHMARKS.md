@@ -1,6 +1,6 @@
 # Benchmarks
 
-Everything here is produced by the harness in `Editor/Benchmarks`, on this
+Everything here is produced by the harness in `Editor/Dev/Benchmarks`, on this
 machine, from a seeded corpus. To reproduce:
 
 ```

@@ -52,9 +52,11 @@ One package. Every feature. Nothing sold separately.
 - **World-space text** — `OneTextMesh`: the whole pipeline through a
   MeshRenderer, no Canvas, on TMP's world scale so a nameplate keeps its
   numbers. Labels can size themselves to their rect, too.
-- **The Hub** — fonts, charsets, dictionaries, the atlas, a string gallery,
-  and Doctor: a renderability lint that exits 1 so CI can fail the merge.
-  Plus Onboarding, which does the mechanical half of leaving TMP.
+- **The Hub, in Project Settings > OneText** — the project's defaults (default
+  font and fallback chain, the size and behaviour a new label is created with,
+  the atlas budget), plus fonts, charsets, dictionaries, a string gallery, and
+  Doctor: a renderability lint that exits 1 so CI can fail the merge. Plus
+  Onboarding, which does the mechanical half of leaving TMP.
 
 ## Correctness as a number
 
@@ -78,7 +80,7 @@ its wins is an advertisement.
 | ![Vertical writing](page~/assets/shots/vertical.png) | ![Ruby](page~/assets/shots/ruby.png) |
 | *Vertical writing: kinsoku holding the column ends, ruby beside the column* | *Ruby placed by the W3C rules: distribution, overhang, decorated readings* |
 | ![The Hub](page~/assets/shots/hub-overview.png) | ![The atlas, live](page~/assets/shots/hub-atlas.png) |
-| *The Hub: one window for fonts, charsets, dictionaries, atlas and Doctor* | *The atlas, live: per-tile LRU, defragmentation, a budget you set* |
+| *The Hub, on the project settings page: defaults, fonts, charsets, dictionaries, atlas and Doctor* | *The atlas, live: per-tile LRU, defragmentation, a budget you set* |
 
 More in the site's [quick tour](page~/index.html): MSDF `precise`,
 decorations, Doctor and the word-break dictionaries, screen by screen.
