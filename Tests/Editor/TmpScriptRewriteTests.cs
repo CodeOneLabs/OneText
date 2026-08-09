@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using NUnit.Framework;
 using OneText.Editor;
 
@@ -229,9 +231,31 @@ namespace OneText.Tests
             Assert.AreEqual("TMP_FontAsset", result.Residuals[1].Name);
             Assert.AreEqual(6, result.Residuals[1].Line);
 
-            // The part it does understand is still done: half a migration
-            // beats none, and the compiler will point at the other half.
-            Assert.IsTrue(result.Text.Contains("OneTextLabel l;"));
+            // And the part it does understand is not done either, because doing
+            // it would take `using TMPro;` away from the two lines that still
+            // need it. Half a migration does not beat none here; it is a file
+            // that does not compile, and the two names are why.
+            Assert.IsFalse(result.Viable);
+            Assert.IsFalse(result.Changed);
+            Assert.IsFalse(result.Text.Contains("OneTextLabel l;"));
+            CollectionAssert.AreEqual(new[] { "TMP_Dropdown", "TMP_FontAsset" },
+                result.BlockingNames);
+        }
+
+        [Test]
+        public void A_File_Whose_Every_Name_Is_Mapped_Is_Rewritten_In_Full()
+        {
+            // The other side of the gate: nothing is left needing TMPro, so
+            // nothing stands in the way, and the file goes through whole.
+            var result = TmpScriptRewriter.Rewrite(
+                "using TMPro;\npublic class A\n{\n    TextMeshProUGUI l;\n    TMP_InputField f;\n}\n");
+
+            Assert.IsTrue(result.Viable);
+            Assert.IsNull(result.Blocker);
+            Assert.IsEmpty(result.Residuals);
+            Assert.AreEqual(
+                "using OneText.UGUI;\npublic class A\n{\n    OneTextLabel l;\n    OneTextInputField f;\n}\n",
+                result.Text);
         }
 
         [Test]
@@ -312,6 +336,185 @@ namespace OneText.Tests
             Assert.IsEmpty(result.Residuals);
         }
 
+        // --------------------------------------------- names, not type names
+
+        [Test]
+        public void An_Enum_Member_Named_TextMeshProUGUI_Is_A_Member_And_Stays_One()
+        {
+            // DOTween Pro's TargetType, verbatim in shape. Every use of these is
+            // TargetType.TextMeshProUGUI, which the dot rule already leaves
+            // alone; renaming the declarations and not the uses is CS0117 in a
+            // package the project did not write, and the old rewriter did it
+            // while reporting nothing at all.
+            const string source =
+                "using TMPro;\n" +
+                "public enum TargetType\n" +
+                "{\n" +
+                "    Unset,\n" +
+                "    TextMeshPro,\n" +
+                "    TextMeshProUGUI,\n" +
+                "}\n" +
+                "public class Setter { TargetType t = TargetType.TextMeshProUGUI; }\n";
+
+            var result = TmpScriptRewriter.Rewrite(source);
+
+            Assert.IsTrue(result.Text.Contains("    TextMeshPro,\n    TextMeshProUGUI,\n"),
+                "an enum member was renamed");
+            Assert.IsTrue(result.Text.Contains("TargetType.TextMeshProUGUI"));
+
+            // Reported, so nobody wonders why those two lines are still there,
+            // but reported as what they are: names, which nothing is waiting on.
+            Assert.AreEqual(2, result.Residuals.Count);
+            Assert.AreEqual(TmpResidualKind.Declaration, result.Residuals[0].Kind);
+            Assert.AreEqual(TmpResidualKind.Declaration, result.Residuals[1].Kind);
+            Assert.IsTrue(result.Viable);
+        }
+
+        [TestCase("public class A { public UnityEngine.GameObject TextMeshPro; }")]
+        [TestCase("public class A { void TextMeshProUGUI() { } }")]
+        [TestCase("public class A { public int[] TMP_Text; }")]
+        [TestCase("public class A { public System.Action TextMeshPro; }")]
+        [TestCase("public class A { void F() { int TMP_Text = 3; } }")]
+        [TestCase("public class TextMeshPro { }")]
+        public void AName_That_Merely_Reads_Like_AType_IsNeverRenamed(string source)
+        {
+            // The worst of these is the first. Unity matches serialized fields
+            // by name, so renaming one does not fail to compile — it compiles,
+            // and every scene and prefab that ever set that field quietly comes
+            // up empty, with nothing anywhere to say so.
+            Assert.AreEqual(source, Rewrite(source));
+            Assert.IsFalse(TmpScriptRewriter.Rewrite(source).Changed);
+        }
+
+        [TestCase("public class A { public List<TMP_Text> labels; }")]
+        [TestCase("public class A { [SerializeField] TextMeshProUGUI label; }")]
+        [TestCase("public class A { void F() { var x = GetComponent<TextMeshProUGUI>(); } }")]
+        [TestCase("public class A { void F(TMP_Text a, TMP_Text b) { } }")]
+        [TestCase("public class A { void F() { foreach (TextMeshProUGUI l in all) { } } }")]
+        [TestCase("public class A { void F() { var x = o as TMP_Text; } }")]
+        [TestCase("public class A { void F() { var x = (TMP_Text)o; } }")]
+        [TestCase("public class A { void F() { var t = typeof(TMP_Text); } }")]
+        [TestCase("public class A : TMP_Text { }")]
+        [TestCase("public class A<T> where T : TMP_Text { }")]
+        [TestCase("public class A { public static void F(this TMP_Text t) { } }")]
+        [TestCase("public class A { void F(out TMP_Text t) { t = null; } }")]
+        [TestCase("public class A { TMP_Text F() { return null; } }")]
+        [TestCase("public class A { public TMP_Text Label => label; }")]
+        public void EveryPlace_AType_CanStand_IsStillRewritten(string source)
+        {
+            // The other direction of the same test, and the one that keeps the
+            // position rule from quietly becoming "never rewrite anything".
+            Assert.AreNotEqual(source, Rewrite(source), "a real type use was skipped");
+        }
+
+        [Test]
+        public void An_Attribute_And_An_Array_Both_End_In_A_Bracket()
+        {
+            // `[SerializeField] TMP_Text label;` and `int[] TextMeshPro;` differ
+            // only in what stands before the opening bracket, and they mean
+            // opposite things: one introduces a type, the other has just
+            // finished one and is naming it.
+            Assert.AreEqual("class A { [SerializeField] OneTextLabel label; }",
+                Rewrite("class A { [SerializeField] TMP_Text label; }"));
+            Assert.AreEqual("class A { public int[] TextMeshPro; }",
+                Rewrite("class A { public int[] TextMeshPro; }"));
+        }
+
+        [Test]
+        public void APosition_ItCannotRead_IsLeftAlone_And_Reported()
+        {
+            // Under-rewriting is a compile error with a line number on it, so a
+            // position the rule does not cover is declined rather than guessed.
+            var result = TmpScriptRewriter.Rewrite("class A { void F() { if (i > TMP_Text.Zero) { } } }");
+
+            Assert.IsFalse(result.Changed);
+            Assert.AreEqual(1, result.Residuals.Count);
+            Assert.AreEqual("TMP_Text", result.Residuals[0].Name);
+            Assert.AreEqual(TmpResidualKind.Reference, result.Residuals[0].Kind);
+        }
+
+        // ---------------------------------------------- the using and the rest
+
+        [Test]
+        public void AUsing_With_A_Note_After_It_Is_Still_AUsing()
+        {
+            // A real file, comment and all. The strict version of this declined
+            // the line and then let the type pass rewrite the file around it,
+            // which is a dead `using TMPro;` over types that are no longer in
+            // TMPro. The note belongs to whoever wrote it and comes along.
+            var result = TmpScriptRewriter.Rewrite(
+                "using TMPro; // TextMeshPro를 사용하는 경우\nclass A { TMP_Text t; }\n");
+
+            Assert.AreEqual("using OneText.UGUI; // TextMeshPro를 사용하는 경우\n" +
+                            "class A { OneTextLabel t; }\n", result.Text);
+            Assert.IsTrue(result.Viable);
+        }
+
+        [Test]
+        public void AComment_Outlives_AUsing_That_WasOnlyRemoved()
+        {
+            // Nothing needed writing here, so the line would have gone — but a
+            // line with a comment on it is not the rewriter's to delete.
+            Assert.AreEqual("using OneText.UGUI;\n// keep me\nclass A { OneTextLabel t; }\n",
+                Rewrite("using OneText.UGUI;\nusing TMPro; // keep me\nclass A { TMP_Text t; }\n"));
+        }
+
+        [Test]
+        public void AUsing_Line_It_CannotRead_Stops_TheWholeFile()
+        {
+            // Two statements on one line is not a shape this converts. What it
+            // must not do is rewrite the types anyway and leave them with no
+            // namespace, which is the same disagreement the comment caused.
+            const string source = "using TMPro; using UnityEngine;\nclass A { TMP_Text t; }\n";
+            var result = TmpScriptRewriter.Rewrite(source);
+
+            Assert.AreEqual(source, result.Text);
+            Assert.IsFalse(result.Changed);
+            Assert.IsFalse(result.Viable);
+            Assert.IsNotNull(result.Blocker);
+        }
+
+        [Test]
+        public void AFile_That_Would_Lose_TheUsing_It_Still_Needs_IsNot_Rewritten()
+        {
+            // DOTweenTextMeshPro.cs, in miniature. It reported eighteen
+            // residuals and rewrote the file regardless, taking `using TMPro;`
+            // with it and leaving every one of those eighteen names unresolved.
+            const string source =
+                "using TMPro;\n" +
+                "public static class DOTweenTMP\n" +
+                "{\n" +
+                "    public static void Shake(TMP_Text target)\n" +
+                "    {\n" +
+                "        TMP_MeshInfo[] info = target.textInfo.meshInfo;\n" +
+                "        TMP_CharacterInfo c = target.textInfo.characterInfo[0];\n" +
+                "    }\n" +
+                "}\n";
+
+            var result = TmpScriptRewriter.Rewrite(source);
+
+            Assert.AreEqual(source, result.Text, "a file that cannot compile was written anyway");
+            Assert.IsFalse(result.Changed);
+            Assert.IsFalse(result.Viable);
+            CollectionAssert.AreEqual(new[] { "TMP_MeshInfo", "TMP_CharacterInfo" },
+                result.BlockingNames);
+            Assert.IsNotEmpty(result.Blocker);
+        }
+
+        [Test]
+        public void AQualified_Name_DoesNot_Depend_On_TheUsing_And_DoesNot_Block()
+        {
+            // TMPro.TMP_Settings resolves with or without the using line, so it
+            // is work to do and not work in the way. A gate that could not tell
+            // the difference would refuse half the project.
+            var result = TmpScriptRewriter.Rewrite(
+                "using TMPro;\nclass A { TextMeshProUGUI l; TMPro.TMP_Settings s; }\n");
+
+            Assert.IsTrue(result.Viable);
+            Assert.IsTrue(result.Text.Contains("OneTextLabel l;"));
+            Assert.AreEqual(TmpResidualKind.Qualified, result.Residuals[0].Kind);
+        }
+
         // -------------------------------------------------------------- scan
 
         [Test]
@@ -354,6 +557,169 @@ namespace OneText.Tests
             }));
             Assert.IsEmpty(TmpScriptRewriter.Scan(null));
             Assert.IsEmpty(TmpScriptRewriter.ScriptsUnder("/no/such/folder/anywhere"));
+        }
+
+        [Test]
+        public void Somebody_Elses_Folder_Is_Flagged_And_Nothing_More()
+        {
+            // A flag, not a decision and not a vendor list. The Hub leaves these
+            // unticked; rewriting a package's own source is something a person
+            // chooses once and then maintains for ever.
+            Assert.IsTrue(TmpScriptRewriter.IsLikelyThirdParty("Assets/Plugins/DOTween/Foo.cs"));
+            Assert.IsTrue(TmpScriptRewriter.IsLikelyThirdParty("Assets/Standard Assets/Foo.cs"));
+            Assert.IsFalse(TmpScriptRewriter.IsLikelyThirdParty("Assets/Scripts/Hud.cs"));
+            Assert.IsFalse(TmpScriptRewriter.IsLikelyThirdParty(null));
+        }
+
+        // ---------------------------------------------------------- assembly
+
+        [Test]
+        public void AFile_Under_Somebody_Elses_Asmdef_Is_Told_What_It_Owes()
+        {
+            // Three rewritten files lived under an asmdef whose references were
+            // spine-unity, spine-csharp and Unity.TextMeshPro. Nothing in any of
+            // the three files was wrong; OneTextLabel simply was not visible
+            // from that assembly, twenty-one times over. autoReferenced does not
+            // reach here — it only covers the predefined assembly.
+            Folder(folder =>
+            {
+                string asmdef = Path.Combine(folder, "LayerLab.CommonSource.asmdef");
+                File.WriteAllText(asmdef,
+                    "{\n    \"name\": \"LayerLab.CommonSource\",\n    \"references\": [\n" +
+                    "        \"spine-unity\",\n        \"spine-csharp\",\n" +
+                    "        \"Unity.TextMeshPro\"\n    ]\n}",
+                    new UTF8Encoding(true));
+
+                string script = Path.Combine(folder, "Label.cs");
+                File.WriteAllText(script, "using TMPro;\nclass Label { TextMeshProUGUI l; }\n");
+
+                var report = TmpScriptRewriter.ScanProject(new List<string> { script }, folder);
+
+                Assert.AreEqual(1, report.Files.Count);
+                var finding = report.Files[0];
+                Assert.AreEqual("LayerLab.CommonSource", finding.Assembly.Name);
+                Assert.IsTrue(finding.NeedsAssemblyPatch);
+                CollectionAssert.AreEqual(new[] { "OneText", "OneText.UGUI" },
+                    finding.MissingReferences);
+
+                // The patch is a separate call on purpose: a scan that edited a
+                // vendor's asmdef would be operating during the diagnosis.
+                Assert.IsTrue(TmpAssemblyGraph.Patch(asmdef, finding.MissingReferences));
+
+                byte[] bytes = File.ReadAllBytes(asmdef);
+                Assert.AreEqual(0xEF, bytes[0], "the byte order mark did not survive");
+                Assert.IsTrue(File.ReadAllText(asmdef).Contains("\"spine-unity\","),
+                    "the existing references were reshaped");
+
+                var graph = TmpAssemblyGraph.Build(folder);
+                Assert.IsEmpty(graph.Missing(graph.Owner(script),
+                    new[] { "OneText", "OneText.UGUI" }));
+                Assert.IsFalse(TmpAssemblyGraph.Patch(asmdef, finding.MissingReferences),
+                    "a second patch wrote the references twice");
+            });
+        }
+
+        [Test]
+        public void AReference_Already_There_By_Guid_IsNot_Added_By_Name()
+        {
+            // Unity writes both forms and real projects contain both, sometimes
+            // in the same array. Adding the name beside the GUID would be the
+            // same assembly listed twice.
+            const string asmdef =
+                "{\n    \"name\": \"G\",\n    \"references\": [\n" +
+                "        \"GUID:f78bcd2f5c7814894929e319cfe7a2f9\"\n    ]\n}";
+
+            Assert.AreEqual(asmdef,
+                TmpAssemblyGraph.WithReferences(asmdef, new[] { "OneText.UGUI" }));
+            Assert.IsTrue(TmpAssemblyGraph.WithReferences(asmdef, new[] { "OneText" })
+                .Contains("\"OneText\""));
+        }
+
+        [Test]
+        public void AFile_In_The_Predefined_Assembly_Owes_Nothing()
+        {
+            Folder(folder =>
+            {
+                string script = Path.Combine(folder, "Hud.cs");
+                File.WriteAllText(script, "using TMPro;\nclass Hud { TextMeshProUGUI l; }\n");
+
+                var report = TmpScriptRewriter.ScanProject(new List<string> { script }, folder);
+
+                Assert.IsNull(report.Files[0].Assembly);
+                Assert.IsFalse(report.Files[0].NeedsAssemblyPatch);
+            });
+        }
+
+        // ------------------------------------------------------------ groups
+
+        [Test]
+        public void An_Extension_Method_And_Its_Callers_AreOne_Unit()
+        {
+            // TextMeshProExtensions declares DOTextWithCallbacks on a TMP_Text
+            // and CombatDiceView calls it. Convert either alone and it does not
+            // compile, and reverting the caller cannot save it, because it is
+            // the provider that moved. Nothing in the call site names the class
+            // that declares the method, so the method's own name is what ties
+            // the two files together.
+            Folder(folder =>
+            {
+                string provider = Path.Combine(folder, "TextMeshProExtensions.cs");
+                string consumer = Path.Combine(folder, "CombatDiceView.cs");
+                string alone = Path.Combine(folder, "Hud.cs");
+
+                File.WriteAllText(provider,
+                    "using TMPro;\npublic static class TextMeshProExtensions\n{\n" +
+                    "    public static void DOTextWithCallbacks(this TMP_Text target) { }\n}\n");
+                File.WriteAllText(consumer,
+                    "using TMPro;\npublic class CombatDiceView\n{\n    public TMP_Text label;\n" +
+                    "    void Play() { label.DOTextWithCallbacks(); }\n}\n");
+                File.WriteAllText(alone, "using TMPro;\nclass Hud { TextMeshProUGUI l; }\n");
+
+                var report = TmpScriptRewriter.ScanProject(
+                    new List<string> { provider, consumer, alone }, folder);
+
+                Assert.AreEqual(3, report.Files.Count);
+                Assert.AreEqual(1, report.Groups.Count, "a file that owes nothing was grouped");
+                CollectionAssert.AreEquivalent(new[] { provider, consumer },
+                    report.Groups[0].Paths);
+                Assert.AreEqual("DOTextWithCallbacks", report.Groups[0].Reason);
+            });
+        }
+
+        [Test]
+        public void APublic_Member_Written_In_TMP_Terms_Takes_Its_Readers_With_It()
+        {
+            Folder(folder =>
+            {
+                string provider = Path.Combine(folder, "LabelBank.cs");
+                string consumer = Path.Combine(folder, "Screen.cs");
+                File.WriteAllText(provider,
+                    "using TMPro;\npublic class LabelBank { public TMP_Text Title; }\n");
+                File.WriteAllText(consumer,
+                    "using TMPro;\npublic class Screen { LabelBank bank; TMP_Text t; }\n");
+
+                var report = TmpScriptRewriter.ScanProject(
+                    new List<string> { provider, consumer }, folder);
+
+                Assert.AreEqual(1, report.Groups.Count);
+                Assert.AreEqual(2, report.Groups[0].Paths.Count);
+                Assert.AreEqual("LabelBank", report.Groups[0].Reason);
+            });
+        }
+
+        private static void Folder(Action<string> body)
+        {
+            string folder = Path.Combine(Path.GetTempPath(),
+                "OneTextTmpScan" + System.Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                body(folder);
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
+            }
         }
     }
 }

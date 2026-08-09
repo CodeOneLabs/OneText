@@ -58,6 +58,14 @@ namespace OneText.UGUI
         [SerializeField] private UnityEvent<string> _onValueChanged = new UnityEvent<string>();
         [SerializeField] private UnityEvent<string> _onSubmit = new UnityEvent<string>();
 
+        // Serialized like the two above, and for the same reason: these are the
+        // events a field is wired up with, and a listener list that can only be
+        // built from code is half an event. See the parity region at the bottom
+        // for what each of them means.
+        [SerializeField] private UnityEvent<string> _onEndEdit = new UnityEvent<string>();
+        [SerializeField] private UnityEvent<string> _onSelect = new UnityEvent<string>();
+        [SerializeField] private UnityEvent<string> _onDeselect = new UnityEvent<string>();
+
         private readonly TextEditingModel _model = new TextEditingModel();
         private readonly List<Rect> _selectionRects = new List<Rect>();
         private readonly List<Rect> _compositionRects = new List<Rect>();
@@ -71,6 +79,9 @@ namespace OneText.UGUI
         private float _desiredCaretX = float.NaN;
         private bool _visualsDirty = true;
         private int _lastEditingFrame = -1;
+        // Whether the current value has already been reported as final. See
+        // RaiseEndEdit.
+        private bool _endEditReported;
 
         public string text
         {
@@ -83,6 +94,7 @@ namespace OneText.UGUI
                 _model.Text = value;
                 _text = _model.Text;
                 _visualsDirty = true;
+                _endEditReported = false;
                 _onValueChanged.Invoke(_text);
             }
         }
@@ -94,8 +106,17 @@ namespace OneText.UGUI
             set => SetCaret(value, extendSelection: false);
         }
 
-        /// <summary>The other end of the selection; equal to the caret when nothing is selected.</summary>
-        public int selectionAnchorPosition => _model.Anchor;
+        /// <summary>
+        /// The other end of the selection; equal to the caret when nothing is
+        /// selected. Assigning moves that end and leaves the caret where it is,
+        /// which together with <see cref="selectionFocusPosition"/> is how the
+        /// input fields this one is named after let a script select a range.
+        /// </summary>
+        public int selectionAnchorPosition
+        {
+            get => _model.Anchor;
+            set => SetSelection(value, _model.Caret);
+        }
 
         public bool isFocused => _focused;
 
@@ -215,12 +236,16 @@ namespace OneText.UGUI
         {
             base.OnSelect(eventData);
             Focus();
+            _onSelect.Invoke(_model.Text);
         }
 
         public override void OnDeselect(BaseEventData eventData)
         {
             base.OnDeselect(eventData);
+            // End the session first, so a listener on either event sees the
+            // committed value rather than whatever the IME was still holding.
             EndEditing();
+            _onDeselect.Invoke(_model.Text);
         }
 
         /// <summary>Gives the field keyboard focus.</summary>
@@ -262,6 +287,10 @@ namespace OneText.UGUI
             _focused = true;
             _blinkStart = Time.unscaledTime;
             _visualsDirty = true;
+            // Putting the caret back in the field reopens the question this
+            // session's value already answered, so the next end of it is
+            // reportable again.
+            _endEditReported = false;
             if (!wasFocused) StartInputMethod();
         }
 
@@ -288,6 +317,40 @@ namespace OneText.UGUI
             StopInputMethod();
             _visualsDirty = true;
             if (changed) Changed();
+            // Last, so onEndEdit carries the value the commit above produced
+            // and not the one it replaced.
+            RaiseEndEdit();
+        }
+
+        /// <summary>
+        /// Reports the value as final, once per editing session.
+        ///
+        /// Two things end an edit and both have to raise it: focus leaving,
+        /// which is where the composition is committed, and Return on a
+        /// single-line field, which is a user saying they are done. TextMesh
+        /// Pro collapses those — its Return deactivates the field, so the two
+        /// are one moment there — and OneText's Return leaves the caret where
+        /// it is, which is the behaviour that field has always had and not
+        /// something to change under a parity member. So the guard does the
+        /// collapsing instead: pressing Return and then clicking away reports
+        /// one end of edit, not two, and typing anything in between (or
+        /// clicking back into the field) makes the next one reportable again.
+        /// </summary>
+        private void RaiseEndEdit()
+        {
+            if (_endEditReported) return;
+            _endEditReported = true;
+            _onEndEdit.Invoke(_model.Text);
+        }
+
+        /// <summary>
+        /// The user committing the value with Return: both events, in the order
+        /// TextMesh Pro raises them.
+        /// </summary>
+        private void Submit()
+        {
+            _onSubmit.Invoke(_model.Text);
+            RaiseEndEdit();
         }
 
         private void StartInputMethod()
@@ -345,7 +408,7 @@ namespace OneText.UGUI
 
         public void OnSubmit(BaseEventData eventData)
         {
-            if (!_multiline) _onSubmit.Invoke(_model.Text);
+            if (!_multiline) Submit();
         }
 
         private int IndexAt(PointerEventData eventData)
@@ -506,7 +569,7 @@ namespace OneText.UGUI
                 case KeyCode.Return:
                 case KeyCode.KeypadEnter:
                     if (_multiline) Insert("\n");
-                    else _onSubmit.Invoke(_model.Text);
+                    else Submit();
                     return;
                 case KeyCode.A when command:
                     SelectAll();
@@ -566,6 +629,9 @@ namespace OneText.UGUI
             _text = _model.Text;
             _desiredCaretX = float.NaN;
             _visualsDirty = true;
+            // A new value is a new thing to report the end of, whatever was
+            // reported about the old one.
+            _endEditReported = false;
             _onValueChanged.Invoke(_text);
         }
 
@@ -745,6 +811,154 @@ namespace OneText.UGUI
             }
 
             _caret.SetComposition(_compositionRects, _clauseRects);
+        }
+
+        // ====================================================================
+        // Input-field parity
+        //
+        // Unlike the region at the bottom of OneTextLabel, nothing here is
+        // hidden from completion, because none of it is a second name for
+        // something. This class already speaks the input-field vocabulary —
+        // text, caretPosition, characterLimit, ActivateInputField — for the
+        // same reason Unity's own field and TextMesh Pro's both do: it is what
+        // the last twenty years of Unity code is written in, and a field that
+        // renamed all of it would be a field nobody could migrate to. The
+        // members below are the ones that vocabulary contains and this class
+        // was missing, found by converting a real project and reading the
+        // compiler errors.
+        //
+        // What is not here, and will not be: contentType. TextMesh Pro's
+        // password, email and integer modes are validation and masking, and
+        // OneText has neither, so the member could only accept the assignment
+        // and go on drawing the password in clear text. The Onboarding report
+        // names it instead, with what to do about it.
+        // ====================================================================
+
+        /// <summary>
+        /// Raised when the value stops being edited: focus leaves the field, or
+        /// the user commits with Return. Once per edit, and after the value has
+        /// settled, so the string it carries is final — which is what makes it
+        /// the right event for saving a setting or validating a name, where
+        /// <see cref="onValueChanged"/> would fire on every keystroke.
+        ///
+        /// A composition the input method was still assembling is committed
+        /// before this raises, so the last syllable is in the string.
+        /// </summary>
+        public UnityEvent<string> onEndEdit => _onEndEdit;
+
+        /// <summary>Raised when the field gains focus, carrying the value as it stood.</summary>
+        public UnityEvent<string> onSelect => _onSelect;
+
+        /// <summary>
+        /// Raised when the field loses focus. Fires after <see cref="onEndEdit"/>
+        /// and carries the same committed value.
+        /// </summary>
+        public UnityEvent<string> onDeselect => _onDeselect;
+
+        /// <summary>
+        /// Sets the value without raising <see cref="onValueChanged"/>.
+        ///
+        /// For the case that makes the ordinary setter awkward: a field that
+        /// listens to its own event to push edits somewhere, and has to be
+        /// refilled from that same somewhere without the refill reading as an
+        /// edit. Identical to assigning <see cref="text"/> in every other
+        /// respect — the same character limit applies, the caret is clamped the
+        /// same way, and the field redraws.
+        /// </summary>
+        public void SetTextWithoutNotify(string value)
+        {
+            value ??= string.Empty;
+            PushSettings();
+            if (_model.Text == value) return;
+            _model.Text = value;
+            _text = _model.Text;
+            _visualsDirty = true;
+            _endEditReported = false;
+        }
+
+        /// <summary>
+        /// The label drawn while the field is empty. The field owns it: it is
+        /// enabled and disabled as the value comes and goes.
+        /// </summary>
+        public OneTextLabel placeholder => _placeholder;
+
+        /// <summary>The caret end of the selection; the end that moves as you drag or shift-arrow.</summary>
+        public int selectionFocusPosition
+        {
+            get => _model.Caret;
+            set => SetSelection(_model.Anchor, value);
+        }
+
+        /// <summary>
+        /// The caret as an index into <see cref="text"/>.
+        ///
+        /// The same number as <see cref="caretPosition"/>, and it exists
+        /// because in TextMesh Pro it is not: that field counts its own
+        /// characters in one member and the string's UTF-16 units in the other,
+        /// and code written against the string index says so by using this
+        /// name. OneText only ever counted the string, so both names answer it.
+        /// </summary>
+        public int stringPosition
+        {
+            get => _model.Caret;
+            set => SetCaret(value, extendSelection: false);
+        }
+
+        /// <summary>
+        /// Puts the caret before the first character.
+        /// <paramref name="shift"/> extends the selection instead of collapsing it.
+        /// </summary>
+        public void MoveTextStart(bool shift) => SetCaret(0, shift);
+
+        /// <summary>
+        /// Puts the caret after the last character — the usual thing to do
+        /// after filling a field from code.
+        /// <paramref name="shift"/> extends the selection instead of collapsing it.
+        /// </summary>
+        public void MoveTextEnd(bool shift) => SetCaret(_model.Text.Length, shift);
+
+        /// <summary>
+        /// What Return does, in the three-way shape the other input fields
+        /// state it in. OneText holds the same decision as
+        /// <see cref="multiline"/>, one value narrower: this is the axis, and
+        /// the two names are the same setting.
+        /// </summary>
+        public enum LineType
+        {
+            /// <summary>One line; Return commits the value.</summary>
+            SingleLine = 0,
+
+            /// <summary>Several lines, but Return still commits rather than breaking.</summary>
+            MultiLineSubmit = 1,
+
+            /// <summary>Several lines; Return inserts a newline.</summary>
+            MultiLineNewline = 2,
+        }
+
+        /// <summary>
+        /// Parity alias for <see cref="multiline"/> in the three-value enum.
+        ///
+        /// Lossy in one direction, and the same loss the Onboarding migration
+        /// takes: <see cref="LineType.MultiLineSubmit"/> asks for two things at
+        /// once — several lines, and a Return that commits — and this field
+        /// spends one bit on both. It sets multiline, because losing the lines
+        /// is the more visible half of getting it wrong, and reads back as
+        /// <see cref="LineType.MultiLineNewline"/>. A field that genuinely
+        /// wants both should stay multiline and call the commit itself from a
+        /// key handler.
+        /// </summary>
+        public LineType lineType
+        {
+            get => _multiline ? LineType.MultiLineNewline : LineType.SingleLine;
+            set
+            {
+                // Guarded because MultiLineSubmit never reads back as itself,
+                // so the compare-then-assign idiom would otherwise re-assign
+                // every frame and redraw the field for it.
+                bool wanted = value != LineType.SingleLine;
+                if (_multiline == wanted) return;
+                multiline = wanted;
+            }
         }
     }
 }

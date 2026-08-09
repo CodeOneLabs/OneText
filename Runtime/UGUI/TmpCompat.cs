@@ -97,6 +97,26 @@ namespace OneText.UGUI
     }
 
     /// <summary>
+    /// TextMesh Pro's <c>TextOverflowModes</c>, same names, same values.
+    ///
+    /// OneText has three of the seven, because the other four are not
+    /// decisions about the text: Masking and ScrollRect are about what clips
+    /// it, Page and Linked are about where the rest of it goes. Each lands on
+    /// the nearest thing the layout can actually do — see
+    /// <see cref="TmpCompat.OverflowFromTmp"/>, which names the one it dropped.
+    /// </summary>
+    public enum TextOverflowModes
+    {
+        Overflow = 0,
+        Ellipsis = 1,
+        Masking = 2,
+        Truncate = 3,
+        ScrollRect = 4,
+        Page = 5,
+        Linked = 6,
+    }
+
+    /// <summary>
     /// The arithmetic between TextMesh Pro's units and OneText's, in one place.
     ///
     /// Both the runtime parity aliases on <see cref="OneTextLabel"/> and the
@@ -269,5 +289,60 @@ namespace OneText.UGUI
 
         public static TextWrap WrapFromWordWrapping(bool enabled) =>
             enabled ? TextWrap.Wrap : TextWrap.NoWrap;
+
+        // ------------------------------------------------------------ overflow
+
+        /// <summary>
+        /// Maps <c>TextOverflowModes</c>. <paramref name="unsupported"/> is the
+        /// TMP mode's name when OneText has nothing like it and the nearest
+        /// behaviour was chosen instead.
+        ///
+        /// Four of the seven are that case, and they divide into two kinds.
+        /// Masking and ScrollRect say something clips the text without
+        /// shortening it, which is a job for a RectMask2D or a ScrollRect and
+        /// not for the layout: Masking takes Truncate because a mask that hides
+        /// the overflow and a layout that drops it read the same on screen,
+        /// ScrollRect takes Overflow because the scroll view wants the whole
+        /// block to exist so it has something to scroll. Page and Linked say
+        /// the remainder continues somewhere else, which OneText does not do at
+        /// all; Page keeps the first page's worth by truncating, and Linked —
+        /// whose remainder had a second component to land in — keeps everything
+        /// rather than silently losing the half that used to be visible next
+        /// door.
+        /// </summary>
+        public static TextOverflow OverflowFromTmp(TextOverflowModes mode, out string unsupported)
+        {
+            unsupported = null;
+            switch (mode)
+            {
+                case TextOverflowModes.Ellipsis: return TextOverflow.Ellipsis;
+                case TextOverflowModes.Truncate: return TextOverflow.Truncate;
+                case TextOverflowModes.Masking:
+                    unsupported = "Masking";
+                    return TextOverflow.Truncate;
+                case TextOverflowModes.ScrollRect:
+                    unsupported = "ScrollRect";
+                    return TextOverflow.Overflow;
+                case TextOverflowModes.Page:
+                    unsupported = "Page";
+                    return TextOverflow.Truncate;
+                case TextOverflowModes.Linked:
+                    unsupported = "Linked";
+                    return TextOverflow.Overflow;
+                default: return TextOverflow.Overflow;
+            }
+        }
+
+        /// <summary>
+        /// And back. Never answers one of the four with no counterpart, so a
+        /// label set to <c>Masking</c> reads back as <c>Truncate</c>, which is
+        /// what it is actually doing.
+        /// </summary>
+        public static TextOverflowModes OverflowToTmp(TextOverflow overflow) => overflow switch
+        {
+            TextOverflow.Ellipsis => TextOverflowModes.Ellipsis,
+            TextOverflow.Truncate => TextOverflowModes.Truncate,
+            _ => TextOverflowModes.Overflow,
+        };
     }
 }

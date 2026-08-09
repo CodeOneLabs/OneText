@@ -71,7 +71,7 @@ namespace OneText.Tests
             tmp.fontSizeMin = 13f;
             tmp.fontSizeMax = 55f;
             tmp.alignment = TMPro.TextAlignmentOptions.BottomRight;
-            tmp.overflowMode = TextOverflowModes.Ellipsis;
+            tmp.overflowMode = TMPro.TextOverflowModes.Ellipsis;
             tmp.lineSpacing = 25f;
             tmp.richText = true;
             tmp.color = new Color(0.1f, 0.2f, 0.3f, 0.4f);
@@ -140,7 +140,7 @@ namespace OneText.Tests
             var go = NewObject("Paged");
             var tmp = go.AddComponent<TextMeshProUGUI>();
             tmp.text = "paged";
-            tmp.overflowMode = TextOverflowModes.Page;
+            tmp.overflowMode = TMPro.TextOverflowModes.Page;
 
             var report = ComponentMigration.ScanInPlace(new[] { go }, "(test)");
             Assert.AreEqual(1, CountOf(report, "overflow-approximated"));
