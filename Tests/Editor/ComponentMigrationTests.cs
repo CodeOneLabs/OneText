@@ -464,6 +464,103 @@ namespace OneText.Tests
             finally { DropFolder(); }
         }
 
+        /// <summary>
+        /// The host prefab as it stands after the script rewrite: the field is
+        /// declared as the OneText type, and the file still names the Text it
+        /// was pointing at before anybody edited the script.
+        ///
+        /// The swap is done to the saved file rather than through the editor
+        /// because the editor will not write a mismatch — assigning a
+        /// <c>Text</c> to a <c>OneTextLabel</c> field through a SerializedObject
+        /// is refused. Editing the .cs file creates exactly this mismatch for
+        /// free, in every real migration, which is why it has to be built this
+        /// way to be seen at all.
+        /// </summary>
+        private static string RewrittenHost(string leafPath)
+        {
+            string path = $"{CrossFolder}/RewrittenHost.prefab";
+
+            var root = new GameObject("RewrittenHost", typeof(RectTransform));
+            var nested = (GameObject)PrefabUtility.InstantiatePrefab(
+                AssetDatabase.LoadAssetAtPath<GameObject>(leafPath));
+            nested.transform.SetParent(root.transform, false);
+            root.AddComponent<CrossContainerTyped>().Typed =
+                nested.GetComponentInChildren<Text>(true);
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            Object.DestroyImmediate(root);
+
+            string before = ScriptGuidOf<CrossContainerTyped>();
+            string after = ScriptGuidOf<CrossContainerRewritten>();
+            string text = System.IO.File.ReadAllText(path);
+            Assert.IsTrue(text.Contains(before), "the saved prefab does not name the script to swap");
+
+            // The file has to be naming a component for any of this to mean
+            // anything. If the field ever saved as {fileID: 0} — a fixture that
+            // stopped finding the label, a Unity that stopped writing the
+            // reference — the test below would still see an empty field, still
+            // demand it be filled, and be asking for something no fix can give.
+            Assert.IsTrue(
+                System.Text.RegularExpressions.Regex.IsMatch(text, @"Typed: \{fileID: [1-9]"),
+                "the saved prefab does not name a component in its 'Typed' field, so the state " +
+                "this test exists to stand in has not been built");
+
+            System.IO.File.WriteAllText(path, text.Replace(before, after));
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            return path;
+        }
+
+        [Test]
+        public void AFieldTheScriptRewriteAlreadyEmptied_IsStillMendedOrNamed()
+        {
+            // Measured on a real project, and the one shape that is silent.
+            //
+            // Scripts are rewritten before components are converted — that is
+            // the order the Hub asks for and the only order that compiles. The
+            // moment the assembly reloads, every narrowly typed field naming a
+            // TMP component reads None, because the file still names a component
+            // the field can no longer hold. The census then runs, reads the
+            // field, finds nothing there, and writes nothing down: it only ever
+            // records references that are alive when it looks. Nothing is
+            // recorded, so nothing is mended and nothing is reported, and the
+            // conversion goes ahead over a reference that has already been cut.
+            //
+            // The field is mendable — it is declared as the type that is about
+            // to exist — which is what makes this worse than the refusals the
+            // module already reports. Those tell the user where to go; this one
+            // leaves a project with empty fields and a clean report.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string host = RewrittenHost(leaf);
+                AssetDatabase.Refresh();
+
+                var rewritten = AssetDatabase.LoadAssetAtPath<GameObject>(host)
+                    .GetComponent<CrossContainerRewritten>();
+                Assert.IsNotNull(rewritten, "the script swap did not take");
+                Assert.IsTrue(rewritten.Typed == null,
+                    "the field still holds something, so this test is no longer standing where " +
+                    "the bug is: the point of it is that the rewrite emptied the field before " +
+                    "the migration ever ran");
+
+                var report = ComponentMigration.Apply(Only(leaf, host));
+
+                var after = AssetDatabase.LoadAssetAtPath<GameObject>(host)
+                    .GetComponent<CrossContainerRewritten>();
+                Assert.IsFalse(after.Typed == null,
+                    "the field reads None: it was emptied by the script rewrite, the component " +
+                    "it named was replaced during this run, and nothing put the replacement back");
+                Assert.AreEqual("Label", after.Typed.gameObject.name,
+                    "the field was pointed at the wrong object");
+
+                // Whatever else happens, this must never be silent: a run that
+                // cannot mend it has to say which field it left empty.
+                Assert.Greater(CountOf(report, ContainerReferences.Rule), 0,
+                    "a field this run left empty was neither mended nor named");
+            }
+            finally { DropFolder(); }
+        }
+
         [Test]
         public void AScriptableObjectPointingIntoAPrefab_IsPointedAtWhatReplacedIt()
         {

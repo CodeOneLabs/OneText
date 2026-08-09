@@ -34,14 +34,52 @@ namespace OneText.Editor
             return false;
         }
 
+        /// <summary>Mirrors the switch in <see cref="Inspect"/>; keep the two together.</summary>
+        public MigrationKind KindOf(System.Type scriptType)
+        {
+            if (scriptType == null) return MigrationKind.None;
+            if (typeof(Text).IsAssignableFrom(scriptType)) return MigrationKind.Label;
+            if (typeof(TextMesh).IsAssignableFrom(scriptType)) return MigrationKind.Mesh;
+            if (typeof(Dropdown).IsAssignableFrom(scriptType)) return MigrationKind.Dropdown;
+            return MigrationKind.None;
+        }
+
         public MigrationTarget Inspect(Component component, string container, string path)
         {
             if (component is Text text) return FromUiText(text, container, path);
             if (component is TextMesh mesh) return FromTextMesh(mesh, container, path);
+            if (component is Dropdown dropdown) return FromDropdown(dropdown, container, path);
             return null;
         }
 
         // ------------------------------------------------------ UnityEngine.UI
+
+        /// <summary>
+        /// A dropdown carries no text of its own — its caption and its rows are
+        /// separate label components, each found and converted in its own right.
+        /// What it carries is two fields naming those labels, and they are the
+        /// reason it has to be swapped for one whose fields are wide enough.
+        /// </summary>
+        private static MigrationTarget FromDropdown(Dropdown dropdown, string container, string path)
+        {
+            var target = new MigrationTarget
+            {
+                Kind = MigrationKind.Dropdown,
+                ComponentType = nameof(Dropdown),
+                Provider = "Unity UI",
+                Source = dropdown,
+                Container = container,
+                Path = path,
+                Values = new MigrationValues(),
+            };
+
+            // Noted here, during the scan, because here is the last moment they
+            // can be: the labels are converted before the dropdown is, and a
+            // field naming a destroyed component reads None.
+            target.Companions.Add(dropdown.captionText != null ? dropdown.captionText.gameObject : null);
+            target.Companions.Add(dropdown.itemText != null ? dropdown.itemText.gameObject : null);
+            return target;
+        }
 
         private static MigrationTarget FromUiText(Text text, string container, string path)
         {

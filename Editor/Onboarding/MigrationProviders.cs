@@ -29,6 +29,23 @@ namespace OneText.Editor
         MigrationTarget Inspect(Component component, string container, string path);
 
         /// <summary>
+        /// What a component of this script type would become, asked without an
+        /// instance to look at. <see cref="MigrationKind.None"/> when it is not
+        /// one of this provider's.
+        ///
+        /// It exists for the references that have to be read off the file rather
+        /// than out of the hierarchy. A field whose script was rewritten before
+        /// the components were converted names a component Unity will not bind —
+        /// it hands back nothing at all, not even the id — so the only record of
+        /// what it pointed at is the serialized text, and the only thing that
+        /// text has to identify the target with is a script guid. Answering from
+        /// the type keeps that knowledge here, next to the switch in
+        /// <see cref="Inspect"/> it has to agree with, instead of in a second
+        /// table somewhere that would drift.
+        /// </summary>
+        MigrationKind KindOf(System.Type scriptType);
+
+        /// <summary>
         /// The project-wide font defaults this provider knows about, if any:
         /// TMP's default font asset and global fallbacks, as source font file
         /// paths. False when the provider has no such notion.

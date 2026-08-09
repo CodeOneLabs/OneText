@@ -20,6 +20,18 @@ namespace OneText.Editor
         InputField,
 
         /// <summary>
+        /// Becomes <c>OneTextDropdown</c>.
+        ///
+        /// A dropdown is here for its two labels rather than for itself:
+        /// <c>UnityEngine.UI.Dropdown</c> declares them as <c>Text</c>, nothing
+        /// can widen that, and converting the labels it points at leaves it with
+        /// a blank caption and empty rows. It is converted last of everything on
+        /// its container, because it has to be handed labels that already are
+        /// what they are going to be.
+        /// </summary>
+        Dropdown,
+
+        /// <summary>
         /// Found, named in the report, and left alone: there is no OneText
         /// counterpart to swap in. A dropdown is the whole of this category
         /// today, and pretending otherwise would be worse than saying so.
@@ -215,11 +227,23 @@ namespace OneText.Editor
 
         public MigrationValues Values;
 
+        /// <summary>
+        /// Objects this target names and will have to name again afterwards,
+        /// noted while it is still able to name them.
+        ///
+        /// A dropdown's caption and item labels are the case. It is converted
+        /// last, after those labels have been swapped, and by then its own
+        /// fields read None — the components they named were destroyed. The
+        /// objects survive; the references to the components do not.
+        /// </summary>
+        public readonly List<GameObject> Companions = new List<GameObject>();
+
         public readonly List<MigrationFinding> Findings = new List<MigrationFinding>();
 
         public bool Convertible => Kind == MigrationKind.Label ||
                                    Kind == MigrationKind.Mesh ||
-                                   Kind == MigrationKind.InputField;
+                                   Kind == MigrationKind.InputField ||
+                                   Kind == MigrationKind.Dropdown;
 
         public MigrationFinding Note(DoctorSeverity severity, string rule, string message,
             string sample = null)

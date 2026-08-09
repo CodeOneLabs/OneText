@@ -160,6 +160,32 @@ namespace OneText.Editor
             /// <summary>Why it could not be re-pointed, when something specific went wrong.</summary>
             public string Trouble;
 
+            /// <summary>
+            /// True when this was read off the file rather than out of the
+            /// hierarchy, because the hierarchy no longer holds it.
+            ///
+            /// Two things put a reference here, and neither is the user's doing:
+            /// the script rewrite gave the field a type the stored pointer
+            /// cannot satisfy, so Unity dropped the pointer on import; or the
+            /// component holding it has no script in the project and never
+            /// loaded at all. Both are invisible to a census that reads live
+            /// objects, and both leave the file saying exactly what was meant.
+            ///
+            /// It is never reported on its own evidence. A severed reference is
+            /// only this run's business if this run converted the container it
+            /// named — otherwise it was already broken when we arrived, and
+            /// saying so would be blaming the migration for the state of the
+            /// project.
+            /// </summary>
+            public bool Severed;
+
+            /// <summary>
+            /// True when nothing in the hierarchy could be found to hold this —
+            /// a component whose script is missing. It can be named but not
+            /// mended: there is no field to write to until the script comes back.
+            /// </summary>
+            public bool Unreachable;
+
             public override string ToString() =>
                 $"{Referrer}:{ReferrerPath}.{PropertyPath} -> {Target}:{TargetPath}";
         }
@@ -382,7 +408,142 @@ namespace OneText.Editor
                         component.GetType().Name, cache);
                 }
             }
+
+            // Everything the hierarchy could not be asked about. Second, because
+            // a reference the walk above found is the better record of the two:
+            // it knows the component it is on, and it can be mended.
+            found += RecordSevered(roots, container);
             return found;
+        }
+
+        /// <summary>
+        /// The references this container's file still spells out and its loaded
+        /// objects no longer hold — see <see cref="ContainerFile"/> for why they
+        /// exist and why the file is the only place left to read them.
+        /// </summary>
+        private int RecordSevered(GameObject[] roots, string container)
+        {
+            var stored = ContainerFile.Read(container);
+            if (stored.Count == 0) return 0;
+
+            Dictionary<string, List<Component>> byScript = null;
+            int found = 0;
+
+            foreach (var entry in stored)
+            {
+                var kind = ContainerFile.KindOfScript(entry.TargetScript);
+                if (!Convertible(kind)) continue;
+
+                string target = AssetDatabase.GUIDToAssetPath(entry.TargetGuid);
+                if (string.IsNullOrEmpty(target) || target == container) continue;
+
+                // Asked of the target's own file, which has not been converted
+                // yet at census time, so the object the id names is still there
+                // to be measured rather than guessed at.
+                string targetPath = PathInside(target, entry.TargetFileId);
+                if (targetPath == null) continue;
+
+                if (byScript == null) byScript = ByScript(roots);
+                var referrer = Holder(byScript, entry);
+
+                var reference = new CrossReference
+                {
+                    Referrer = container,
+                    ReferrerPath = referrer == null
+                        ? null
+                        : ComponentMigration.PathOf(referrer.transform),
+                    ReferrerType = referrer == null
+                        ? ScriptName(entry.ReferrerScript)
+                        : referrer.GetType().Name,
+                    ReferrerIndex = IndexOf(referrer),
+                    PropertyPath = entry.PropertyPath,
+                    Target = target,
+                    TargetPath = targetPath,
+                    TargetComponent = ScriptName(entry.TargetScript),
+                    TargetKind = kind,
+                    Nested = true,
+                    Severed = true,
+                    Unreachable = referrer == null,
+                };
+                if (Add(reference)) found++;
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// The component the file says holds this field, matched by the script
+        /// it runs. Null when the project has no such script, which is the whole
+        /// of why some of these were never read in the first place.
+        /// </summary>
+        private static Component Holder(Dictionary<string, List<Component>> byScript, ContainerFile.StoredReference entry)
+        {
+            if (string.IsNullOrEmpty(entry.ReferrerScript)) return null;
+            if (!byScript.TryGetValue(entry.ReferrerScript, out var candidates)) return null;
+            if (candidates.Count == 1) return candidates[0];
+
+            // Several components run the same script. The one this belongs to is
+            // the one that has the field and is not holding anything in it —
+            // which is what "severed" means and what tells it from a sibling
+            // that is perfectly fine.
+            foreach (var candidate in candidates)
+            {
+                var property = new SerializedObject(candidate).FindProperty(entry.PropertyPath);
+                if (property != null &&
+                    property.propertyType == SerializedPropertyType.ObjectReference &&
+                    property.objectReferenceValue == null)
+                    return candidate;
+            }
+            return null;
+        }
+
+        private static Dictionary<string, List<Component>> ByScript(GameObject[] roots)
+        {
+            var byScript = new Dictionary<string, List<Component>>(StringComparer.Ordinal);
+            foreach (var root in roots)
+            {
+                if (root == null) continue;
+                foreach (var component in root.GetComponentsInChildren<Component>(true))
+                {
+                    if (!(component is MonoBehaviour behaviour)) continue;
+
+                    var script = MonoScript.FromMonoBehaviour(behaviour);
+                    if (script == null) continue;
+                    string guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(script));
+                    if (string.IsNullOrEmpty(guid)) continue;
+
+                    if (!byScript.TryGetValue(guid, out var list))
+                        byScript[guid] = list = new List<Component>();
+                    list.Add(component);
+                }
+            }
+            return byScript;
+        }
+
+        /// <summary>Where the object with this id sits inside its own container.</summary>
+        private static string PathInside(string container, long fileId)
+        {
+            UnityEngine.Object[] objects;
+            try { objects = AssetDatabase.LoadAllAssetsAtPath(container); }
+            catch (Exception) { return null; }
+            if (objects == null) return null;
+
+            foreach (var asset in objects)
+            {
+                if (!(asset is Component component)) continue;
+                if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out _, out long id)) continue;
+                if (id != fileId) continue;
+                return ComponentMigration.PathOf(component.transform);
+            }
+            return null;
+        }
+
+        private static string ScriptName(string guid)
+        {
+            if (string.IsNullOrEmpty(guid)) return "a missing script";
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            return string.IsNullOrEmpty(path)
+                ? "a missing script"
+                : System.IO.Path.GetFileNameWithoutExtension(path);
         }
 
         private int Walk(UnityEngine.Object subject, string container, string referrerPath,
@@ -563,8 +724,25 @@ namespace OneText.Editor
 
             if (property.objectReferenceValue != null)
             {
-                reference.Settled = true;
-                return null;
+                // For a reference the hierarchy told us about, a field holding
+                // something is the end of it: nothing broke.
+                //
+                // For one read off the file it proves nothing, because the file
+                // and the loaded object can disagree. A component that fills its
+                // own serialized fields when it loads — "if (!countText)
+                // countText = GetComponentInChildren<…>()", which is an ordinary
+                // thing for a project to write — hands back a value that was
+                // never written down. Believe it and the field is marked settled
+                // while the file still names a component that no longer exists,
+                // and the file is what ships. Measured on a real project: two
+                // prefabs went silent for exactly this reason while their
+                // neighbours, whose scripts do not self-heal, were mended.
+                if (!reference.Severed)
+                {
+                    reference.Settled = true;
+                    return null;
+                }
+                return property;
             }
 
             reference.Broken = true;
@@ -923,15 +1101,33 @@ namespace OneText.Editor
                                         ? "the replacement could not be identified"
                                         : reference.Trouble) +
                                     ". Deal with that and convert again, or set the field by hand."
-                                  : ", because that container was converted and the asset holding " +
-                                    "this field was not part of this run. Include it and convert " +
-                                    "again, or set the field by hand."),
+                                  : reference.Severed
+                                      ? Severance(reference)
+                                      : ", because that container was converted and the asset " +
+                                        "holding this field was not part of this run. Include it " +
+                                        "and convert again, or set the field by hand."),
                     Container = reference.Referrer,
                     Path = reference.ReferrerPath,
                     Component = reference.ReferrerType,
                 });
             }
         }
+
+        /// <summary>
+        /// What to say about a reference that was gone before the census could
+        /// see it. The two causes need different sentences because they need
+        /// different things done about them.
+        /// </summary>
+        private static string Severance(CrossReference reference) =>
+            reference.Unreachable
+                ? ". The component holding it, " + reference.ReferrerType + ", has no script in " +
+                  "this project, so nothing could read the field, let alone write to it. Restore " +
+                  "the script and convert again, or set the field by hand afterwards."
+                : ". The field had already been emptied before this run reached it: the script " +
+                  "rewrite gave it a OneText type while the file still named a TextMesh Pro " +
+                  "component, and Unity drops a pointer it cannot bind. It is named here because " +
+                  "the file still says what it meant. Set it by hand, or undo the conversion of " +
+                  reference.Target + " and convert both together.";
 
         // ---------------------------------------------------------------- cache
 

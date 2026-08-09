@@ -37,6 +37,22 @@ namespace OneText.Editor
     {
         public string Name => MigrationProviders.TextMeshProName;
 
+        /// <summary>
+        /// Mirrors the switch in <see cref="Inspect"/>; keep the two together.
+        ///
+        /// Assignability rather than equality, because a project that subclassed
+        /// <c>TextMeshProUGUI</c> has a script guid of its own and the reference
+        /// read off the file names that one.
+        /// </summary>
+        public MigrationKind KindOf(System.Type scriptType)
+        {
+            if (scriptType == null) return MigrationKind.None;
+            if (typeof(TextMeshProUGUI).IsAssignableFrom(scriptType)) return MigrationKind.Label;
+            if (typeof(TextMeshPro).IsAssignableFrom(scriptType)) return MigrationKind.Mesh;
+            if (typeof(TMP_InputField).IsAssignableFrom(scriptType)) return MigrationKind.InputField;
+            return MigrationKind.None;
+        }
+
         public MigrationTarget Inspect(Component component, string container, string path)
         {
             switch (component)
