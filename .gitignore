@@ -14,3 +14,6 @@ UserSettings/
 # Tools/fetch_coverage_fonts.py, never committed. The trailing tilde also
 # keeps Unity from importing them as assets.
 Tests/CoverageFonts~/
+
+# Personal engineering notes: kept locally, not part of the package
+Notes~/
