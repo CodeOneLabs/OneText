@@ -4,6 +4,7 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.UI;
 using OneText.UGUI;
 
 namespace OneText.Editor
@@ -149,10 +150,29 @@ namespace OneText.Editor
             var fonts = new FontAssetCache(report);
             if (convert && options.AdoptProjectFontDefaults) AdoptDefaults(fonts, report);
 
+            // One bar over both loops, because to the person waiting this is one
+            // job. A migration of a real project takes minutes with the editor
+            // frozen for all of them, and an editor that is frozen and silent is
+            // one a first-time user force-quits — halfway through, which is the
+            // one state this module works hardest to avoid.
+            using (var progress = new Progress(convert ? "Converting text components"
+                                                       : "Scanning text components",
+                       Wanted(prefabs, options) + Wanted(scenes, options)))
             try
             {
-                RunPrefabs(prefabs, options, convert, report, fonts, references);
-                RunScenes(scenes, options, convert, report, fonts, references);
+                RunPrefabs(prefabs, options, convert, report, fonts, references, progress);
+                if (!progress.Cancelled)
+                    RunScenes(scenes, options, convert, report, fonts, references, progress);
+                if (progress.Cancelled)
+                    report.Add(new MigrationFinding
+                    {
+                        Severity = DoctorSeverity.Warning,
+                        Rule = "cancelled",
+                        Message = "you stopped this part way through. Everything already " +
+                                  "converted is converted and saved; nothing was left half " +
+                                  "written. Run it again to finish — it picks up where the " +
+                                  "project is, not where it left off.",
+                    });
 
                 if (references != null && !convert) references.Report(report);
                 else if (references != null)
@@ -174,6 +194,67 @@ namespace OneText.Editor
                 }
             }
             return report;
+        }
+
+        private static int Wanted(List<string> paths, Options options)
+        {
+            int count = 0;
+            foreach (string path in paths) if (options.Wants(path)) count++;
+            return count;
+        }
+
+        /// <summary>
+        /// The bar, and the cancel button on it.
+        ///
+        /// Cancelling is offered because the alternative is not "it finishes" —
+        /// it is the user killing the editor, which they will, because a window
+        /// that has not moved in four minutes looks broken whatever it is doing.
+        /// The check happens between containers, where a prefab is either fully
+        /// converted and written or not opened at all, so stopping there leaves
+        /// the project in a state the next run can simply carry on from.
+        ///
+        /// Silent in batch mode: there is nobody to show it to, it cannot be
+        /// cancelled, and drawing it per container costs a project-sized number
+        /// of no-ops in CI.
+        /// </summary>
+        private sealed class Progress : IDisposable
+        {
+            private readonly string _title;
+            private readonly int _total;
+            private readonly bool _shown;
+            private int _done;
+
+            public bool Cancelled { get; private set; }
+
+            public Progress(string title, int total)
+            {
+                _title = title;
+                _total = Mathf.Max(1, total);
+                _shown = !Application.isBatchMode && total > 0;
+            }
+
+            /// <summary>
+            /// Announces the container about to be opened. Returns false when the
+            /// user has asked to stop, which every loop treats as "do no more".
+            /// </summary>
+            public bool Step(string container)
+            {
+                _done++;
+                if (!_shown || Cancelled) return !Cancelled;
+
+                // The path rather than a count, because the useful question
+                // while waiting is "is it stuck?", and a name that keeps
+                // changing answers it.
+                if (EditorUtility.DisplayCancelableProgressBar(_title,
+                        $"{_done}/{_total}  {container}", (float)_done / _total))
+                    Cancelled = true;
+                return !Cancelled;
+            }
+
+            public void Dispose()
+            {
+                if (_shown) EditorUtility.ClearProgressBar();
+            }
         }
 
         /// <summary>
@@ -251,11 +332,13 @@ namespace OneText.Editor
         /// same reason the whole module has to be idempotent.
         /// </summary>
         private static void RunPrefabs(List<string> paths, Options options, bool convert,
-            MigrationReport report, FontAssetCache fonts, ContainerReferences references)
+            MigrationReport report, FontAssetCache fonts, ContainerReferences references,
+            Progress progress)
         {
             foreach (string path in paths)
             {
                 if (!options.Wants(path)) continue;
+                if (!progress.Step(path)) return;
                 report.ContainersScanned++;
 
                 GameObject root = null;
@@ -327,7 +410,8 @@ namespace OneText.Editor
         }
 
         private static void RunScenes(List<string> paths, Options options, bool convert,
-            MigrationReport report, FontAssetCache fonts, ContainerReferences references)
+            MigrationReport report, FontAssetCache fonts, ContainerReferences references,
+            Progress progress)
         {
             if (paths.Count == 0) return;
 
@@ -337,6 +421,9 @@ namespace OneText.Editor
                 foreach (string path in paths)
                 {
                     if (!options.Wants(path)) continue;
+                    // Stopping here still restores the scene setup below, which
+                    // is the whole reason the check is inside the try.
+                    if (!progress.Step(path)) return;
                     report.ContainersScanned++;
 
                     var scene = default(UnityEngine.SceneManagement.Scene);
@@ -557,7 +644,15 @@ namespace OneText.Editor
             return made.Count;
         }
 
-        private static int Rank(MigrationKind kind) => kind == MigrationKind.InputField ? 1 : 0;
+        /// <summary>
+        /// What order the components on one container are converted in.
+        ///
+        /// A dropdown goes last of all because the swap has to hand its new
+        /// component the labels it points at, and those labels are only
+        /// <c>OneTextLabel</c> once they have been converted themselves.
+        /// </summary>
+        private static int Rank(MigrationKind kind) =>
+            kind == MigrationKind.Dropdown ? 2 : kind == MigrationKind.InputField ? 1 : 0;
 
         // ------------------------------------------------------------ collect
 
@@ -781,6 +876,13 @@ namespace OneText.Editor
         {
             var go = target.Source.gameObject;
 
+            // A dropdown is the one thing here whose values cannot be captured
+            // in advance: options, the event's persistent calls and the whole of
+            // Selectable's state are serialized structures, not the handful of
+            // scalars a label carries, and a SerializedObject dies with the
+            // object it reads. So this one is built before the old one goes.
+            if (target.Kind == MigrationKind.Dropdown) return ReplaceDropdown(target, go, undo);
+
             if (undo) Undo.DestroyObjectImmediate(target.Source);
             else UnityEngine.Object.DestroyImmediate(target.Source);
 
@@ -806,6 +908,104 @@ namespace OneText.Editor
             ApplyValues(made, target, fonts, undo);
             return made;
         }
+
+        /// <summary>
+        /// The dropdown swap: the new component alongside the old, every shared
+        /// field copied across by path, the two labels re-pointed, and only then
+        /// the old one destroyed.
+        ///
+        /// The fields are copied rather than read and re-set because two of them
+        /// cannot be read and re-set. <c>m_Options</c> is a list of a serializable
+        /// class and <c>m_OnValueChanged</c> is a UnityEvent whose persistent
+        /// calls are what a designer wired in the inspector; losing either would
+        /// leave a dropdown that converts cleanly, reports nothing, and is empty
+        /// or dead when the game runs. <c>SerializedObject.CopyFromSerializedProperty</c>
+        /// moves them whole, which is the reason this component's fields are
+        /// named exactly as Unity's are.
+        /// </summary>
+        private static Component ReplaceDropdown(MigrationTarget target, GameObject go, bool undo)
+        {
+            var old = (Dropdown)target.Source;
+
+            // Read off the target rather than off the component: by now the
+            // labels have been converted and the old dropdown's own fields, which
+            // named the components that were destroyed to do it, read None. The
+            // scan wrote the objects down while it still could.
+            var captionObject = target.Companions.Count > 0 ? target.Companions[0] : null;
+            var itemObject = target.Companions.Count > 1 ? target.Companions[1] : null;
+
+            // Both cannot sit on one object — a Selectable is exclusive — so the
+            // values go through a component on a scratch object: copied off the
+            // old one while it is still there, then onto the new one once it is
+            // not. Two copies rather than one, and no moment where the values
+            // exist nowhere.
+            // The carrier needs the RectTransform OneTextDropdown asks for before
+            // it can hold one at all: a GameObject made with a plain Transform
+            // takes the component and hands back null.
+            var scratch = new GameObject("OneText dropdown carrier", typeof(RectTransform))
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+            OneTextDropdown made;
+            try
+            {
+                var carrier = scratch.AddComponent<OneTextDropdown>();
+                if (carrier == null)
+                    throw new InvalidOperationException("the carrier would not take a OneTextDropdown");
+                Carry(new SerializedObject(old), new SerializedObject(carrier));
+
+                if (undo) Undo.DestroyObjectImmediate(old);
+                else UnityEngine.Object.DestroyImmediate(old);
+
+                EnsureRect(go, undo);
+                made = Add<OneTextDropdown>(go, undo);
+                if (made == null)
+                {
+                    var present = new List<string>();
+                    foreach (var each in go.GetComponents<Component>())
+                        present.Add(each == null ? "(missing script)" : each.GetType().Name);
+                    throw new InvalidOperationException(
+                        "the object would not take a OneTextDropdown after the old one was " +
+                        "removed. What is on it: " + string.Join(", ", present));
+                }
+                Carry(new SerializedObject(carrier), new SerializedObject(made));
+            }
+            finally { UnityEngine.Object.DestroyImmediate(scratch); }
+
+            var to = new SerializedObject(made);
+            SetObject(to, "m_CaptionText", Label(captionObject));
+            SetObject(to, "m_ItemText", Label(itemObject));
+            if (undo) to.ApplyModifiedProperties();
+            else to.ApplyModifiedPropertiesWithoutUndo();
+
+            Reenable(made);
+            return made;
+        }
+
+        /// <summary>Every field the two dropdowns share, moved whole.</summary>
+        private static void Carry(SerializedObject from, SerializedObject to)
+        {
+            foreach (string path in new[]
+            {
+                // Selectable's own state, which a dropdown is as much as it is a
+                // dropdown: lose it and the thing stops highlighting, stops
+                // navigating and may stop taking clicks at all.
+                "m_Navigation", "m_Transition", "m_Colors", "m_SpriteState",
+                "m_AnimationTriggers", "m_Interactable", "m_TargetGraphic",
+                // And the dropdown's own.
+                "m_Template", "m_CaptionImage", "m_ItemImage", "m_Value",
+                "m_Options", "m_OnValueChanged", "m_AlphaFadeSpeed",
+            })
+            {
+                var property = from.FindProperty(path);
+                if (property != null) to.CopyFromSerializedProperty(property);
+            }
+            to.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        /// <summary>The OneText label on an object the old dropdown named, if it has one yet.</summary>
+        private static OneTextLabel Label(GameObject go) =>
+            go == null ? null : go.GetComponent<OneTextLabel>();
 
         private static T Add<T>(GameObject go, bool undo) where T : Component =>
             undo ? Undo.AddComponent<T>(go) : go.AddComponent<T>();
