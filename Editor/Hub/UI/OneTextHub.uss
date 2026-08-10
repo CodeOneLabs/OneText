@@ -287,6 +287,27 @@
     border-top-color: var(--line);
 }
 
+/* The two places this package lives outside the editor. Quiet, because they
+   are not a step in anybody's task — but present, because a person who wants
+   them is not going to go looking through the tabs. */
+.hub-root .sidebar__link {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 6px;
+    margin: 0 0 6px 0;
+    padding: 5px 8px;
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    -unity-text-align: middle-center;
+}
+
+.hub-root .sidebar__link:hover {
+    color: var(--green);
+    border-color: var(--line-hi);
+    background-color: rgba(126, 231, 180, 0.06);
+}
+
 .hub-root .sidebar__version {
     font-size: 9.5px;
     letter-spacing: 1.2px;

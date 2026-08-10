@@ -100,6 +100,14 @@
   .btn:hover { background: #97f1c6; }
   .btn.ghost { background: transparent; border-color: var(--line-hi); color: var(--green); }
   .btn.ghost:hover { background: rgba(126,231,180,0.1); }
+  /* The star and its count. The count is fetched at load and stays hidden if
+     the fetch fails, because a button reading "Star ·" with nothing after it
+     is worse than a button that just says Star. */
+  .btn.star { display: inline-flex; align-items: baseline; gap: 7px; }
+  .btn.star .stars { font-variant-numeric: tabular-nums; font-weight: 700;
+                     padding-left: 8px; margin-left: 1px;
+                     border-left: 1px solid rgba(126,231,180,0.28); }
+  .btn.star .stars[hidden] { display: none; }
   .cta .meta { color: var(--ink-faint); font-size: 11.5px; letter-spacing: 0.08em;
                font-family: var(--mono); }
 
@@ -409,7 +417,9 @@
         </p>
         <div class="cta">
           <a class="btn" href="#install" data-i18n="cta.install">Install</a>
-          <a class="btn ghost" href="https://github.com/CodeOneLabs/OneText">GitHub</a>
+          <a class="btn ghost star" href="https://github.com/CodeOneLabs/OneText"
+             ><span aria-hidden="true">★</span><span data-i18n="cta.star">Star on GitHub</span
+             ><b class="stars" hidden></b></a>
           <span class="meta" data-i18n="cta.meta">free means free &middot; no pro tier &middot; no paid modules</span>
         </div>
       </div>
@@ -858,6 +868,7 @@ label.RestartReveal();</pre>
     'hero.sub': '태국어는 쌓이고, 아랍어는 이어지고, 이모지는 온전합니다.<br>모든 문자를 제대로 그리는 Unity uGUI 텍스트 엔진. 드로우 콜은 하나.<b>무료입니다. ' +
       '오픈 소스입니다.<br>제대로 된 텍스트에 값을 더 치를 이유는 없으니까요.</b>',
     'cta.install': '설치하기',
+    'cta.star': 'GitHub에 별 주기',
     'cta.meta': '무료는 진짜 무료 &middot; 프로 버전 없음 &middot; 유료 모듈 없음',
     'hero.speclabel': '모든 문자, 아틀라스 하나, 드로우 콜 하나',
 
@@ -1065,6 +1076,28 @@ label.RestartReveal();</pre>
       window.dispatchEvent(new CustomEvent('onetext:lang', { detail: next }));
     });
   });
+})();
+</script>
+
+<script>
+/* The star count on the CTA button, fetched once.
+
+   Unauthenticated GitHub allows sixty calls an hour from one address, which is
+   plenty for a page nobody reloads in a loop, and a refusal is silent on
+   purpose: the button works without a number, and "Star ·" with nothing after
+   it is worse than "Star". No third-party script — buttons.github.io would
+   render the same thing and put an iframe and a tracker on the page to do it. */
+(function () {
+  var slot = document.querySelector('.btn.star .stars');
+  if (!slot || !window.fetch) return;
+  fetch('https://api.github.com/repos/CodeOneLabs/OneText')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d || typeof d.stargazers_count !== 'number') return;
+      slot.textContent = d.stargazers_count.toLocaleString();
+      slot.hidden = false;
+    })
+    .catch(function () { /* offline, rate-limited, blocked: no number, no noise */ });
 })();
 </script>
 

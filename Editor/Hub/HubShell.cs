@@ -68,7 +68,45 @@ namespace OneText.Editor
             var style = HubUI.LoadStyle("OneTextHub");
             if (style != null) Root.styleSheets.Add(style);
 
+            AddExternalLinks();
             BuildNav();
+        }
+
+        /// <summary>The repository, and the documentation built from it.</summary>
+        public const string RepositoryUrl = "https://github.com/CodeOneLabs/OneText";
+
+        public const string DocumentationUrl = "https://codeonelabs.github.io/OneText/";
+
+        /// <summary>
+        /// The two ways out of the editor, in the sidebar's foot beside the
+        /// version.
+        ///
+        /// There rather than on a page because they belong to no section's job,
+        /// and a person who wants them is not in the middle of a task and
+        /// should not have to guess which tab hid them. The star is asked for
+        /// in as many words: the package is free and MIT licensed, and a star
+        /// is the whole of what it costs.
+        /// </summary>
+        private void AddExternalLinks()
+        {
+            var foot = Root.Q(className: "sidebar__foot");
+            // The fallback shell has no foot to hang them off. It is the
+            // no-UXML path and already a degraded window; a missing link is
+            // the least of what is missing there.
+            if (foot == null) return;
+
+            foot.Insert(0, Link("★  Star on GitHub", RepositoryUrl,
+                "Open the repository in a browser. OneText is free and MIT licensed; " +
+                "a star is the whole price."));
+            foot.Insert(1, Link("Documentation", DocumentationUrl,
+                "Open the documentation site in a browser."));
+        }
+
+        private static Button Link(string text, string url, string tooltip)
+        {
+            var button = new Button(() => Application.OpenURL(url)) { text = text, tooltip = tooltip };
+            button.AddToClassList("sidebar__link");
+            return button;
         }
 
         /// <summary>Shows one section, building its tree the first time it is asked for.</summary>
