@@ -4,6 +4,47 @@
 
 ### Added
 
+- **`OneTextLabel.Decoration`: the whole-label outline, shadow and glow as
+  component state, which is what survives a Localize String Event.** The
+  inspector's decoration table used to write itself into the text as tags
+  wrapping the whole string — honest, visible, and gone the moment anything
+  else set the text. Unity's Localization package does exactly that on play:
+  the table entry replaces the string, the tags ride out with it, and the
+  label the designer styled arrives unstyled in every language.
+
+  The serialized field for this already existed and already resolved under
+  every style and tag; it had no inspector and no property. Now it has both.
+  Setting it is a quad rebuild, not a re-layout — same bargain as `Precise` —
+  and assigning the value already held costs nothing. Tags in the text still
+  win the parts they set, so a span can thicken its outline over the label's
+  own; a style asset still wins over the component, so a theme swap restyles
+  a label that holds a local opinion.
+
+- **`Quality` on a canvas label, and a project-wide default for both kinds of
+  text.** The rung existed on `OneTextMesh` and not on `OneTextLabel`, on the
+  reasoning this changelog wrote down at 0.2.0: "a UI label needs nothing like
+  this: its font size is in screen pixels, so the density it asks for is the
+  density it gets."
+
+  That is true only on an unscaled canvas. A CanvasScaler set to Scale With
+  Screen Size — the setting most projects ship — puts a factor between the font
+  size and the screen: a 1080p reference on a 1440p display is 1.33, a phone is
+  3. A 36-point label there is baked at the 32 bucket and drawn across 108
+  screen pixels, and the softness that follows is not the field's fault.
+
+  The ladder is gentler on the canvas side — **1x, 1.5x, 2x** against the
+  world's 1x, 2x, 4x — because a scale factor has a ceiling and a camera does
+  not; four times on a label would be sixteen times the atlas area for texels
+  no display can show. `TextQuality` moved to the core assembly so both
+  components share the vocabulary, and gained a **`Project`** rung, which is
+  what a field added to components already serialized in six thousand prefabs
+  reads back as. Project Settings > OneText holds the default those take, and
+  ships at **Performance** — arithmetically inert, so no existing bake moves.
+
+  The label inspector says when the rung is not paying for the magnification:
+  a label on a scaled canvas gets a line telling it what it is baked at and
+  what it is drawn at.
+
 - **The Hub is now Project Settings > OneText, and that page finally holds the
   defaults a TextMesh Pro project goes looking for.** The window and the
   settings page were two places holding one subject: the default font was on
@@ -74,7 +115,106 @@
   `TMPro.TextWrappingModes`); unqualified uses were already covered by the
   `using` rewrite, because the new enums live under the names TMP used.
 
+### Added
+
+- **A font asset has an inspector, and its two confusing fields stop being text
+  boxes.** Unity was drawing the three serialized fields it could see, and two
+  of them invited exactly the wrong thing.
+
+  **Imported from** was an editable path. The font file is read at import and
+  its bytes are stored inside the asset, so typing a different path there
+  renamed a record and changed nothing — the asset went on drawing the font it
+  already had. It is now shown as the record it is, next to a **Replace…**
+  button that opens a file panel and actually re-imports, and a **Show in
+  project** button that pings the source file. On a placeholder left behind by
+  the TextMesh Pro migration the same button reads **Choose the font file…**,
+  which is the one action that asset is waiting for.
+
+  **Language** was an empty box asking for a BCP 47 string, and people filled it
+  in on Latin faces expecting something to happen. It is a menu now — Any,
+  Japanese, Chinese Simplified, Chinese Traditional, Korean, and an *Other…*
+  escape hatch for a tag typed by hand, because matching is by prefix and a
+  font tagged `zh` still serves `zh-Hans`. Those four are not a starter set: the
+  tag is consulted for Han, kana and Hangul and for nothing else, so they are
+  the complete list of values that change which glyph a reader sees. The
+  inspector now says as much against the font in front of it — it warns when a
+  CJK face is left untagged, which is the failure that gives a Japanese reader
+  Chinese shapes, and says plainly when a tag has been set on a face with no
+  CJK in it and will therefore do nothing.
+
+  The Hub's font list offered the same menu with `th`, `ar` and `hi` on it,
+  which read as an invitation to tag everything and did nothing at all. Both
+  now read from one list.
+
 ### Changed
+
+- **Alignment is a row of pictures rather than two dropdowns.** It is the most
+  recognisable control in TextMesh Pro's inspector and the first thing somebody
+  arriving from it looks for, and a popup reading `Center` is not it: alignment
+  is a picture, and a picture is read without opening anything.
+
+  The row runs **Left, Centre, Right, Justify, Start, End** — the first four in
+  the order TMP puts them in, because that is what all but a handful of labels
+  are ever set to, and the direction-relative pair after them, because a project
+  reaches for those only once it has right-to-left text to serve. The order is
+  presentation: each button writes its own enum value.
+
+  Three of the six had no built-in icon worth using. **Start** and **End** could
+  not simply borrow an alignment icon, because Start *is* Left in left-to-right
+  text and the row would have carried the same picture twice; what actually
+  separates them is that they follow the text rather than the box, so that is
+  what is drawn — the same paragraph under an arrow pointing the way the text
+  runs, where Left and Right have no arrow. **Justify** gave up a built-in it
+  did have: `align_horizontally` is the extent bar Unity draws for stretching a
+  RectTransform, and at icon size it reads as a serif capital T. It is now the
+  four equal full-width lines every word processor has used for decades. The
+  three are drawn in code rather than shipped as PNGs, so they are baked for the
+  skin and the display scale in force and re-baked when either changes.
+
+  Vertical writing mode keeps what it had and extends it: the rows still
+  relabel to *Along column* and *Across columns*, and now the icons turn with
+  them — the arrow points down, lines pin to the column's head or foot, and
+  justify spreads them down its whole length. Multi-object editing shows no
+  button pressed when the selection disagrees, and every click goes through the
+  serialized property, so undo works as it did.
+
+- **A font in a build stops holding two copies of itself.** `OneFontAsset`
+  stores the font file Brotli-packed in a serialized field and unpacks it on
+  first use, and it kept both: Noto Sans CJK KR is 10.9 MB packed and 15.7 MB
+  unpacked, so an asset that had been drawn with once occupied 26.6 MB, of
+  which the packed 10.9 MB was bytes nothing would ever read again — the face
+  reads the unpacked array and only that. A player now lets the packed copy go
+  as soon as the unpacked one exists.
+
+  Not in the editor, where the object under discussion *is* the asset on disk:
+  emptying a serialized field there and letting anything call
+  `AssetDatabase.SaveAssets` afterwards — the migration, the Hub, somebody
+  pressing Ctrl+S — writes out the emptied asset and destroys the font for
+  good. A player never re-serializes a ScriptableObject, and one that is
+  unloaded and referenced again is read back off the disk it was never written
+  to.
+
+  The unpacked array is correspondingly no longer released while it is the only
+  copy left. Releasing it is otherwise right — a refilled placeholder must not
+  go on serving the old font — but it is also what `SetBaseVariations` does to
+  rebuild its variants against a new face, and that is public. Dropping the
+  packed bytes without this would have turned one ordinary call into every
+  label on that font going blank for the rest of the process, reported as a
+  font file that was never there.
+
+  This is the smaller half of the problem. A font listed as a fallback is
+  unpacked and parsed by the first label that draws, whether or not a single
+  character ever reaches it; a CJK face registered and unused still costs its
+  full 15.7 MB.
+
+- **The label inspector's decoration table edits the component, not the
+  text.** Same rows, same cells; they read and write `Decoration` instead of
+  wrapping the string in `<outline>`/`<shadow>`/`<glow>`. Text that carries
+  whole-text decoration wraps from the old table still renders exactly as it
+  did — a tag is a tag — and the inspector offers a one-click move onto the
+  component, which is the difference between a style that survives
+  localization and one that does not. The table also no longer needs Rich
+  text on: component state is not markup. Effect wraps are untouched.
 
 - **A new label says `New Text` at size 36, not `مرحبا بالعالم` at 64.** The
   Arabic was there to prove the shaper ran before anybody typed anything, which
@@ -210,6 +350,135 @@
   every click in the window. They ask the search index for a count now.
 
 ### Fixed
+
+- **Converted text came out fat and unedged: the outline was dropped from
+  every label on the desktop SDF shader, and the numbers that survived were in
+  a unit the migration left behind.** Reported from a real project — the same
+  string in TextMesh Pro and in OneText, side by side, with an outline in one
+  and none in the other.
+
+  Two causes, and the first is this changelog's own last entry taken too far.
+  Reading the effect values without their keywords put an outline on some two
+  thousand seven hundred labels that never had one, so the rule became "the
+  keyword decides" — but `OUTLINE_ON` is declared **only by the Mobile SDF
+  shaders**. `TMP_SDF.shader` and its SSD, Overlay and Surface siblings have no
+  such keyword and draw the outline from the value alone. A material answers
+  false to `IsKeywordEnabled` for a keyword its shader never declared, which is
+  indistinguishable from a checkbox left off, so every label on the desktop
+  shader lost its outline: 166 of them on the project that reported it, each
+  converted with the face dilate carried and the edge silently gone. The
+  keyword decides where the shader has one and the value decides where it has
+  not, read out of the shader's own source — `Shader.keywordSpace` cannot
+  answer this, since it holds every global keyword the project declares
+  anywhere and so reports the Mobile shader's `OUTLINE_ON` as the desktop
+  shader's too.
+
+  The second: TMP's effect sliders are in units of the font asset. The shader
+  multiplies every one of them by `_ScaleRatioA`, `_ScaleRatioB` or
+  `_ScaleRatioC` — numbers nobody types, computed by the material inspector
+  from the atlas's gradient scale, padding and sampling point size — so the
+  same 0.25 on two font assets is two thicknesses. The migration copied the
+  slider and left the ratio, which on the reporting project's font asset (0.9)
+  is a tenth too much of everything. The face dilate also folds in
+  `_WeightNormal`, which the shader adds to it before either is applied.
+
+  Still open, and not guessed at: whether one *reach* in OneText and one
+  gradient scale in TMP are the same distance. Both call their spread the unit
+  and the shader source does not settle which fraction of the field it is, so
+  the remaining factor — if there is one — has to come off a side-by-side
+  render rather than out of algebra.
+
+- **The face dilate had no inspector row.** The decoration table has always had
+  outline, shadow and glow; the face is not a tag, so it was in none of them.
+  A label the migration handed a dilate of 0.25 drew visibly thicker text with
+  nothing anywhere in the inspector to say so, let alone to change. It has a
+  row now, and the outline's softness — carried since the channels found room
+  for it — has the cell it never had.
+
+- **The TextMesh Pro dropdown converted everything around itself and then
+  stayed, holding two labels that no longer existed.** `UnityEngine.UI.Dropdown`
+  got a counterpart last release; `TMP_Dropdown` did not, and it was left where
+  it stood with a warning. But its caption and its item label are TMP labels,
+  which this migration converts, and a `TMP_Dropdown` cannot hold a
+  `OneTextLabel` any more than Unity's can — so the one project shape
+  guaranteed to hit this was a TextMesh Pro project, which is the only kind
+  that runs this migration at all. The caption went blank and the rows drew
+  empty.
+
+  It converts now, through the same swap and for the same reasons: the two
+  labels re-pointed after they are converted, `Selectable`'s own state, the
+  options and the inspector's wiring on `onValueChanged` carried whole. Two
+  things are different from the uGUI path. The options move element by element
+  rather than as a list, because TMP's `OptionData` holds a colour Unity's does
+  not and a structure copy cannot be trusted across that difference —
+  `OneTextDropdown.OptionData` grew the colour, and an option that never named
+  one is written white rather than left as the zero a resize gives it, which is
+  a transparent black and an invisible image. And `multiSelect` and
+  `placeholder`, which are TMP's own additions and have no counterpart, are
+  named in the report per dropdown instead of disappearing.
+
+  The script rewrite widens `TMP_Dropdown` to `OneTextDropdown` along with it,
+  nested types included, so a field or a `RequireComponent` naming the old type
+  does not hold the swap up — that refusal is what turned 171 findings on a
+  real project into silence the last time it was measured. With this, no
+  component the migration finds is left standing: the Hub's "no counterpart ·
+  stay as TMP" tile could only ever say zero, and is now the dropdown count.
+
+- **World text drew as a hairline skeleton: `OneTextMesh` never learned that
+  two of its vertex channels had grown a second byte.** The face dilate rides
+  in the spare byte of the atlas discriminator and the outline softness in the
+  spare byte of the layer, both added with the decoration work above, and both
+  written by `OneTextLabel` and by nothing else. `OneTextMesh` kept writing the
+  raw numbers it always wrote.
+
+  Neither spare byte is a zero when it means nothing. The dilate is signed and
+  its zero is 128, so a raw zero asked the shader to thin every glyph by a
+  whole reach: the face threshold landed past the top of the field and the ink
+  eroded to a few broken strokes, which is a picture that looks like a font
+  problem and is not. And the layer is the *high* byte, so a raw slice index
+  landed in the low one and every tile was read off slice zero — invisible
+  while the atlas had one page, somebody else's glyph as soon as it had two.
+
+  The two tests that covered this channel asserted the raw contract the shader
+  had already stopped reading, which is why the suite stayed green through it;
+  they now decode the byte they are about, and a third asserts the neutral face
+  every world vertex has to carry.
+
+- **Text with no font drew nothing, said nothing, and never reached the system
+  fonts — three ways of being invisible, stacked.** The reported symptom was a
+  converted project where some labels came out transparent with no warning
+  anywhere, and the device's own fonts, which are on by default, did not stand
+  in.
+
+  `FontStack.Resolve` returned null before it reached the system tier when the
+  stack was empty. The tier was written as the last rung of a chain rather than
+  as the floor under it, so the one case that needed it most — no chain at all
+  — was the one case that never got it. `Primary` answered null for the same
+  reason, which is the value the layout engine, both components' native-state
+  check and the prewarm all read as "this does not draw", so the label returned
+  before laying anything out. And neither `OneTextLabel` nor `OneTextMesh`
+  contained a single log call: the only warning in the whole path was
+  `OneFontAsset`'s, which fires for a migration placeholder — an asset that
+  knows it is waiting for a file — and for nothing else.
+
+  An empty stack now resolves through the operating system per character and
+  takes its head from there, so text is legible rather than absent; turning the
+  tier off in Project Settings restores the old behaviour exactly. `MissingFonts`
+  says which font is missing and which of the two outcomes happened, **once per
+  missing font** rather than once per label, because in the projects this
+  matters to one absent `.ttf` is six thousand labels.
+
+- **The migration left a null on every label whose font file was named and not
+  there.** Two branches wrote a font onto a converted label. The one for a
+  TextMesh Pro asset that shipped its atlas and not its source made a
+  placeholder, so the reference graph survived and dropping one `.ttf` in fixed
+  every label at once. The other — the font asset named a file, and the file
+  was deleted, or in a package the project no longer has, or unreadable — wrote
+  the null, logged an error into the report, and left nothing on screen and
+  nothing to point at. It was the branch with the least excuse for it: the file
+  name is known exactly there, so the placeholder can say what to go and find
+  rather than guessing it from a family and a style. It makes one now, per
+  file, however many labels wanted it.
 
 - **A font asset unpacked its font file on every request, and handed out the
   array the renderer was reading from.** `GetFontBytes()` ran brotli and
