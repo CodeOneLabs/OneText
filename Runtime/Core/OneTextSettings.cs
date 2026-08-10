@@ -72,6 +72,14 @@ namespace OneText
         [SerializeField] private Vector2 _defaultWorldSize = new Vector2(20f, 5f);
 
         [Header("Glyph atlas")]
+        [Tooltip("Atlas texels per em, for every label and world text set to Project — which " +
+            "is all of them until somebody says otherwise. Performance (1x) bakes at the size " +
+            "the text asks for. Raise it when text is magnified after it is baked: a canvas " +
+            "with a scale factor above one, or a camera that gets close to a world mesh. " +
+            "Each rung costs the square of itself in atlas area, so a project that raises " +
+            "this usually raises the layer count below with it.")]
+        [SerializeField] private TextQuality _defaultQuality = TextQuality.Performance;
+
         [Tooltip("Edge length of each atlas layer. Bigger holds more glyphs at once; " +
             "a CJK project at several sizes needs more than a Latin one.")]
         [SerializeField] private int _atlasTextureSize = 1024;
@@ -188,6 +196,19 @@ namespace OneText
         /// costs and why Doctor reports it anyway.
         /// </summary>
         public bool SystemFontFallback => _systemFontFallback;
+
+        /// <summary>
+        /// The density rung text set to <see cref="TextQuality.Project"/> takes.
+        ///
+        /// Read at draw time rather than copied into a component when it is
+        /// created, unlike the "new text defaults" above. The difference is
+        /// what the knob is for: a project that has already converted six
+        /// thousand labels and then finds them soft on a scaled canvas needs
+        /// one field to fix all six thousand, and a creation-time default fixes
+        /// none of them.
+        /// </summary>
+        public TextQuality DefaultQuality =>
+            _defaultQuality == TextQuality.Project ? TextQuality.Performance : _defaultQuality;
 
         /// <summary>The atlas budget this project asks for.</summary>
         public GlyphAtlasSettings AtlasSettings => new GlyphAtlasSettings

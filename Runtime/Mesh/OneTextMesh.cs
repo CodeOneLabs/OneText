@@ -30,50 +30,6 @@ namespace OneText
     /// still lays out correctly; tags whose visual this component cannot draw
     /// simply draw nothing extra.
     /// </summary>
-    /// <summary>
-    /// How many atlas texels a world mesh asks for per em, as a multiple of
-    /// what its point size implies. The value is the multiplier.
-    ///
-    /// A UI label needs nothing like this: its font size is in screen pixels,
-    /// so the density it asks for is the density it gets. World text has no
-    /// such number — a sign at thirty points is thirty points whether the
-    /// camera is two metres away or twenty, and the component cannot see which.
-    /// Left to the point size alone, a nameplate the player walks up to is a
-    /// tile magnified ten times, which is a rounded, melted 'A' through the
-    /// single-channel field and, before the corrections in this milestone, a
-    /// torn one through the multi-channel field.
-    ///
-    /// <see cref="Medium"/> is the default because world text is usually
-    /// approached: doubling the density costs four times the atlas area for
-    /// those tiles and is the difference between text that survives being
-    /// walked up to and text that does not. Drop to <see cref="Performance"/>
-    /// for signage that stays at a distance, where the extra texels buy
-    /// nothing the camera can see.
-    /// </summary>
-    public enum TextQuality
-    {
-        /// <summary>The point size as-is: what a UI label of the same size gets.</summary>
-        Performance = 1,
-
-        /// <summary>Twice the density, for text the camera can approach.</summary>
-        Medium = 2,
-
-        /// <summary>
-        /// Four times, for text meant to be read close up, and the last rung
-        /// there is.
-        ///
-        /// Nothing above it would reliably do anything: the atlas density
-        /// ladder stops at 256 pixels per em, so past about 64 points this
-        /// already asks for more than exists and a larger multiplier would
-        /// change the setting without changing the picture. If four times is
-        /// not enough, the variable is the magnification rather than the
-        /// multiplier — no fixed number can follow a camera — and the answer is
-        /// a denser ladder or a density chosen from the screen, not another
-        /// member here.
-        /// </summary>
-        High = 4,
-    }
-
     [ExecuteAlways]
     [RequireComponent(typeof(RectTransform))]
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
@@ -122,8 +78,9 @@ namespace OneText
         [Tooltip("Atlas texels per em, as a multiple of what the point size asks for. " +
                  "World text has no screen size until a camera picks one, so this is how " +
                  "you say the player will get close to it. Medium (2x) by default; " +
-                 "Performance (1x) matches a UI label of the same size, High (4x) is for " +
-                 "text read close up. Costs the square of itself in atlas area.")]
+                 "Performance (1x) matches an unscaled UI label of the same size, High (4x) " +
+                 "is for text read close up, and Project takes whichever of those the " +
+                 "project sets. Costs the square of itself in atlas area.")]
         [SerializeField] private TextQuality _quality = TextQuality.Medium;
 
         [Tooltip("BCP 47 language tag: ja, ko, zh-Hans. Empty means the project default.")]
@@ -579,9 +536,23 @@ namespace OneText
 
         private bool EnsureNativeState()
         {
-            if (_fonts == null || _fonts.Primary == null || !_fonts.Primary.IsValid)
+            // Count, not Primary: an empty stack now answers Primary with a
+            // system face, and asking about Primary would settle for it forever
+            // — a placeholder somebody drops a .ttf into afterwards has to be
+            // picked up, and rebuilding while there is nothing of the project's
+            // own is how that happens.
+            if (_fonts == null || _fonts.Count == 0 ||
+                _fonts.Primary == null || !_fonts.Primary.IsValid)
                 BuildFontStack();
-            if (_fonts?.Primary == null || !_fonts.Primary.IsValid) return false;
+            if (_fonts?.Primary == null || !_fonts.Primary.IsValid)
+            {
+                WarnNoFont(drawing: false);
+                return false;
+            }
+            // Legible, but not in a face this project chose. Worth saying for
+            // the same reason the blank case is: nobody assigned it.
+            if (_fonts.IsSystemOnly) WarnNoFont(drawing: true);
+            else _warnedNoFont = false;
 
             _engine ??= new TextLayoutEngine();
             if (!_atlasHeld)
@@ -590,6 +561,20 @@ namespace OneText
                 _atlasHeld = true;
             }
             return WorldMaterial != null;
+        }
+
+        // A bool first, so the string MissingFonts keys on is not built on
+        // every layout pass of a mesh that has no font. See OneTextLabel.
+        [System.NonSerialized] private bool _warnedNoFont;
+
+        private void WarnNoFont(bool drawing)
+        {
+            if (_warnedNoFont) return;
+            _warnedNoFont = true;
+            var settings = OneTextSettings.Instance;
+            MissingFonts.Warn(this,
+                _font != null ? _font : settings != null ? settings.DefaultFont : null,
+                drawing);
         }
 
         private void EnsureDisplayText()
@@ -857,7 +842,8 @@ namespace OneText
                 // in screen pixels and a mesh's is not, so the multiplier is
                 // where a world text gets to say it will be approached. See
                 // <see cref="TextQuality"/>.
-                float runPixelsPerEm = runSize / PointsToUnits * (int)_quality;
+                float runPixelsPerEm =
+                    runSize / PointsToUnits * TextQualityScale.ForWorld(_quality);
                 var runColor = run.Style.HasColor ? run.Style.Color : new Color32(255, 255, 255, 255);
                 var color = Multiply(runColor, tint);
                 var frame = FrameOf(run, vertical, scale);
@@ -1017,10 +1003,21 @@ namespace OneText
 
         /// <summary>
         /// One tile as four vertices, carrying the channel contract from
-        /// <c>OneTextLabel.AddVert</c>: TEXCOORD0 xy uv / z layer / w v-min,
-        /// TEXCOORD2 x v-max / yz u-bounds / w atlas discriminator. The
-        /// decoration channels (TEXCOORD1/3) are written zero: undecorated is
-        /// a value, not a branch, and this component draws no decorations.
+        /// <c>OneTextLabel.AddVert</c>: TEXCOORD0 xy uv|layer / z layer|outline
+        /// softness / w v-min, TEXCOORD2 x v-max / yz u-bounds / w atlas
+        /// discriminator|face dilate. The decoration channels (TEXCOORD1/3) are
+        /// written zero: undecorated is a value, not a branch, and this
+        /// component draws no decorations.
+        ///
+        /// Both of those channels carry two bytes rather than one number, and
+        /// both got their second byte after this method was written. Neither
+        /// spare byte is a zero when it means nothing: the face dilate is
+        /// signed and its zero is 128, so a raw zero says "thin this glyph by a
+        /// whole reach" and the shader erodes every world glyph to a hairline;
+        /// and the layer is the HIGH byte, so a raw slice index lands in the
+        /// low one and every tile is read off slice zero. See
+        /// <c>OneTextLabel.DecorationChannels.None</c>, which says the same
+        /// thing for the canvas side.
         /// </summary>
         private void AddQuad(Vector2 position, Vector2 size, float rotation, Rect uv, int layer,
             Color32 color, float atlasSelector)
@@ -1053,11 +1050,19 @@ namespace OneText
                 _vertices.Add(Corner(1f, -1f));
             }
 
-            var vmax = new Vector4(uv.yMax, uv.xMin, uv.xMax, atlasSelector);
-            _uv0.Add(new Vector4(uv.xMin, uv.yMin, layer, uv.yMin));
-            _uv0.Add(new Vector4(uv.xMin, uv.yMax, layer, uv.yMin));
-            _uv0.Add(new Vector4(uv.xMax, uv.yMax, layer, uv.yMin));
-            _uv0.Add(new Vector4(uv.xMax, uv.yMin, layer, uv.yMin));
+            // 128 in the low byte is a face dilate of exactly zero; 0 there is
+            // a whole reach of erosion.
+            float kind = TextDecoration.Pack(
+                (byte)atlasSelector, TextDecoration.QuantizeSigned(0f, 1f));
+            // The slice index is the high byte, and the low one is the outline
+            // softness this component never sets.
+            float slice = TextDecoration.Pack((byte)layer, 0);
+
+            var vmax = new Vector4(uv.yMax, uv.xMin, uv.xMax, kind);
+            _uv0.Add(new Vector4(uv.xMin, uv.yMin, slice, uv.yMin));
+            _uv0.Add(new Vector4(uv.xMin, uv.yMax, slice, uv.yMin));
+            _uv0.Add(new Vector4(uv.xMax, uv.yMax, slice, uv.yMin));
+            _uv0.Add(new Vector4(uv.xMax, uv.yMin, slice, uv.yMin));
             for (int i = 0; i < 4; i++)
             {
                 _colors.Add(color);

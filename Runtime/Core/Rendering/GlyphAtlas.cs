@@ -237,8 +237,27 @@ namespace OneText
         /// SDFs reconstruct smoothly under magnification, but minification
         /// aliases (phase-dependent edge wobble, the last seam residue).
         /// </summary>
+        /// <summary>
+        /// Round the bucket up instead of down, so a glyph is minified rather
+        /// than magnified.
+        ///
+        /// Here to be measured, not to ship: the comment above says magnifying
+        /// is the better trade and nobody has put that next to TextMesh Pro,
+        /// which bakes far above the size it draws at and looks smoother at
+        /// small sizes for it. Remove this once the pictures have settled the
+        /// question one way or the other.
+        /// </summary>
+        public static bool RoundBucketUp;
+
         public static int QuantizePixelsPerEm(float pixelsPerEm)
         {
+            if (RoundBucketUp)
+            {
+                foreach (var b in PpemBuckets)
+                    if (b >= pixelsPerEm) return b;
+                return PpemBuckets[PpemBuckets.Length - 1];
+            }
+
             int best = PpemBuckets[0];
             foreach (var b in PpemBuckets)
             {

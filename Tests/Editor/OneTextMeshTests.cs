@@ -87,10 +87,14 @@ namespace OneText.Tests
 
             Assert.AreEqual(mesh.vertexCount, uv0.Count);
             Assert.AreEqual(mesh.vertexCount, uv2.Count);
+            // Both of these channels are two bytes now, and the passenger this
+            // test is about is the high one in each.
             for (int i = 0; i < uv0.Count; i++)
             {
-                Assert.GreaterOrEqual(uv0[i].z, 0f, "TEXCOORD0.z is the atlas layer");
-                Assert.AreEqual(0f, uv2[i].w, "TEXCOORD2.w picks the SDF atlas for plain text");
+                Assert.GreaterOrEqual(Mathf.RoundToInt(uv0[i].z) >> 8, 0,
+                    "TEXCOORD0.z high byte is the atlas layer");
+                Assert.AreEqual(0, Mathf.RoundToInt(uv2[i].w) >> 8,
+                    "TEXCOORD2.w high byte picks the SDF atlas for plain text");
             }
             Destroy(text);
         }
@@ -107,7 +111,8 @@ namespace OneText.Tests
             MeshOf(text).GetUVs(2, uv2);
             Assert.Greater(uv2.Count, 0);
             foreach (var v in uv2)
-                Assert.AreEqual(2f, v.w, "TEXCOORD2.w = 2 is the multi-channel atlas");
+                Assert.AreEqual(2, Mathf.RoundToInt(v.w) >> 8,
+                    "TEXCOORD2.w high byte = 2 is the multi-channel atlas");
             Destroy(text);
         }
 
@@ -297,6 +302,50 @@ namespace OneText.Tests
                 $"High baked a tile {high:F0} texels wide against Performance's {low:F0}: " +
                 "four times the density has to be about four times the texels across, so " +
                 "the multiplier is not reaching the atlas");
+        }
+
+        /// <summary>
+        /// The two channels that carry two bytes each, from the world mesh's
+        /// side of the same contract <c>DecorationChannelTests</c> asserts for
+        /// the canvas's.
+        ///
+        /// Both spare bytes arrived after this component was written, and
+        /// neither is a zero when it means nothing: a raw zero in the face byte
+        /// is a whole reach of erosion, which draws every world glyph as a
+        /// hairline skeleton, and a raw layer in the low byte reads back as
+        /// slice zero, which draws somebody else's tile.
+        /// </summary>
+        [Test]
+        public void Its_Vertices_Say_Neutral_Face_And_Put_The_Layer_In_The_High_Byte()
+        {
+            var text = Create();
+            text.Text = "Hamburg 가나다";
+            text.ForceRebuild();
+
+            var mesh = MeshOf(text);
+            var uv0 = new List<Vector4>();
+            var uv2 = new List<Vector4>();
+            mesh.GetUVs(0, uv0);
+            mesh.GetUVs(2, uv2);
+            Assert.Greater(uv0.Count, 0, "no quads to inspect");
+
+            for (int i = 0; i < uv0.Count; i++)
+            {
+                int faceByte = Mathf.RoundToInt(uv2[i].w) & 0xFF;
+                Assert.AreEqual(128, faceByte,
+                    $"vertex {i} asks the shader to move the face threshold by " +
+                    $"{(faceByte - 128) / 127f:0.###} of a reach; 128 is the only byte that " +
+                    "means 'draw this glyph as the font drew it'");
+
+                int softByte = Mathf.RoundToInt(uv0[i].z) & 0xFF;
+                Assert.AreEqual(0, softByte,
+                    $"vertex {i} carries {softByte} in the outline-softness byte, which is " +
+                    "where the atlas slice lands when it is written raw");
+                Assert.Less(Mathf.RoundToInt(uv0[i].z) >> 8, 16,
+                    "the slice index is the high byte and the atlas has sixteen at most");
+            }
+
+            Destroy(text);
         }
 
         [Test]

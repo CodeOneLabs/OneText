@@ -34,6 +34,7 @@ namespace OneText.Editor
                 {
                     "text", "font", "fallback", "onetext", "atlas", "raycast", "rich text",
                     "wrapping", "auto size", "charset", "dictionary", "doctor", "migration",
+                    "quality", "resolution", "sharpness", "canvas scale",
                 },
                 activateHandler = (_, root) =>
                 {
