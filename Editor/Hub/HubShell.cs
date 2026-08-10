@@ -95,11 +95,53 @@ namespace OneText.Editor
             // the least of what is missing there.
             if (foot == null) return;
 
-            foot.Insert(0, Link("★  Star on GitHub", RepositoryUrl,
-                "Open the repository in a browser. OneText is free and MIT licensed; " +
-                "a star is the whole price."));
+            var star = new Button { text = "★  Star on GitHub" };
+            star.tooltip = "OneText is free and MIT licensed; a star is the whole price. " +
+                           "Stars from here when the GitHub CLI on this machine is signed in, " +
+                           "and opens the repository in a browser when it is not.";
+            star.AddToClassList("sidebar__link");
+            star.clicked += () => Star(star);
+
+            foot.Insert(0, star);
             foot.Insert(1, Link("Documentation", DocumentationUrl,
                 "Open the documentation site in a browser."));
+        }
+
+        /// <summary>
+        /// The star, done here rather than handed to a browser when it can be.
+        /// The button says so while it waits, and stops being a button once it
+        /// has nothing left to do.
+        /// </summary>
+        private void Star(Button button)
+        {
+            button.SetEnabled(false);
+            button.text = "★  Starring…";
+            GitHubStar.StarAsync(outcome =>
+            {
+                switch (outcome)
+                {
+                    case GitHubStar.Outcome.Starred:
+                        button.text = "★  Starred — thank you";
+                        Notify("Starred. Thank you — it is the whole price.");
+                        return;
+                    case GitHubStar.Outcome.AlreadyStarred:
+                        button.text = "★  Starred — thank you";
+                        Notify("Already starred. Thank you.");
+                        return;
+                    default:
+                        // No CLI, nobody signed in, or it did not work: the
+                        // browser was always the fallback and the button goes
+                        // back to being one.
+                        button.SetEnabled(true);
+                        button.text = "★  Star on GitHub";
+                        Application.OpenURL(RepositoryUrl);
+                        if (outcome == GitHubStar.Outcome.NotSignedIn)
+                            Notify("The GitHub CLI here is not signed in, so this opened the " +
+                                   "repository instead. `gh auth login` and the button does it " +
+                                   "in place.");
+                        return;
+                }
+            });
         }
 
         private static Button Link(string text, string url, string tooltip)
