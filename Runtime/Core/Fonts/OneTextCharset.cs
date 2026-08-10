@@ -138,7 +138,14 @@ namespace OneText
         public PrewarmReport Prewarm(GlyphAtlas atlas)
         {
             var stack = BuildFontStack();
-            if (stack == null || stack.Primary == null)
+            // Count, not Primary: an empty stack now answers Primary with a
+            // face from the operating system, which is the right thing for a
+            // label — text a reader can read beats nothing — and the wrong
+            // thing to prewarm. Those tiles belong to whatever font that
+            // machine happens to ship, so baking them at startup spends the
+            // budget on glyphs the built game may never draw and says nothing
+            // about the charset having no font, which is the actual problem.
+            if (stack == null || stack.Count == 0 || stack.Primary == null)
             {
                 Debug.LogWarning($"OneText: charset '{name}' has no font to prewarm with " +
                     "(assign fonts on the charset, or a default font in Project Settings > OneText).");

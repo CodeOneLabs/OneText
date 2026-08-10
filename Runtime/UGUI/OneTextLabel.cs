@@ -29,6 +29,7 @@ namespace OneText.UGUI
 
         /// <summary>
         /// An outline, shadow or glow this label wants under everything else.
+        /// What the inspector's Decorations table edits.
         ///
         /// Separate from <see cref="_style"/> because that is a shared asset:
         /// a label reaching for "give this one an outline" would be editing
@@ -36,9 +37,11 @@ namespace OneText.UGUI
         /// sits under the style rather than over it, so a theme still wins —
         /// this is the label's opinion, not its final say.
         ///
-        /// It exists because TextMesh Pro puts the outline on the component and
-        /// every project arriving from there expects to find it there,
-        /// including third-party code that tweens it by name.
+        /// And separate from the text, which is where the table once wrote it
+        /// as tags, because the text is the one thing an external system owns:
+        /// a Localize String Event or a data binding replaces the whole
+        /// string, and a decoration riding in it went along. Tags remain the
+        /// way to decorate a span; the whole label is decorated here.
         /// </summary>
         [SerializeField] private TextDecoration _decoration;
 
@@ -113,12 +116,22 @@ namespace OneText.UGUI
                  "ordinary single-channel SDF, which is right for body text.")]
         [SerializeField] private bool _precise;
 
+        [Tooltip("Minimum atlas texels per em, as a multiple of what the font size asks " +
+                 "for. Canvas scaling and camera zoom are measured and compensated " +
+                 "automatically; this floor is for setups the measurement cannot see. " +
+                 "Medium is 1.5x, High is 2x, and each costs the square of itself in " +
+                 "atlas area. Project takes whichever the project sets, which is " +
+                 "Performance (1x) unless somebody changed it.")]
+        [SerializeField] private TextQuality _quality = TextQuality.Project;
+
         [SerializeField] private UnityEvent<string> _linkClicked = new UnityEvent<string>();
 
         private byte[] _fontBytesOverride;
         private byte[][] _fallbackBytesOverride;
         private FontStack _fonts;
         private readonly List<FontData> _ownedFonts = new List<FontData>();
+        // Faces borrowed from SharedFontBytes; released, never disposed.
+        private readonly List<FontData> _sharedFonts = new List<FontData>();
         private TextLayoutEngine _engine;
         // NonSerialized because a domain reload resets the atlas's static
         // refcount to zero while serialization would resurrect this as true:
@@ -410,6 +423,148 @@ namespace OneText.UGUI
             }
         }
 
+        /// <summary>
+        /// How dense a tile this label asks the atlas for, as a multiple of
+        /// what its font size implies: 1x, 1.5x or 2x, or the project's answer.
+        ///
+        /// A font size is in canvas units, and a canvas unit is a screen pixel
+        /// only while the canvas scale factor is one. Under a CanvasScaler set
+        /// to Scale With Screen Size — what most projects ship — a 1080p
+        /// reference on a 1440p display puts the factor at 1.33, a phone at 3,
+        /// and a label baked for its font size alone is magnified the rest of
+        /// the way. The measured screen scale (<see cref="AppliedPpemScale"/>)
+        /// now answers that automatically; this rung remains as a floor under
+        /// it — "at least this dense" — for the setups the measurement cannot
+        /// see, and the larger of the two wins rather than both applying (see
+        /// <see cref="DensityFor"/>).
+        ///
+        /// Changes the tile, never the layout: the same glyphs in the same
+        /// places, off a finer field. So it is a quad rebuild and not a
+        /// re-layout, exactly as <see cref="Precise"/> is, and two labels at
+        /// the same size and rung share their tiles as usual.
+        /// </summary>
+        public TextQuality Quality
+        {
+            get => _quality;
+            set
+            {
+                if (_quality == value) return;
+                _quality = value;
+                _quadsValid = false;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>
+        /// The font size the atlas is asked for, as opposed to the one the text
+        /// is laid out at. Multiplied here and nowhere else: every geometry
+        /// number downstream is in font units, so a denser tile draws at the
+        /// same size, and anything that used <c>runSize</c> for both would
+        /// silently scale the text by the quality setting.
+        ///
+        /// Two multipliers meet here and the larger one wins, rather than both
+        /// applying: the quality rung is a promise ("at least this dense") and
+        /// the measured screen scale is a fact, and a label whose canvas is
+        /// scaled by three under a High rung wants 3x, not 6x — the rung was
+        /// set to compensate for the very magnification the measurement now
+        /// sees. Multiplying them would spend four times the atlas on texels
+        /// the screen cannot show.
+        ///
+        /// And the whole of it is capped, whatever asked: measured zoom,
+        /// quality rung, or the font size itself. A distance field's entire
+        /// bargain is that density and drawn size need not match — magnified
+        /// past the cap it loses fine junction detail, not edge smoothness —
+        /// and above the cap the atlas arithmetic stops working: one 256 ppem
+        /// Hangul glyph is ~70K texels, fifteen glyphs to a default layer, a
+        /// heading to an atlas. A capped label at 288 points draws 2.25x
+        /// magnified, which is the trade a text system that bakes at runtime
+        /// has to pick on purpose rather than let a font size pick by accident.
+        /// </summary>
+        private float DensityFor(float runSize)
+        {
+            float density = runSize * TextQualityScale.ForCanvas(_quality);
+            if (_ppemScale > 1f) density = Mathf.Max(density, runSize * _ppemScale);
+            return Mathf.Min(density, PpemCap);
+        }
+
+        /// <summary>
+        /// The densest tile, in pixels per em, a label may ask the atlas for —
+        /// from any source: an explicit font size, a quality rung, or the
+        /// measured screen scale, which a perspective camera can otherwise
+        /// drive without bound. 128 keeps a 36-point label sharp through a
+        /// 3.5x zoom and a whole display line inside a fraction of a default
+        /// layer; past it text draws magnified, which an SDF does smoothly and
+        /// `Precise` does with its corners intact. Raise it for a project that
+        /// genuinely inspects giant glyphs and has the atlas budget to match.
+        /// </summary>
+        public static float PpemCap = 128f;
+
+        /// <summary>
+        /// Turns the measured screen density off, leaving the quality rung as
+        /// the only multiplier — the pre-0.3 behaviour. A kill switch for
+        /// A/B pictures and for projects that manage density by hand.
+        /// </summary>
+        public static bool DynamicPpem = true;
+
+        /// <summary>
+        /// How far the measured scale must move, as a fraction of what was last
+        /// applied, before the label re-bakes: the hysteresis that keeps a
+        /// camera idling at a bucket boundary from flapping the atlas between
+        /// 32 and 40 every frame its float wobbles. A tenth sits under the
+        /// smallest gap in the bucket ladder (~1.14x), so crossing a boundary
+        /// always requires real movement, never noise.
+        /// </summary>
+        private const float PpemScaleBand = 0.1f;
+
+        // The screen magnification last APPLIED to this label's density —
+        // deliberately not the live measurement, which is re-taken every
+        // canvas pass and only lands here when it escapes the band above.
+        // NonSerialized: a measurement belongs to a session, and a prefab
+        // must not carry one scene's camera distance into another.
+        [System.NonSerialized] private float _ppemScale = 1f;
+
+        /// <summary>
+        /// The screen scale the atlas density currently includes; 1 until a
+        /// measurement says otherwise. Read-only from outside: the Hub shows
+        /// it, tests assert it, and the only writer is
+        /// <see cref="RefreshPpemScale"/>.
+        /// </summary>
+        public float AppliedPpemScale => _ppemScale;
+
+        /// <summary>
+        /// Re-measures the screen scale and applies it if it escaped the
+        /// hysteresis band; true means the cached quads were invalidated and
+        /// the caller (the watcher) should dirty the label. Also called at the
+        /// top of every mesh build, so a one-shot render — an editor capture, a
+        /// label's very first frame — bakes at the measured density instead of
+        /// spending its first picture at the wrong one.
+        ///
+        /// Minification is floored at one: a label zoomed away from stays on
+        /// the tiles its font size asks for, which is what it drew before this
+        /// existed, and a zoom-out therefore never invalidates anything.
+        /// </summary>
+        internal bool RefreshPpemScale()
+        {
+            if (!DynamicPpem)
+            {
+                if (_ppemScale == 1f) return false;
+                _ppemScale = 1f;
+                _quadsValid = false;
+                return true;
+            }
+
+            float raw = ScreenPpem.Compute(this);
+            if (raw <= 0f || float.IsNaN(raw) || float.IsInfinity(raw)) return false;
+            if (raw < 1f) raw = 1f;
+
+            float ratio = raw / _ppemScale;
+            if (ratio < 1f + PpemScaleBand && ratio * (1f + PpemScaleBand) > 1f) return false;
+
+            _ppemScale = raw;
+            _quadsValid = false;
+            return true;
+        }
+
         /// <summary>Shifts the drawn text inside the box (used for scrolling an input field).</summary>
         public Vector2 ScrollOffset
         {
@@ -505,6 +660,11 @@ namespace OneText.UGUI
             // And a style is a reference, so editing the asset has to reach the
             // labels pointing at it.
             StyleInvalidation.Register(this);
+            // And the screen scale is a fact about cameras and canvases, which
+            // change without dirtying any label; the watcher re-measures once
+            // a canvas pass and this label re-bakes only when it escapes the
+            // hysteresis band.
+            ScreenPpem.Register(this);
             // The atlas reference is what keeps the shared material alive, and
             // it has to be taken here, not at the first mesh rebuild: between
             // enable and that rebuild, destroying the last label that held a
@@ -527,6 +687,7 @@ namespace OneText.UGUI
         {
             AtlasInvalidation.Unregister(this);
             StyleInvalidation.Unregister(this);
+            ScreenPpem.Unregister(this);
             base.OnDisable();
         }
 
@@ -545,6 +706,30 @@ namespace OneText.UGUI
 
         /// <summary>Styles <c>&lt;style=name&gt;</c> can reference.</summary>
         public IList<OneTextStyle> NamedStyles => _namedStyles;
+
+        /// <summary>
+        /// The outline, shadow or glow this label draws under everything
+        /// markup and styles add. Component state, not a tag in the text: it
+        /// survives anything that replaces the string — a Localize String
+        /// Event, a binding, a score counter — where a decoration riding in
+        /// the text goes with it. A style asset and the tags in the text
+        /// still win the parts they set; this is the label's opinion, not
+        /// its final say.
+        /// </summary>
+        public TextDecoration Decoration
+        {
+            get => _decoration;
+            set
+            {
+                value = value.Clamped();
+                if (_decoration.Equals(value)) return;
+                _decoration = value;
+                // Changes what the tiles draw, never where they sit: a quad
+                // rebuild and not a re-layout, exactly as Precise is.
+                _quadsValid = false;
+                SetVerticesDirty();
+            }
+        }
 
         bool StyleInvalidation.IStyleUser.UsesStyle(OneTextStyle style)
         {
@@ -915,13 +1100,31 @@ namespace OneText.UGUI
             // asset-owned faces are shared with every other label.
             foreach (var owned in _ownedFonts) owned.Dispose();
             _ownedFonts.Clear();
+            // Shared faces are refcounted, not disposed: the last label out
+            // turns the light off inside the cache.
+            foreach (var shared in _sharedFonts) SharedFontBytes.Release(shared);
+            _sharedFonts.Clear();
         }
 
         private bool EnsureNativeState()
         {
-            if (_fonts == null || _fonts.Primary == null || !_fonts.Primary.IsValid)
+            // Count, not Primary: an empty stack now answers Primary with a
+            // system face, and asking about Primary would settle for it forever
+            // — a placeholder somebody drops a .ttf into afterwards has to be
+            // picked up, and rebuilding while there is nothing of the project's
+            // own is how that happens.
+            if (_fonts == null || _fonts.Count == 0 ||
+                _fonts.Primary == null || !_fonts.Primary.IsValid)
                 BuildFontStack();
-            if (_fonts?.Primary == null || !_fonts.Primary.IsValid) return false;
+            if (_fonts?.Primary == null || !_fonts.Primary.IsValid)
+            {
+                WarnNoFont(drawing: false);
+                return false;
+            }
+            // Legible, but not in a face this project chose. Worth saying for
+            // the same reason the blank case is: nobody assigned it.
+            if (_fonts.IsSystemOnly) WarnNoFont(drawing: true);
+            else _warnedNoFont = false;
 
             _engine ??= new TextLayoutEngine();
             // Normally already held from OnEnable; this covers layout queries
@@ -929,6 +1132,37 @@ namespace OneText.UGUI
             HoldAtlas();
 
             return EnsureMaterial();
+        }
+
+        // The gate above runs on every layout pass, and while there is no font
+        // it rebuilds the stack on every one of them, so the deduplication that
+        // matters most is the cheapest: a bool, before the string that
+        // MissingFonts keys on is ever built.
+        [System.NonSerialized] private bool _warnedNoFont;
+
+        private void WarnNoFont(bool drawing)
+        {
+            if (_warnedNoFont) return;
+            _warnedNoFont = true;
+            MissingFonts.Warn(this, EffectiveFontAsset, drawing);
+        }
+
+        /// <summary>
+        /// The font asset this label meant to draw with, whether or not it had
+        /// anything in it — which is the one the warning has to name. Same
+        /// precedence as <see cref="BuildFontStack"/>: a style's font, then the
+        /// label's own, then the project default.
+        /// </summary>
+        private OneFontAsset EffectiveFontAsset
+        {
+            get
+            {
+                if (_style != null && _style.Sets(OneTextStyle.Fields.Font) && _style.Font != null)
+                    return _style.Font;
+                if (_font != null) return _font;
+                var settings = OneTextSettings.Instance;
+                return settings != null ? settings.DefaultFont : null;
+            }
         }
 
         /// <summary>
@@ -1006,18 +1240,32 @@ namespace OneText.UGUI
             // override", not "load this".
             if (_fontBytesOverride != null && _fontBytesOverride.Length > 0)
             {
-                var loaded = FontData.Load(_fontBytesOverride);
-                _ownedFonts.Add(loaded);
-                if (_variations.Count > 0) loaded.SetVariations(_variations.ToArray());
-                _fonts.Add(loaded);
+                // Through the shared cache, not a private parse: a hundred
+                // labels handed the same bytes get one HarfBuzz face and one
+                // set of atlas tiles between them. The exception is a label
+                // with variations, which mutates its face and therefore must
+                // own it — sharing it would embolden every other label.
+                if (_variations.Count > 0)
+                {
+                    var loaded = FontData.Load(_fontBytesOverride);
+                    _ownedFonts.Add(loaded);
+                    loaded.SetVariations(_variations.ToArray());
+                    _fonts.Add(loaded);
+                }
+                else
+                {
+                    var shared = SharedFontBytes.Acquire(_fontBytesOverride);
+                    _sharedFonts.Add(shared);
+                    _fonts.Add(shared);
+                }
 
                 if (_fallbackBytesOverride != null)
                 {
                     foreach (var bytes in _fallbackBytesOverride)
                     {
                         if (bytes == null || bytes.Length == 0) continue;
-                        var fallback = FontData.Load(bytes);
-                        _ownedFonts.Add(fallback);
+                        var fallback = SharedFontBytes.Acquire(bytes);
+                        _sharedFonts.Add(fallback);
                         _fonts.Add(fallback);
                     }
                 }
@@ -1726,7 +1974,11 @@ namespace OneText.UGUI
             in RunFrame frame, Color32 runColor, int runIndex, GlyphAtlas sdfAtlas)
         {
             var colorAtlas = SharedGlyphAtlas.ColorAtlas;
-            int ppem = GlyphAtlas.QuantizePixelsPerEm(runSize);
+            float density = DensityFor(runSize);
+            int ppem = GlyphAtlas.QuantizePixelsPerEm(density);
+            // Off the bucket, not off the request: the tile really is this many
+            // texels across, so the units it converts back to are the glyph's
+            // own however dense the bucket turned out to be.
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
             int runTextEnd = run.TextStart + run.TextLength;
 
@@ -1755,7 +2007,7 @@ namespace OneText.UGUI
                     continue;
                 }
 
-                var sdf = sdfAtlas.GetOrAdd(font, glyph.GlyphId, runSize);
+                var sdf = sdfAtlas.GetOrAdd(font, glyph.GlyphId, density);
                 if (sdf.HasPixels)
                 {
                     AddQuad(sdf.OriginUnits, sdf.SizeUnits, sdf.UvRect, sdf.Layer,
@@ -1776,7 +2028,10 @@ namespace OneText.UGUI
         {
             if (_sprites == null) return;
 
-            int ppem = GlyphAtlas.QuantizePixelsPerEm(runSize);
+            // The tile's resolution follows the quality rung with everything
+            // else; the cell it is drawn into is `runSize` below, and stays
+            // there. An icon does not grow because its picture got sharper.
+            int ppem = GlyphAtlas.QuantizePixelsPerEm(DensityFor(runSize));
             var sprite = _sprites[run.Style.Sprite];
             if (sprite == null) return;
 
@@ -2564,12 +2819,22 @@ namespace OneText.UGUI
                 _meshHeapMark = afterLayout;
             }
 
+            // Re-measured at the top of every build, not only by the watcher:
+            // a capture that drives Rebuild by hand has no canvas pass, and its
+            // one picture must come off the measured density, not off a stale 1.
+            // On a change this drops _quadsValid, so the cache check below
+            // misses and the quads rebuild against the new buckets.
+            RefreshPpemScale();
+
             // Fetched per rebuild, not cached: changing the atlas budget in
             // Project Settings replaces the atlas underneath us. A precise
             // label draws from the multi-channel atlas, which is created the
             // first time one asks for it and never otherwise.
             var atlas = _precise ? SharedGlyphAtlas.PreciseAtlas : SharedGlyphAtlas.Atlas;
-            CharsetRecorder.Record(DisplayText, EffectiveFontSize);
+            // The density, not the size: prewarm bakes what the recorder saw,
+            // and a session that actually baked 96 ppem tiles is not predicted
+            // by a record that says 36.
+            CharsetRecorder.Record(DisplayText, DensityFor(EffectiveFontSize));
 
             // Quad generation depends on the layout and on the atlas, and on
             // nothing an animation frame touches. Regenerating it per frame
@@ -2617,7 +2882,15 @@ namespace OneText.UGUI
                 // atlas density bucket has to follow it or the tile is fetched
                 // at the wrong resolution.
                 float runSize = run.FontSize > 0f ? run.FontSize : EffectiveFontSize;
-                int runPpem = GlyphAtlas.QuantizePixelsPerEm(runSize);
+                // Two numbers from here down, and the whole of the quality
+                // setting is the gap between them: `runDensity` is what the
+                // atlas is asked for and `scale` is what the text is drawn at.
+                // A tile baked at twice the density is twice as many texels
+                // across the same em, so the glyph comes out the same size off
+                // a finer field — which is only true while `scale` keeps
+                // reading `runSize`.
+                float runDensity = DensityFor(runSize);
+                int runPpem = GlyphAtlas.QuantizePixelsPerEm(runDensity);
                 float scale = runSize / font.UnitsPerEm;
                 // Only the tag's colour is baked. The label's own colour is
                 // multiplied in at emit time, so tinting or fading a label
@@ -2674,13 +2947,13 @@ namespace OneText.UGUI
                 // Bake everything this run is missing in one dispatch: a job per
                 // glyph spends more on scheduling than on the field itself.
                 long lookupStartedAt = AtlasDiagnostics.Now;
-                atlas.PrepareClusters(font, runSize, _positioned, _clusters);
+                atlas.PrepareClusters(font, runDensity, _positioned, _clusters);
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
 
                 foreach (var cluster in _clusters)
                 {
                     lookupStartedAt = AtlasDiagnostics.Now;
-                    var loc = atlas.GetOrAddCluster(font, runSize,
+                    var loc = atlas.GetOrAddCluster(font, runDensity,
                         _positioned, cluster.Start, cluster.Count, cluster.Hash);
                     AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
                     if (!loc.HasPixels) continue;

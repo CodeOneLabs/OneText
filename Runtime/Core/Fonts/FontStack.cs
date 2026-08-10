@@ -102,8 +102,54 @@ namespace OneText
         /// <summary>
         /// The head of the stack, and what draws the box for a character
         /// neither the stack nor the operating system has a glyph for.
+        ///
+        /// When the stack is empty this is a face from the operating system,
+        /// not null. Empty is not the exotic case it reads as: a label whose
+        /// font asset was deleted, a migration that could not find a
+        /// <c>.ttf</c>, a project with no default font — every one of those
+        /// arrives here with nothing in <c>_fonts</c>, and a null Primary is
+        /// what every caller downstream treats as "this label does not draw".
+        /// The whole point of the system tier is that a reader gets letters
+        /// instead of nothing, and a tier that only runs once the project
+        /// already supplied a font is not a floor.
         /// </summary>
-        public FontData Primary => _fonts.Count > 0 ? _fonts[0] : null;
+        public FontData Primary => _fonts.Count > 0 ? _fonts[0] : SystemPrimary;
+
+        // Resolved once and remembered, including the negative: a stack with no
+        // fonts is asked for its Primary on every layout pass, and walking the
+        // machine's font directories per pass is not a fallback, it is a hang.
+        private FontData _systemPrimary;
+        private bool _systemPrimarySearched;
+
+        /// <summary>
+        /// A face from the operating system to stand at the head of an
+        /// otherwise empty stack, or null when there is none.
+        ///
+        /// Probed with 'A' rather than with the text, because Primary is asked
+        /// for before any text is known — the layout engine's own guard reads
+        /// it first. What it is used for is metrics for an empty line, the
+        /// ASCII fast path, and the notdef box, so a Latin face is the right
+        /// answer to all three; every character that is actually drawn is still
+        /// resolved on its own through <see cref="ResolveFromSystem"/>, which
+        /// is where a Korean string gets a Korean face.
+        /// </summary>
+        private FontData SystemPrimary
+        {
+            get
+            {
+                if (_systemPrimarySearched) return _systemPrimary;
+                _systemPrimarySearched = true;
+                _systemPrimary = ResolveFromSystem('A');
+                return _systemPrimary;
+            }
+        }
+
+        /// <summary>
+        /// True when nothing this stack draws with came from the project: every
+        /// glyph is the operating system's, which is a diagnostic worth being
+        /// able to ask for rather than inferring from a count of zero.
+        /// </summary>
+        public bool IsSystemOnly => _fonts.Count == 0 && Primary != null;
 
         public int Count => _fonts.Count;
 
@@ -142,6 +188,10 @@ namespace OneText
             // A font that arrives after a character was answered by the
             // operating system may well cover it; the project's own font wins.
             _system?.Clear();
+            // And the head of the stack is now a real font rather than the
+            // system face that was standing in for one.
+            _systemPrimary = null;
+            _systemPrimarySearched = false;
         }
 
         private static FontData Valid(FontData font) => font != null && font.IsValid ? font : null;
@@ -161,8 +211,11 @@ namespace OneText
             _fonts.Clear();
             _coverage.Clear();
             // Not disposed: system faces are shared process-wide and belong to
-            // SystemFonts, not to whichever stack happened to ask for one.
+            // SystemFonts, not to whichever stack happened to ask for one. The
+            // stand-in Primary is one of those and goes the same way.
             _system?.Clear();
+            _systemPrimary = null;
+            _systemPrimarySearched = false;
         }
 
         /// <summary>
@@ -177,7 +230,11 @@ namespace OneText
         /// </summary>
         public FontData Resolve(int codepoint)
         {
-            if (_fonts.Count == 0) return null;
+            // No early return on an empty stack. It used to be here, and it is
+            // the reason a label with no font drew nothing on a machine full of
+            // fonts: the system tier below was written as the last rung of a
+            // chain rather than as the floor under it, so the one case that
+            // needed it most — no chain at all — never reached it.
             if (!_coverage.TryGetValue(codepoint, out int index))
             {
                 // -1 rather than 0 for "nobody has it": the two answers used to
