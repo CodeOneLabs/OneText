@@ -120,7 +120,8 @@ namespace OneText
 
         // The unpacked font file, kept alive next to the face that is reading
         // it. Cleared by Release, which is what runs whenever _data is replaced
-        // — a refilled placeholder must not go on serving the old font.
+        // — a refilled placeholder must not go on serving the old font — except
+        // when it is the only copy of the font left; see DropPackedData.
         [System.NonSerialized] private byte[] _unpacked;
 
         /// <summary>Family name read from the font's name table at import time.</summary>
@@ -165,7 +166,11 @@ namespace OneText
         /// <summary>Size of the embedded font file in bytes, before compression.</summary>
         public int FontFileSize => _uncompressedLength;
 
-        /// <summary>Size actually stored in the asset.</summary>
+        /// <summary>
+        /// Size actually stored in the asset. Zero in a player build once the
+        /// font has been unpacked, because the packed copy is let go of at that
+        /// point; see <see cref="DropPackedData"/>.
+        /// </summary>
         public int StoredSize => _data?.Length ?? 0;
 
         /// <summary>The shared parsed font. Never dispose it; the asset owns it.</summary>
@@ -371,9 +376,29 @@ namespace OneText
         /// </summary>
         private byte[] Unpacked()
         {
-            if (_data == null || _data.Length == 0) return null;
-            if (!_compressed) return _data;
+            // Ahead of the packed check rather than behind it: a player lets go
+            // of the packed copy the moment this array exists, so from then on
+            // this is the only one, and asking after the other first would make
+            // the memory saving's first casualty the asset it was saved on.
             if (_unpacked != null) return _unpacked;
+
+            if (_data == null || _data.Length == 0)
+            {
+                // A font that was here and is now gone is not a placeholder
+                // that never had one, and it must not be left to be reported as
+                // one — the symptom is blank labels and a warning blaming the
+                // asset for a file it did have. Nothing should reach this:
+                // Release keeps the unpacked array whenever it is the last copy
+                // of the font. It is said this loudly because it is a canary
+                // for some path that got past that rule.
+                if (_compressed && _uncompressedLength > 0)
+                    Debug.LogError($"OneText: the font '{FamilyName}' unpacked its font file and " +
+                                   "then lost it, so text using it will not draw. This is a bug in " +
+                                   "OneText rather than anything wrong with the asset.", this);
+                return null;
+            }
+
+            if (!_compressed) return _data;
 
             using var input = new MemoryStream(_data);
             using Stream packed = _codec == Codec.Brotli
@@ -388,7 +413,45 @@ namespace OneText
                 read += chunk;
             }
             _unpacked = output;
+#if !UNITY_EDITOR
+            DropPackedData();
+#endif
             return output;
+        }
+
+        /// <summary>
+        /// Lets go of the packed copy of the font file, now that the unpacked
+        /// one has made it redundant. False when there was nothing to drop.
+        ///
+        /// A CJK face is what makes this worth doing. Noto Sans CJK KR is
+        /// 10.9 MB packed and 15.7 MB unpacked, and an asset holding both spends
+        /// 10.9 MB of a phone's memory on bytes nothing will read again: the
+        /// face reads the unpacked array and only the unpacked array.
+        ///
+        /// <para>Player builds only, and called from <see cref="Unpacked"/>
+        /// rather than offered as an operation. In the editor this object
+        /// <em>is</em> the asset on disk, so emptying a serialized field here
+        /// and letting anything call <c>AssetDatabase.SaveAssets</c> afterwards
+        /// — the migration, the Hub, somebody pressing Ctrl+S — writes the
+        /// emptied asset out and destroys the font for good. The editor also
+        /// still reads the packed bytes, for <see cref="Repack"/> and for
+        /// <see cref="StoredSize"/>. A player never re-serializes a
+        /// ScriptableObject, and one that is unloaded and referenced again is
+        /// read back off the disk it was never written to.</para>
+        ///
+        /// <para>Internal rather than private because the <c>#if</c> above puts
+        /// it out of the editor's reach, and a branch no test can take is a
+        /// branch that is not tested.</para>
+        /// </summary>
+        internal bool DropPackedData()
+        {
+            // Only ever the packed copy, and only once the unpacked one exists
+            // to stand in for it. An asset whose font did not shrink stores the
+            // file itself in _data, and that array is the one the face is
+            // reading through.
+            if (!_compressed || _data == null || _unpacked == null) return false;
+            _data = null;
+            return true;
         }
 
         /// <summary>
@@ -561,6 +624,15 @@ namespace OneText
 
             // Dropped with the face, never before it: the face is reading
             // through a pointer into this array.
+            //
+            // And not dropped at all once it is the only copy of the font left.
+            // A player lets go of the packed bytes after unpacking, so for
+            // those assets this array is the font, and there would be nothing
+            // to load the face back from. Release is not only the way out:
+            // SetBaseVariations is public and calls it to rebuild the variants
+            // against a new face, which would otherwise take every label on
+            // this font blank for the rest of the process.
+            if (_compressed && _data == null) return;
             _unpacked = null;
         }
     }

@@ -82,6 +82,141 @@ namespace OneText.Tests
             }
         }
 
+        // The packed copy of the font file, which a player lets go of once the
+        // unpacked one exists. The editor must not, because the object under
+        // test is the asset on disk; these take the branch deliberately.
+
+        [Test]
+        public void The_Editor_Keeps_The_Packed_Font_After_Unpacking_It()
+        {
+            var asset = CreateAsset(LatinFontPath);
+            try
+            {
+                int packed = asset.StoredSize;
+                Assert.IsTrue(asset.Font.IsValid);
+                Assert.AreEqual(packed, asset.StoredSize,
+                    "the editor must keep the bytes it would otherwise save to disk without");
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void Dropping_The_Packed_Font_Leaves_It_Drawing_And_Readable()
+        {
+            var original = File.ReadAllBytes(Path.GetFullPath(LatinFontPath));
+            var asset = CreateAsset(LatinFontPath);
+            try
+            {
+                Assert.IsTrue(asset.Font.IsValid);
+                Assert.IsTrue(asset.DropPackedData(), "there was a packed copy to drop");
+                Assert.AreEqual(0, asset.StoredSize);
+                Assert.IsFalse(asset.DropPackedData(), "and only the once");
+
+                Assert.IsTrue(asset.Font.IsValid, "the face reads the unpacked array, not the packed one");
+                Assert.IsTrue(asset.Font.HasGlyph('A'));
+                Assert.AreEqual(original, asset.GetFontBytes(),
+                    "and the font file is still there to hand out");
+                Assert.IsFalse(asset.IsPlaceholder, "a dropped packed copy is not a missing font");
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void A_Dropped_Asset_Survives_Having_Its_Face_Rebuilt()
+        {
+            var asset = CreateAsset(VariableFontPath);
+            try
+            {
+                Assert.IsTrue(asset.Font.IsValid);
+                Assert.IsTrue(asset.DropPackedData());
+
+                // Public, and it releases the face so the variants can be built
+                // against the new one. Without the unpacked array kept, there
+                // is nothing left to build from and every label on this font
+                // goes blank for the rest of the process.
+                asset.SetBaseVariations(new[] { new FontVariation("wght", 800f) });
+
+                Assert.IsNotNull(asset.Font, "the asset must be able to reload its own face");
+                Assert.IsTrue(asset.Font.IsValid);
+                Assert.IsTrue(asset.Font.HasGlyph('A'));
+                Assert.IsNotNull(asset.GetVariant(System.Array.Empty<FontVariation>()));
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void Repacking_A_Dropped_Asset_Puts_The_Packed_Copy_Back()
+        {
+            var asset = CreateAsset(LatinFontPath);
+            try
+            {
+                Assert.IsTrue(asset.Font.IsValid);
+                Assert.IsTrue(asset.DropPackedData());
+
+                Assert.IsTrue(asset.Repack(OneFontAsset.FontPacking.Smallest));
+                Assert.Greater(asset.StoredSize, 0, "repacking rebuilds the packed copy from the unpacked one");
+                Assert.IsTrue(asset.Font.IsValid);
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void Emptying_A_Dropped_Asset_Still_Takes_Its_Font_Away()
+        {
+            var asset = CreateAsset(LatinFontPath);
+            try
+            {
+                Assert.IsTrue(asset.Font.IsValid);
+                Assert.IsTrue(asset.DropPackedData());
+
+                asset.InitializePlaceholder("Waiting", default);
+
+                Assert.IsTrue(asset.IsPlaceholder);
+                Assert.IsNull(asset.GetFontBytes(), "the kept array must not outlive the font it was");
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void Nothing_Is_Dropped_From_A_Font_That_Was_Never_Packed()
+        {
+            // Bytes that brotli cannot shrink are stored as they are, and then
+            // the stored copy is the one the face reads.
+            var random = new System.Random(7);
+            var incompressible = new byte[64 * 1024];
+            random.NextBytes(incompressible);
+
+            var asset = ScriptableObject.CreateInstance<OneFontAsset>();
+            try
+            {
+                asset.Initialize(incompressible, "Incompressible", null);
+                Assert.AreEqual(incompressible.Length, asset.StoredSize, "nothing was packed");
+
+                Assert.AreEqual(incompressible, asset.GetFontBytes());
+                Assert.IsFalse(asset.DropPackedData(), "these bytes are the font, not a copy of it");
+                Assert.AreEqual(incompressible.Length, asset.StoredSize);
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
         [Test]
         public void Variant_Disposal_Leaves_The_Shared_Face_Usable()
         {
