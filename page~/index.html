@@ -389,7 +389,8 @@
   <nav>
     <b>onetext</b>
     <a href="#install" data-i18n="nav.install">install</a><a href="#box" data-i18n="nav.box">in the box</a><a href="#migrate" data-i18n="nav.migrate">migrate</a>
-    <a href="#correct" data-i18n="nav.correct">correctness</a><a href="#perf" data-i18n="nav.perf">performance</a><a href="#status" data-i18n="nav.status">status</a>
+    <a href="#correct" data-i18n="nav.correct">correctness</a><a href="#perf" data-i18n="nav.perf">performance</a><a href="#memory" data-i18n="nav.memory">memory</a><a href="#status" data-i18n="nav.status">status</a>
+    <a href="workflows.html" data-i18n="nav.workflows">workflows</a>
     <span class="spacer"></span>
     <span class="badge">MIT · Unity 2022.3+</span>
     <span class="langsw" role="group" aria-label="language / 언어"><button type="button" data-lang="ko" lang="ko">KR</button><button type="button" data-lang="en" lang="en">EN</button></span>
@@ -537,6 +538,59 @@
         repetitions per cell, chosen by p99. Harness, scenarios and raw per-frame
         CSVs in <code>Docs/BENCHMARKS.md</code>, losses included, because a
         comparison that lists only its wins is an advertisement.</p>
+    </div>
+  </section>
+
+  <!-- ================= MEMORY ================= -->
+  <section id="memory">
+    <p class="eyebrow" data-i18n="mem.eyebrow">memory</p>
+    <h2 data-i18n="mem.h2">Memory that stops growing.</h2>
+    <p class="lede" data-i18n="mem.lede">
+      The 4&nbsp;MB in the table above is not a starting point. It is the whole
+      budget, and it is the same at the end of the session as at the start.
+      Three things make that true.
+    </p>
+
+    <div class="ratio">
+      <b>4 MB</b>
+      <div data-i18n="mem.ratio">
+        <em>the texture budget, fixed for the session</em>
+        1024 &times; 1024 &times; 4 layers, one byte a texel. A session that keeps
+        meeting characters it has never drawn re-bakes inside that budget. It does
+        not allocate a thirty-second atlas page.
+      </div>
+    </div>
+
+    <ul class="checks">
+      <li data-i18n="mem.li1"><b>Every glyph is baked at the size it will be drawn</b> A tile is
+        keyed by font and by density bucket, so a 12-point caption and a 48-point heading never
+        share one oversized tile and neither is stretched out of the other. When a canvas is
+        scaled, the real magnification is measured and the tile is baked for that.</li>
+      <li data-i18n="mem.li2"><b>Full means recycled, not stopped</b> The least recently used tiles
+        are evicted, the sheet is compacted, and the meshes that pointed into it rebuild. Nothing
+        is lost for good: a glyph pushed out this frame is back the next. That is what turns a
+        full atlas from a cliff into a cost.</li>
+      <li data-i18n="mem.li3"><b>Fonts travel compressed, and shrink the build with them</b> The
+        <code>.ttf</code> is Brotli-packed inside the font asset. Nothing is renamed to
+        <code>.bytes</code>, nothing is read from disk at runtime, and the file that ships is the
+        packed one.</li>
+    </ul>
+
+    <div class="ratio">
+      <b>&minus;67 %</b>
+      <div data-i18n="mem.ratio2">
+        <em>what packing takes off a font on the way into the asset</em>
+        Pretendard, 6.4&nbsp;MB &rarr; 2.09&nbsp;MB. A CJK face is already dense and
+        gives up less: Noto Sans CJK KR, 15.7&nbsp;MB &rarr; 11.1&nbsp;MB, or 29&nbsp;%.
+      </div>
+    </div>
+
+    <div class="footnotes">
+      <p data-i18n="mem.fn"><b>*</b> A label with <code>precise</code> on draws through a second,
+        multi-channel atlas at four bytes a texel. That one is a fixed budget too, and it is
+        per-label opt-in for exactly this reason. Atlas size and layer count are project settings;
+        the Hub reports demand rather than occupancy, because an atlas under pressure recycles and
+        reads 30&nbsp;% full for ever.</p>
     </div>
   </section>
 
@@ -787,6 +841,18 @@ label.RestartReveal();</pre>
     'nav.correct': '정확성',
     'nav.perf': '성능',
     'nav.status': '현황',
+    'nav.memory': '메모리',
+    'nav.workflows': '권장 워크플로우',
+
+    'mem.eyebrow': '메모리',
+    'mem.h2': '더 이상 늘지 않는 메모리.',
+    'mem.lede': '위 표의 4 MB는 시작값이 아닙니다. 그게 예산 전부이고, 세션이 끝날 때도 시작할 때와 같습니다. 이걸 가능하게 하는 것이 셋입니다.',
+    'mem.ratio': '<em>세션 내내 고정인 텍스처 예산</em>1024 × 1024 × 4레이어, 텍셀당 1바이트. 한 번도 그린 적 없는 글자가 계속 나와도 그 예산 안에서 다시 구울 뿐입니다. 서른두 번째 아틀라스 페이지를 새로 잡지 않습니다.',
+    'mem.li1': '<b>글리프는 그려질 크기로 굽습니다</b> 타일은 폰트와 밀도 버킷으로 나뉩니다. 12포인트 캡션과 48포인트 제목이 큰 타일 하나를 나눠 쓰지도, 한쪽을 늘려서 쓰지도 않습니다. 캔버스가 확대되면 실제 배율을 재서 그 크기로 굽습니다.',
+    'mem.li2': '<b>가득 차면 멈추는 게 아니라 재활용합니다</b> 가장 오래 안 쓴 타일부터 버리고, 시트를 정리하고, 그 자리를 가리키던 메시를 다시 만듭니다. 영구히 잃는 것은 없습니다. 이번 프레임에 밀려난 글리프는 다음 프레임에 돌아옵니다. 아틀라스가 꽉 차는 일이 절벽이 아니라 비용이 되는 이유입니다.',
+    'mem.li3': '<b>폰트는 압축된 채로 실려 빌드까지 줄입니다</b> <code>.ttf</code>는 폰트 애셋 안에 Brotli로 압축돼 들어갑니다. <code>.bytes</code>로 이름을 바꿀 일도, 런타임에 디스크를 읽을 일도 없고, 출하되는 파일이 곧 압축된 그 파일입니다.',
+    'mem.ratio2': '<em>애셋에 들어가면서 줄어드는 양</em>Pretendard 6.4 MB → 2.09 MB. 이미 촘촘한 CJK 폰트는 덜 내놓습니다. Noto Sans CJK KR은 15.7 MB → 11.1 MB로 29 %입니다.',
+    'mem.fn': '<b>*</b> <code>precise</code>를 켠 라벨은 텍셀당 4바이트인 두 번째 멀티채널 아틀라스로 그립니다. 그쪽도 고정 예산이고, 라벨별로 켜게 되어 있는 이유가 바로 이것입니다. 아틀라스 크기와 레이어 수는 프로젝트 설정입니다. Hub가 점유율 대신 수요를 보고하는 이유는, 압박받는 아틀라스는 재활용이 계속 돌아 영원히 30 %로 보이기 때문입니다.',
 
     'hero.h1': '모든 언어를,<br><span>드로우 콜 하나로</span>.',
     'hero.sub': '태국어는 쌓이고, 아랍어는 이어지고, 이모지는 온전합니다.<br>모든 문자를 제대로 그리는 Unity uGUI 텍스트 엔진. 드로우 콜은 하나.<b>무료입니다. ' +

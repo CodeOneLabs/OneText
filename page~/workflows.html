@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OneText · Recommended ways of working</title>
+<meta name="description" content="Six situations you run into with OneText and what we recommend in each: moving over from TextMesh Pro, shipping in several languages, animating text, managing fonts and memory, getting ready to ship, and text that gets magnified.">
+<style>
+  :root {
+    --bg: #07090b;
+    --panel: #0c1013;
+    --panel-2: #10161a;
+    --line: rgba(126,231,180,0.15);
+    --line-hi: rgba(126,231,180,0.32);
+    --ink: #d6e5dd;
+    --ink-dim: rgba(214,229,221,0.58);
+    --ink-faint: rgba(214,229,221,0.32);
+    --green: #7ee7b4;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas,
+            "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+            Inter, system-ui, "Apple SD Gothic Neo", Pretendard, "Noto Sans KR",
+            "Malgun Gothic", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans);
+         font-size: 15px; line-height: 1.7;
+         overflow-x: hidden; overflow-x: clip;
+         -webkit-font-smoothing: antialiased; }
+  code { font-family: var(--mono); }
+  a { color: var(--green); }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+  nav { display: flex; align-items: center; gap: 20px; padding: 14px 0;
+        border-bottom: 1px solid var(--line); font-size: 12px; letter-spacing: 0.09em;
+        flex-wrap: wrap; font-family: var(--mono); }
+  nav b { color: var(--green); }
+  nav a { color: var(--ink-dim); text-decoration: none; }
+  nav a:hover { color: var(--green); }
+  nav a[aria-current] { color: var(--green); }
+  nav .spacer { flex: 1; }
+  nav .badge { color: var(--ink-faint); }
+
+  .langsw { display: inline-flex; margin-left: 14px; border: 1px solid var(--line-hi);
+            border-radius: 999px; overflow: hidden; }
+  .langsw button { font: inherit; font-family: var(--mono); font-size: 11px;
+                   letter-spacing: 0.09em; background: transparent; color: var(--ink-faint);
+                   border: 0; padding: 4px 11px; cursor: pointer; line-height: 1.6; }
+  .langsw button:hover { color: var(--green); }
+  .langsw button[aria-pressed="true"] { background: var(--green); color: #062018; }
+
+  header { padding: 84px 0 8px; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em;
+             text-transform: uppercase; color: var(--green); margin-bottom: 16px; }
+  h1 { font-size: clamp(34px, 4.4vw, 56px); line-height: 1.08; letter-spacing: -0.02em;
+       font-weight: 700; }
+  .lede { color: var(--ink-dim); margin-top: 24px; max-width: 620px; font-size: 17px; }
+
+  .toc { margin-top: 40px; border: 1px solid var(--line);
+         display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+         gap: 1px; background: var(--line); }
+  .toc a { background: var(--panel); padding: 15px 18px; text-decoration: none;
+           color: var(--ink); display: block; }
+  .toc a:hover { background: var(--panel-2); }
+  .toc span { display: block; font-family: var(--mono); font-size: 10.5px;
+              letter-spacing: 0.2em; color: var(--ink-faint); margin-bottom: 5px; }
+
+  section { padding: 88px 0 0; border-top: 1px solid var(--line); margin-top: 88px; }
+  h2 { font-size: clamp(25px, 3vw, 36px); margin-bottom: 12px;
+       letter-spacing: -0.02em; font-weight: 700; line-height: 1.2; }
+  .who { color: var(--ink-faint); max-width: 620px; margin-bottom: 40px; font-size: 14px; }
+
+  /* One recommendation is one card, and the heading is the thing to do. The
+     paragraph under it is why, and what it costs to skip — in that order,
+     because a reader who stops after the heading has still got the useful
+     half. */
+  .rec { border-left: 2px solid var(--line-hi); padding: 2px 0 2px 20px;
+         margin-bottom: 30px; max-width: 760px; }
+  .rec h3 { font-size: 17px; font-weight: 700; line-height: 1.45;
+            margin-bottom: 9px; letter-spacing: -0.01em; color: var(--ink); }
+  .rec p { color: var(--ink-dim); }
+  .rec p + p { margin-top: 10px; }
+  .rec b { color: var(--ink); font-weight: 600; }
+
+  code { background: rgba(126,231,180,0.08); border: 1px solid var(--line);
+         padding: 1px 5px; font-size: 12.5px; border-radius: 3px;
+         white-space: nowrap; }
+
+  footer { padding: 80px 0 70px; margin-top: 88px; border-top: 1px solid var(--line);
+           color: var(--ink-faint); font-size: 12px; font-family: var(--mono);
+           line-height: 1.9; }
+
+  html[lang="ko"] .eyebrow, html[lang="ko"] .toc span { letter-spacing: 0.08em; }
+  html[lang="ko"] h1 { font-size: clamp(28px, 3.8vw, 46px); letter-spacing: -0.03em; }
+  html[lang="ko"] .lede, html[lang="ko"] .who, html[lang="ko"] .rec p,
+  html[lang="ko"] .rec h3, html[lang="ko"] .toc a { word-break: keep-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <b>onetext</b>
+    <a href="index.html#install" data-i18n="nav.install">install</a><a href="index.html#box" data-i18n="nav.box">in the box</a><a href="index.html#migrate" data-i18n="nav.migrate">migrate</a>
+    <a href="index.html#correct" data-i18n="nav.correct">correctness</a><a href="index.html#perf" data-i18n="nav.perf">performance</a>
+    <a href="workflows.html" aria-current="page" data-i18n="nav.workflows">workflows</a>
+    <span class="spacer"></span>
+    <span class="badge">MIT · Unity 2022.3+</span>
+    <span class="langsw" role="group" aria-label="language / 언어"><button type="button" data-lang="ko" lang="ko">KR</button><button type="button" data-lang="en" lang="en">EN</button></span>
+  </nav>
+
+  <header>
+    <div class="eyebrow" data-i18n="t.eyebrow">Workflows</div>
+    <h1 data-i18n="t.h1">Recommended<br>ways of working</h1>
+    <p class="lede" data-i18n="t.lede">
+      Six situations you run into with OneText, and what we recommend in each.
+      You do not have to read in order — take the section that matches what you
+      are doing right now.
+    </p>
+
+    <div class="toc">
+      <a href="#tmp"><span>01</span><i data-i18n="toc.1">Moving over from TextMesh Pro</i></a>
+      <a href="#l10n"><span>02</span><i data-i18n="toc.2">Shipping in several languages</i></a>
+      <a href="#anim"><span>03</span><i data-i18n="toc.3">Animating text</i></a>
+      <a href="#fonts"><span>04</span><i data-i18n="toc.4">Managing fonts and memory</i></a>
+      <a href="#ship"><span>05</span><i data-i18n="toc.5">Getting ready to ship</i></a>
+      <a href="#scale"><span>06</span><i data-i18n="toc.6">When text gets magnified</i></a>
+    </div>
+  </header>
+
+  <section id="tmp">
+    <div class="eyebrow">01</div>
+    <h2 data-i18n="s1.h2">Moving over from TextMesh Pro</h2>
+    <p class="who" data-i18n="s1.who">Moving a whole project across. Usually a day's work.</p>
+
+    <div class="rec">
+      <h3 data-i18n="p11.h">Rewrite the scripts first, convert the components second.</h3>
+      <p data-i18n="p11.b">The Hub's onboarding tab lays its buttons out in that order too. A field
+      still declared as a TMP type will not accept a <code>OneTextLabel</code>, and it will not
+      complain either. Convert the scenes first and those fields quietly empty out. The migration
+      reads its own writes back and tells you which field on which object, but keeping the order
+      means it never happens.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p12.h">Turn the report's by-hand list into tickets.</h3>
+      <p data-i18n="p12.b">Some things are deliberately not carried across. TMP's margins do not
+      exist in OneText, so you inset the rect yourself; <code>onEndEdit</code> listeners and a
+      dropdown's <code>multiSelect</code> and <code>placeholder</code> have no counterpart.
+      Unsupported markup prints on screen as literal text, and the ScrollRect and Linked overflow
+      modes do not come over. Run it from the command line and it exits 1 while anything is
+      outstanding, so CI can hold the line.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p13.h">Eyeball one converted outline and shadow.</h3>
+      <p data-i18n="p13.b">TMP's shader multiplies each effect slider by a ratio computed per font
+      asset, so the same 0.25 is a different thickness on a different asset. The migration folds
+      those ratios in, but whether one OneText reach and one TMP gradient unit are the same
+      distance has not been confirmed yet. Putting one label beside a TMP screenshot takes a
+      minute.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p14.h">Fill placeholder fonts with a single .ttf.</h3>
+      <p data-i18n="p14.b">A TMP asset that shipped its baked atlas without the source font file
+      becomes a placeholder. Search the report for <code>PlaceholdersCreated</code> and it names
+      the file each one is waiting for; drop it in through the font asset inspector's
+      <b>Choose the font file</b> button and every label pointing at that asset is fixed with it.
+      Until then the text draws in the project default font, and the warning appears once per
+      font.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p15.h">Using DOTween? Turn the define on in the Hub.</h3>
+      <p data-i18n="p15.b">The Asset Store build of DOTween carries no package manifest to detect,
+      so there is no way to work it out automatically. There is a button in the Hub, and it has to
+      be on per build target group.</p>
+    </div>
+  </section>
+
+  <section id="l10n">
+    <div class="eyebrow">02</div>
+    <h2 data-i18n="s2.h2">Shipping in several languages</h2>
+    <p class="who" data-i18n="s2.who">Wiring up a string table and adding locales as you go.</p>
+
+    <div class="rec">
+      <h3 data-i18n="p21.h">Put whole-label decoration on the component's <code>Decoration</code>.</h3>
+      <p data-i18n="p21.b">The inspector's decoration table edits that field. Wrap it round the
+      text as tags instead and a Localize String Event takes the tags out with the string it
+      replaces, so a label somebody styled carefully arrives as plain text in every language.
+      Labels already wrapped in tags can be moved onto the component with one click in the
+      inspector. Colour, effects, links and ruby on part of a sentence are a different matter:
+      those belong to the translated text, so the translator carries the tags along with it.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p22.h">Tag CJK fonts with a language, and labels with a locale.</h3>
+      <p data-i18n="p22.b">直 is one codepoint whose correct shape differs between Japanese and
+      Chinese. Without a tag, whichever font comes first in the fallback list wins. The font asset
+      says which language a font is for and the label says who is reading it — you need both. The
+      tag is used for Han, kana and Hangul only, because a Japanese font has Latin letters too, and
+      letting the tag decide every character would drag digits and punctuation into CJK shapes as
+      well. Matching is by prefix, so a <code>zh</code> tag covers a <code>zh-Hans</code> label and
+      <code>zh-Hant</code> does not.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p23.h">Put Doctor in CI.</h3>
+      <p data-i18n="p23.b">Characters your project fonts do not have are drawn from the device's
+      own operating-system fonts. That is on by default because it beats showing the reader a
+      box, but those characters look different from device to device and do not appear at all on
+      the web. Doctor reports a character caught by a system font as a warning and a character
+      nothing has as an error, and exits 1 when there are errors.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p24.h">Adding Thai, Lao, Khmer or Burmese? Install the word lists.</h3>
+      <p data-i18n="p24.b">These scripts have no spaces, so breaking a line needs a dictionary.
+      The built-in starter list handles about a tenth of real text. Install them once from the
+      Hub's Dictionaries tab and it copies them out of the package, registers them for the build,
+      and re-measures coverage on the spot. Doctor warns below 90%.</p>
+    </div>
+  </section>
+
+  <section id="anim">
+    <div class="eyebrow">03</div>
+    <h2 data-i18n="s3.h2">Animating text</h2>
+    <p class="who" data-i18n="s3.who">Dialogue typewriters, damage numbers, tween sequences.</p>
+
+    <div class="rec">
+      <h3 data-i18n="p31.h">Drive the counter, not the text, for a typewriter.</h3>
+      <p data-i18n="p31.b">Set <code>Text</code> once and move
+      <code>MaxVisibleGraphemes</code> or <code>CharactersPerSecond</code>. Assigning a longer
+      prefix each frame re-shapes the whole string, cuts clusters in half at UTF-16 boundaries,
+      and — above all — <b>assigning <code>Text</code> rewinds a reveal that is already
+      running</b>. On a label with a typewriter that means a reset every frame and nothing on
+      screen. This package's own <code>DOText</code> moves the counter too, and switches the
+      built-in typewriter off before it starts.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p32.h">Choose per-frame properties by what they redraw.</h3>
+      <p data-i18n="p32.b"><code>Text</code>, <code>FontSize</code>, <code>Wrap</code>,
+      <code>LineSpacing</code>, <code>Language</code> and the auto-size bounds lay the text out
+      again. <code>Precise</code>, <code>Quality</code>, <code>Decoration</code>,
+      <code>ScrollOffset</code> and alignment rebuild the quads only. Tag effects like
+      <code>wave</code>, and the reveal, write vertices and nothing else. For a pulse,
+      <code>DOScale</code> beats <code>FontSize</code>: tweening the size is a re-layout every
+      frame plus a walk through the atlas buckets, and it shows no change at all while
+      <code>AutoSize</code> is on.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p33.h">Build per-character effects on <code>ITextQuadModifier</code>.</h3>
+      <p data-i18n="p33.b">It addresses grapheme clusters, so ligatures do not throw it off.
+      TMP-style code that edits <code>textInfo.meshInfo</code> directly still compiles, but the
+      moment the text is laid out again what it wrote is thrown away — the position an index
+      pointed at is no longer the same character.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p34.h">Running on another clock? Turn <code>Animate</code> off and set <code>AnimationTime</code> yourself.</h3>
+      <p data-i18n="p34.b">A pause menu is the usual reason. The typewriter runs regardless of
+      <code>Animate</code>, because a label with no effect tags on it can still have a typewriter.
+      A pooled dialogue label types itself out again when it is re-enabled.</p>
+    </div>
+  </section>
+
+  <section id="fonts">
+    <div class="eyebrow">04</div>
+    <h2 data-i18n="s4.h2">Managing fonts and memory</h2>
+    <p class="who" data-i18n="s4.who">Settling the fallback list and the memory budget — on mobile especially.</p>
+
+    <div class="rec">
+      <h3 data-i18n="p41.h">Put only fonts you actually use in the fallback list.</h3>
+      <p data-i18n="p41.b">The first label to draw decompresses and parses every font on the list.
+      The asset keeps the parsed face, so every label after that picks up the same one. It cannot
+      be put off, because working out which font has which character means asking the parsed face.
+      <b>The decompression is paid once</b> — 93 ms on a desktop, several times that on a phone.
+      The memory is not: a CJK font nobody ever reaches goes on holding its full 15.7 MB for as
+      long as the asset is loaded. Characters that turn up one at a time are better left to the
+      system font tier.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p42.h">Run the Hub's Pack smaller once before you ship.</h3>
+      <p data-i18n="p42.b">Importing packs on the fast setting, because the smallest one freezes
+      the editor for 30 seconds on a single Korean font. At release time those 30 seconds are
+      worth spending: about 17 seconds per CJK font buys 12%. Nothing repacks for you and nothing
+      reminds you, so put it on the checklist.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p43.h">Call <code>GetFontBytes</code> only when you need it.</h3>
+      <p data-i18n="p43.b">Every call copies the whole font file afresh. The kept array is the one
+      HarfBuzz is reading, so a single byte written into it would break the font everywhere at
+      once.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p44.h">Built a <code>FontStack</code> yourself? Dispose the stack before its fonts.</h3>
+      <p data-i18n="p44.b">Instanced bold and italic borrow the original face. Remove the regular
+      one while the stack is alive and the bold points at a face that is gone. Set
+      <code>BoldWeight</code> and <code>ItalicSlant</code> before the first render, too: they are
+      read once, the first time a family's bold is asked for.</p>
+    </div>
+  </section>
+
+  <section id="ship">
+    <div class="eyebrow">05</div>
+    <h2 data-i18n="s5.h2">Getting ready to ship</h2>
+    <p class="who" data-i18n="s5.who">First-frame hitches, the memory budget, the release checklist.</p>
+
+    <div class="rec">
+      <h3 data-i18n="p51.h">Record a play session for the prewarm charset instead of writing one.</h3>
+      <p data-i18n="p51.b">Turn recording on in settings, play a round, then save the charset. A
+      hand-written list misses translated strings and user input, and the density buckets the
+      atlas really keys on are not the same as font sizes, so they are hard to guess.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p52.h">If prewarm stopped early, read the report.</h3>
+      <p data-i18n="p52.b">It stops at 85% full or at the first eviction and records what did not
+      fit. Filling further would push out the glyphs it just added, which is the very thing
+      prewarming is there to prevent. A charset bigger than the atlas means growing the atlas or
+      cutting the charset.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p53.h">Budget the atlas from <code>DemandTiles</code>.</h3>
+      <p data-i18n="p53.b">The occupancy gauge reads 30% for ever on an atlas under pressure,
+      because recycling keeps running. The demand figure counts each key once and tells you what
+      size would not have stopped it. Even when it genuinely fills nothing is lost for good:
+      eviction and compaction run and the meshes are rebuilt, and dropped glyphs come back next
+      frame.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p54.h">Do not move the SDF shader out of a Resources folder.</h3>
+      <p data-i18n="p54.b">No code references that shader; it ships purely because it sits under
+      Resources. Move it and you get a player where labels measure and wrap exactly as they do in
+      the editor and draw no glyphs at all. The editor looks fine right to the end. Doctor catches
+      this as an error.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p55.h">Raise the layer count with the quality rung.</h3>
+      <p data-i18n="p55.b">Each rung takes the square of itself in atlas area, and the memory is
+      size times size times layers. <code>Precise</code> is a second atlas at four bytes a texel,
+      which is why it is switched on per label.</p>
+    </div>
+  </section>
+
+  <section id="scale">
+    <div class="eyebrow">06</div>
+    <h2 data-i18n="s6.h2">When text gets magnified</h2>
+    <p class="who" data-i18n="s6.who">A CanvasScaler above 1, a camera that gets close, or signage in world space.</p>
+
+    <div class="rec">
+      <h3 data-i18n="p61.h">On a scaled canvas, treat Quality as a floor.</h3>
+      <p data-i18n="p61.b">The real magnification is measured every canvas pass, and a label
+      re-bakes once it leaves a 10% band. Quality is the minimum for setups that measurement
+      cannot see. The larger of the two wins and they do not multiply, so a label on a canvas
+      scaled by three under the High rung uses 3x, not 6x.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p62.h">To change labels you have already made, use the Project rung.</h3>
+      <p data-i18n="p62.b">Project is the zero value, so every component already serialized reads
+      back as “ask the project”. The project's answer is read at draw time, which means one field
+      changes six thousand prefabs together. Per-label settings are for the exceptions.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p63.h">Set world-text quality from how close the player gets.</h3>
+      <p data-i18n="p63.b">A 30-point sign is 30 points at two metres and at twenty. The default is
+      Medium because world text is usually walked up to; measured at 1x, the crossbar of an ‘A’
+      filled the view at under two texels thick. A prefab carries no session's measurement.</p>
+    </div>
+
+    <div class="rec">
+      <h3 data-i18n="p64.h">Density stops at 128 ppem.</h3>
+      <p data-i18n="p64.b">Otherwise a perspective camera could raise it without end, and one
+      256-ppem Hangul glyph is 70,000 texels. Above that the baked tile is drawn magnified. Raise
+      the cap only along with the atlas budget.</p>
+    </div>
+  </section>
+
+  <footer data-i18n="t.footer">
+    OneText · free, open source, MIT · Unicode 17.0.0 · Unity 2022.3+<br>
+    <a href="index.html">← back to the front page</a>
+  </footer>
+
+</div>
+
+<script>
+/* Same arrangement as the front page: the English in the markup *is* the en
+   dictionary, captured once at startup, and ko is the table below. The choice
+   is shared with index.html through one localStorage key. */
+(function () {
+  var TITLE = {
+    en: 'OneText · Recommended ways of working',
+    ko: 'OneText · 권장 작업 순서'
+  };
+
+  var KO = {
+    'nav.install': '설치',
+    'nav.box': '기본 탑재',
+    'nav.migrate': '이전',
+    'nav.correct': '정확성',
+    'nav.perf': '성능',
+    'nav.workflows': '권장 워크플로우',
+
+    't.eyebrow': '워크플로우',
+    't.h1': '권장 작업 순서',
+    't.lede': 'OneText를 쓰면서 자주 마주치는 여섯 가지 상황과, 각 상황에서 권하는 방법을 모았습니다. 순서대로 읽을 필요는 없고 지금 하는 일에 해당하는 절만 보면 됩니다.',
+    't.footer': 'OneText · 자유 오픈소스, MIT · Unicode 17.0.0 · Unity 2022.3+<br><a href="index.html">← 첫 페이지로</a>',
+
+    'toc.1': 'TextMesh Pro에서 옮겨올 때',
+    'toc.2': '여러 언어를 서비스할 때',
+    'toc.3': '텍스트를 움직일 때',
+    'toc.4': '폰트와 메모리를 관리할 때',
+    'toc.5': '출시를 준비할 때',
+    'toc.6': '텍스트가 확대되는 화면일 때',
+
+    's1.h2': 'TextMesh Pro에서 옮겨올 때',
+    's1.who': '프로젝트 하나를 통째로 옮기는 작업이고, 보통 하루 안에 끝납니다.',
+    'p11.h': '스크립트를 먼저 고치고 컴포넌트를 나중에 바꾸세요.',
+    'p11.b': 'Hub의 온보딩 탭도 이 순서로 버튼을 배치해 두었습니다. 타입이 아직 TMP로 선언된 필드는 <code>OneTextLabel</code>을 받지 않고, 받지 않으면서 오류도 내지 않습니다. 씬부터 변환하면 그런 필드가 조용히 비게 됩니다. 마이그레이션이 쓴 값을 다시 읽어 어느 오브젝트의 어느 필드인지 알려주긴 하지만, 순서를 지키면 애초에 생기지 않을 일입니다.',
+    'p12.h': '변환 보고서의 “손으로 할 일” 목록을 작업 티켓으로 옮기세요.',
+    'p12.b': '일부러 옮기지 않는 것들이 있습니다. TMP의 margin은 OneText에 없어서 rect를 직접 줄여야 하고, <code>onEndEdit</code> 리스너와 드롭다운의 <code>multiSelect</code>·<code>placeholder</code>는 대응하는 것이 없습니다. 지원하지 않는 마크업은 글자 그대로 화면에 찍히고 ScrollRect와 Linked 오버플로 모드도 넘어오지 않습니다. 명령줄에서 돌리면 오류가 남았을 때 1로 종료하니 CI에서 막을 수 있습니다.',
+    'p13.h': '변환된 외곽선과 그림자는 하나만 눈으로 대조해 보세요.',
+    'p13.b': 'TMP 셰이더는 효과 슬라이더마다 폰트 애셋별로 계산된 배율을 곱합니다. 같은 0.25도 애셋이 다르면 두께가 다릅니다. 마이그레이션이 이 배율을 접어 넣지만, OneText의 reach 한 단위와 TMP 그라디언트 한 단위가 같은 거리인지는 아직 확인되지 않았습니다. 라벨 하나를 TMP 스크린샷과 나란히 놓고 보는 데 1분이면 됩니다.',
+    'p14.h': '플레이스홀더 폰트는 .ttf 파일 하나로 한 번에 채우세요.',
+    'p14.b': '구운 아틀라스만 있고 원본 폰트 파일이 없던 TMP 애셋은 플레이스홀더가 됩니다. 보고서에서 <code>PlaceholdersCreated</code>를 찾으면 어떤 파일을 기다리는지 나와 있고, 폰트 애셋 인스펙터의 <b>Choose the font file</b> 버튼으로 넣으면 그 애셋을 가리키는 라벨 전부가 함께 고쳐집니다. 채우기 전까지는 프로젝트 기본 폰트로 그려지고 경고는 폰트당 한 번만 뜹니다.',
+    'p15.h': 'DOTween을 쓴다면 Hub에서 디파인을 켜세요.',
+    'p15.b': '에셋스토어판 DOTween에는 감지할 패키지 매니페스트가 없어서 자동으로 알아낼 방법이 없습니다. Hub에 버튼이 있고 빌드 타깃 그룹마다 켜야 합니다.',
+
+    's2.h2': '여러 언어를 서비스할 때',
+    's2.who': '문자열 테이블을 붙이고 로케일을 늘려 가는 단계입니다.',
+    'p21.h': '라벨 전체에 거는 장식은 컴포넌트의 <code>Decoration</code>에 두세요.',
+    'p21.b': '인스펙터의 장식 표가 이 필드를 편집합니다. 텍스트에 태그로 감아 두면 Localize String Event가 문자열을 갈아 끼울 때 태그도 함께 사라져서, 공들여 꾸민 라벨이 모든 언어에서 맨 텍스트로 나옵니다. 이미 태그로 감긴 라벨은 인스펙터에서 한 번 눌러 컴포넌트로 옮길 수 있습니다. 문장 안의 일부 구간에만 거는 색·효과·링크·루비는 사정이 다릅니다. 그건 번역문의 일부이니 번역자가 태그째 가져가야 합니다.',
+    'p22.h': 'CJK 폰트에는 언어 태그를, 라벨에는 로케일을 넣으세요.',
+    'p22.b': '直은 코드포인트 하나지만 일본어와 중국어에서 올바른 자형이 다릅니다. 태그가 없으면 폴백 목록에서 먼저 나온 폰트가 이깁니다. 폰트 애셋에는 그 폰트가 어느 언어용인지, 라벨에는 그 라벨을 읽는 사람이 누구인지 — 둘 다 있어야 합니다. 태그는 한자·가나·한글에만 쓰입니다. 일본어 폰트에는 로마자도 있으니, 태그가 모든 글자를 결정하게 두면 숫자와 문장부호까지 CJK 자형으로 끌려가기 때문입니다. 매칭은 접두어 기준이라 <code>zh</code> 태그는 <code>zh-Hans</code> 라벨을 커버하고, <code>zh-Hant</code>는 커버하지 않습니다.',
+    'p23.h': 'Doctor를 CI에 넣으세요.',
+    'p23.b': '프로젝트 폰트에 없는 글자는 기기의 운영체제 폰트로 그려집니다. 독자에게 네모 상자를 보이는 것보다 낫기에 기본으로 켜져 있지만, 그렇게 그려진 글자는 기기마다 모양이 다르고 웹에서는 아예 안 나옵니다. Doctor는 시스템 폰트가 받아낸 글자를 경고로, 아무 데도 없는 글자를 오류로 보고하고, 오류가 있으면 1로 종료합니다.',
+    'p24.h': '태국어·라오어·크메르어·버마어를 넣는다면 단어 목록을 설치하세요.',
+    'p24.b': '이 문자들은 띄어쓰기가 없어서 사전이 있어야 줄을 끊습니다. 내장된 기본 목록은 실제 텍스트의 10분의 1 정도만 감당합니다. Hub의 Dictionaries 탭에서 한 번 설치하면 패키지에서 복사해 빌드에 등록하고 그 자리에서 적용률을 다시 재 줍니다. Doctor는 90% 아래면 경고합니다.',
+
+    's3.h2': '텍스트를 움직일 때',
+    's3.who': '대화 타자기, 데미지 숫자, 트윈 시퀀스를 붙이는 단계입니다.',
+    'p31.h': '타자기는 <code>Text</code>를 다시 넣는 대신 카운터를 움직이세요.',
+    'p31.b': '<code>Text</code>를 한 번만 넣고 <code>MaxVisibleGraphemes</code>나 <code>CharactersPerSecond</code>를 움직이면 됩니다. 매 프레임 더 긴 앞부분을 대입하면 문자열 전체를 다시 셰이핑하고, UTF-16으로 자르다 클러스터가 반쪽 나고, 무엇보다 <b><code>Text</code> 대입 자체가 진행 중인 리빌을 처음으로 되돌립니다.</b> 타자기가 붙은 라벨이라면 매 프레임 리셋되어 화면에 아무것도 나오지 않습니다. 이 패키지의 <code>DOText</code>도 카운터를 움직이는 방식이고 시작할 때 내장 타자기를 먼저 끕니다.',
+    'p32.h': '매 프레임 바꿀 값은 다시 그리는 비용을 보고 고르세요.',
+    'p32.b': '<code>Text</code>·<code>FontSize</code>·<code>Wrap</code>·<code>LineSpacing</code>·<code>Language</code>와 오토사이즈 범위는 레이아웃을 다시 잡습니다. <code>Precise</code>·<code>Quality</code>·<code>Decoration</code>·<code>ScrollOffset</code>과 정렬은 쿼드만 다시 만듭니다. <code>wave</code> 같은 태그 효과와 리빌은 버텍스만 씁니다. 두근거리는 효과는 <code>FontSize</code>보다 <code>DOScale</code>이 낫습니다. <code>FontSize</code>를 트윈하면 매 프레임 재레이아웃인 데다 아틀라스 버킷까지 옮겨 다니고, <code>AutoSize</code>가 켜져 있으면 아무 변화도 보이지 않습니다.',
+    'p33.h': '글자별 효과는 <code>ITextQuadModifier</code>로 만드세요.',
+    'p33.b': '자소 클러스터 단위로 지목하고 합자가 있어도 어긋나지 않습니다. <code>textInfo.meshInfo</code>를 직접 고치는 TMP식 코드도 컴파일은 되지만, 레이아웃이 다시 잡히는 순간 덮어쓴 내용이 버려집니다. 그때 인덱스가 가리키던 자리가 더 이상 같은 글자가 아니기 때문입니다.',
+    'p34.h': '다른 시계로 돌릴 때는 <code>Animate</code>를 끄고 <code>AnimationTime</code>을 직접 넣으세요.',
+    'p34.b': '일시정지 메뉴가 보통의 이유입니다. 타자기는 <code>Animate</code>와 상관없이 흐릅니다. 효과 태그가 하나도 없는 라벨에도 타자기는 붙기 때문입니다. 풀링해서 쓰는 대화 라벨은 다시 켜질 때 처음부터 다시 타이핑합니다.',
+
+    's4.h2': '폰트와 메모리를 관리할 때',
+    's4.who': '특히 모바일에서, 폴백 목록과 메모리 예산을 정하는 단계입니다.',
+    'p41.h': '폴백 목록에는 실제로 쓰는 폰트만 넣으세요.',
+    'p41.b': '첫 라벨이 그려질 때 목록에 있는 폰트를 전부 압축 해제하고 파싱합니다. 파싱한 face는 폰트 애셋이 들고 있어서 그다음 라벨부터는 그대로 가져다 씁니다. 미룰 수 없는 건 어떤 폰트에 어떤 글자가 있는지 알려면 파싱된 face에 물어보는 수밖에 없기 때문입니다. <b>압축 해제 비용은 한 번으로 끝납니다.</b> 데스크톱에서 93 ms, 폰에서는 그 몇 배입니다. 메모리는 그렇지 않습니다. 한 번도 쓰이지 않은 CJK 폰트가 애셋이 올라와 있는 내내 15.7 MB를 차지합니다. 어쩌다 한 글자씩 나오는 문자는 시스템 폰트 계층에 맡기는 편이 낫습니다.',
+    'p42.h': '출시 전에 Hub의 Pack smaller를 한 번 돌리세요.',
+    'p42.b': '임포트할 때는 빠른 설정으로 압축합니다. 가장 작은 설정으로 하면 한국어 폰트 하나에 에디터가 30초씩 멈추기 때문입니다. 출시할 때는 그 30초가 아깝지 않습니다. CJK 폰트당 17초 정도에 12%가 줄어듭니다. 자동으로 다시 압축하지도, 알려 주지도 않으니 체크리스트에 넣어 두세요.',
+    'p43.h': '<code>GetFontBytes</code>는 필요할 때만 부르세요.',
+    'p43.b': '부를 때마다 폰트 파일 전체를 새로 복사해 줍니다. 보관된 배열은 HarfBuzz가 그대로 읽고 있어서 거기에 한 바이트만 써도 폰트가 모든 곳에서 동시에 깨지기 때문입니다.',
+    'p44.h': '<code>FontStack</code>을 직접 만들었다면 폰트보다 스택을 먼저 정리하세요.',
+    'p44.b': '인스턴스로 만든 볼드와 이탤릭은 원본 face를 빌려 씁니다. 스택이 살아 있는데 레귤러를 먼저 없애면 볼드가 사라진 face를 가리킵니다. <code>BoldWeight</code>와 <code>ItalicSlant</code>는 첫 렌더 전에 정하세요. 한 패밀리의 볼드를 처음 요청할 때 한 번만 읽습니다.',
+
+    's5.h2': '출시를 준비할 때',
+    's5.who': '첫 프레임 끊김, 메모리 예산, 릴리스 체크리스트를 챙기는 단계입니다.',
+    'p51.h': '프리웜 문자셋은 손으로 쓰지 말고 플레이를 녹화해서 만드세요.',
+    'p51.b': '설정에서 녹화를 켜고 게임을 한 판 한 다음 문자셋으로 저장하면 됩니다. 손으로 쓴 목록은 번역된 문자열과 사용자 입력을 놓치고, 아틀라스가 실제로 키로 삼는 밀도 버킷도 폰트 크기와 달라서 맞히기 어렵습니다.',
+    'p52.h': '프리웜이 일찍 멈췄다면 보고서를 보세요.',
+    'p52.b': '85%가 차거나 첫 축출이 일어나면 멈추고 들어가지 못한 것을 기록합니다. 더 채우면 방금 넣은 글리프를 밀어내게 되어 프리웜으로 막으려던 일이 그대로 일어납니다. 문자셋이 아틀라스보다 크다면 아틀라스를 키우거나 문자셋을 줄여야 합니다.',
+    'p53.h': '아틀라스 예산은 <code>DemandTiles</code>로 잡으세요.',
+    'p53.b': '점유율 게이지는 압박받는 아틀라스에서 재활용이 계속 돌기 때문에 영원히 30%로 보입니다. 수요 수치는 키마다 한 번씩 세고 어느 크기였다면 멈추지 않았을지를 알려 줍니다. 실제로 꽉 차도 영구히 잃는 것은 없습니다. 축출과 정리가 돌고 메시가 다시 만들어질 뿐, 떨어진 글리프는 다음 프레임에 돌아옵니다.',
+    'p54.h': 'SDF 셰이더는 Resources 폴더 밖으로 옮기지 마세요.',
+    'p54.b': '그 셰이더를 참조하는 코드는 없고 Resources 아래 있다는 이유만으로 빌드에 실립니다. 옮기면 라벨이 에디터와 똑같이 재고 줄바꿈하면서 글리프만 하나도 안 그리는 플레이어가 나옵니다. 에디터에서는 끝까지 멀쩡해 보입니다. Doctor가 이걸 오류로 잡습니다.',
+    'p55.h': '품질 단계를 올릴 때는 레이어 수도 같이 올리세요.',
+    'p55.b': '단계마다 아틀라스 면적을 자기 제곱만큼 먹고 메모리는 크기 곱하기 크기 곱하기 레이어입니다. <code>Precise</code>는 텍셀당 4바이트짜리 두 번째 아틀라스라 라벨별로 켜게 되어 있습니다.',
+
+    's6.h2': '텍스트가 확대되는 화면일 때',
+    's6.who': 'CanvasScaler를 1보다 크게 쓰거나, 카메라가 다가가거나, 월드 공간에 간판을 두는 경우입니다.',
+    'p61.h': '스케일된 캔버스에서는 Quality를 바닥값으로 쓰세요.',
+    'p61.b': '실제 확대율은 캔버스 패스마다 측정되고, 10% 범위를 벗어나면 라벨이 다시 구워집니다. Quality는 그 측정이 닿지 않는 구성을 위한 최소선입니다. 둘 중 큰 쪽이 이기고 곱해지지 않으니, High 단계에서 캔버스가 3배인 라벨은 6배가 아니라 3배를 씁니다.',
+    'p62.h': '이미 만들어 둔 라벨을 한꺼번에 바꾸려면 Project 단계를 쓰세요.',
+    'p62.b': 'Project가 0번 값이라 이미 직렬화된 컴포넌트는 전부 “프로젝트에 물어봐”로 읽힙니다. 프로젝트의 답은 그릴 때 읽히니, 필드 하나를 바꾸면 프리팹 6천 개가 함께 바뀝니다. 라벨별 설정은 예외를 위한 것입니다.',
+    'p63.h': '월드 텍스트 품질은 플레이어가 얼마나 가까이 오는지로 정하세요.',
+    'p63.b': '30포인트 간판은 2미터에서도 20미터에서도 30포인트입니다. 기본값이 Medium인 이유는 월드 텍스트는 보통 다가가서 보기 때문입니다. 1배로 두고 재 보니 A의 가로획이 텍셀 두 개도 안 되는 굵기로 화면을 채웠습니다. 프리팹에는 어떤 세션의 측정값도 실려 있지 않습니다.',
+    'p64.h': '밀도는 128 ppem에서 멈춥니다.',
+    'p64.b': '그러지 않으면 원근 카메라가 끝없이 끌어올릴 수 있고, 256 ppem 한글 글리프 하나가 7만 텍셀입니다. 그 위로는 구운 타일을 확대해 그립니다. 한계를 올리려면 아틀라스 예산을 같이 올리세요.'
+  };
+
+  var EN = {};
+  var nodes = [].slice.call(document.querySelectorAll('[data-i18n]'));
+  nodes.forEach(function (el) {
+    var k = el.getAttribute('data-i18n');
+    if (!(k in EN)) EN[k] = el.innerHTML;
+  });
+
+  var DICT = { en: EN, ko: KO };
+  var buttons = [].slice.call(document.querySelectorAll('.langsw [data-lang]'));
+
+  function apply(lang) {
+    var d = DICT[lang] || EN;
+    nodes.forEach(function (el) {
+      var k = el.getAttribute('data-i18n');
+      var s = d[k];
+      if (s == null) s = EN[k];
+      if (s != null && el.innerHTML !== s) el.innerHTML = s;
+    });
+    document.documentElement.lang = lang;
+    document.title = TITLE[lang] || TITLE.en;
+    buttons.forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-lang') === lang ? 'true' : 'false');
+    });
+  }
+
+  function stored() {
+    try { return localStorage.getItem('onetext.lang'); } catch (e) { return null; }
+  }
+  function remember(lang) {
+    try { localStorage.setItem('onetext.lang', lang); } catch (e) {}
+  }
+
+  var qs = (location.search.match(/[?&]lang=([a-zA-Z-]+)/) || [])[1];
+  var pick = qs || stored() ||
+    ((navigator.languages || [navigator.language || 'en'])[0] || 'en');
+  apply(/^ko\b/i.test(pick) ? 'ko' : 'en');
+
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var next = b.getAttribute('data-lang');
+      if (next === document.documentElement.lang) return;
+      apply(next);
+      remember(next);
+    });
+  });
+})();
+</script>
+</body>
+</html>
