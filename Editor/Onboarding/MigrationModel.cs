@@ -23,8 +23,9 @@ namespace OneText.Editor
         /// Becomes <c>OneTextDropdown</c>.
         ///
         /// A dropdown is here for its two labels rather than for itself:
-        /// <c>UnityEngine.UI.Dropdown</c> declares them as <c>Text</c>, nothing
-        /// can widen that, and converting the labels it points at leaves it with
+        /// <c>UnityEngine.UI.Dropdown</c> declares them as <c>Text</c> and
+        /// <c>TMP_Dropdown</c> declares them as <c>TMP_Text</c>, nothing can
+        /// widen either, and converting the labels one points at leaves it with
         /// a blank caption and empty rows. It is converted last of everything on
         /// its container, because it has to be handed labels that already are
         /// what they are going to be.
@@ -33,8 +34,12 @@ namespace OneText.Editor
 
         /// <summary>
         /// Found, named in the report, and left alone: there is no OneText
-        /// counterpart to swap in. A dropdown is the whole of this category
-        /// today, and pretending otherwise would be worse than saying so.
+        /// counterpart to swap in.
+        ///
+        /// Nothing is in this category today. The TMP dropdown was the last of
+        /// it and got a counterpart; the kind stays because "found it, left it,
+        /// said so" is an outcome the report has to be able to carry, and the
+        /// next component someone points this at may well need it.
         /// </summary>
         ReportOnly,
     }

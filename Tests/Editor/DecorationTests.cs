@@ -329,6 +329,92 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void ComponentDecoration_AppliesWithoutAnyMarkup()
+        {
+            var label = NewLabel("plain");
+            label.Decoration = TextDecoration.DefaultOutline;
+            Draw(label);
+
+            Assert.Greater(label.DrawnQuads.Count, 0);
+            Assert.IsTrue(label.DecorationOf(label.DrawnQuads[0]).HasOutline,
+                "the component field decorates the whole label, no tags required");
+        }
+
+        [Test]
+        public void ComponentDecoration_SurvivesTextReplacement()
+        {
+            // The Localize String Event scenario: an external system owns the
+            // string and replaces it wholesale at play. A decoration riding in
+            // the text as a tag goes with it; the component field must not.
+            var label = NewLabel("authored");
+            label.Decoration = TextDecoration.DefaultShadow;
+            Draw(label);
+            Assert.IsTrue(label.DecorationOf(label.DrawnQuads[0]).HasShadow);
+
+            label.text = "번역된 텍스트가 통째로 덮어써도";
+            Draw(label);
+            Assert.Greater(label.DrawnQuads.Count, 0);
+            Assert.IsTrue(label.DecorationOf(label.DrawnQuads[0]).HasShadow,
+                "replacing the text took the component's decoration with it");
+        }
+
+        [Test]
+        public void MarkupWins_TheParts_TheComponentAlsoSets()
+        {
+            var label = NewLabel("<outline=red>span</outline>");
+            var mine = TextDecoration.DefaultOutline;
+            mine.OutlineColor = new Color32(0, 255, 0, 255);
+            label.Decoration = TextDecoration.DefaultShadow.Over(mine);
+            Draw(label);
+
+            var decoration = label.DecorationOf(label.DrawnQuads[0]);
+            Assert.IsTrue(decoration.HasShadow, "the component's shadow was thrown away by a span");
+            Assert.AreEqual(new Color32(255, 0, 0, 255), decoration.OutlineColor,
+                "a tag on the text has the last word over the component");
+        }
+
+        [Test]
+        public void StyleWins_TheParts_TheComponentAlsoSets()
+        {
+            // The component sits under the style on purpose: a theme swap has
+            // to restyle a label that also holds a local opinion.
+            var style = ScriptableObject.CreateInstance<OneTextStyle>();
+            _created.Add(style);
+            var themed = TextDecoration.DefaultGlow;
+            themed.GlowColor = new Color32(0, 0, 255, 255);
+            style.SetDecoration(themed);
+
+            var label = NewLabel("themed");
+            var mine = TextDecoration.DefaultGlow;
+            mine.GlowColor = new Color32(255, 0, 0, 255);
+            label.Decoration = mine;
+            label.Style = style;
+            Draw(label);
+
+            Assert.AreEqual(new Color32(0, 0, 255, 255),
+                label.DecorationOf(label.DrawnQuads[0]).GlowColor);
+        }
+
+        [Test]
+        public void DecorationSetter_RebuildsQuads_ButOnlyOnARealChange()
+        {
+            var label = NewLabel("plain");
+            Draw(label);
+            int builds = label.QuadBuilds;
+
+            label.Decoration = TextDecoration.DefaultOutline;
+            Draw(label);
+            Assert.Greater(label.QuadBuilds, builds, "the setter did not invalidate the quad cache");
+            Assert.IsTrue(label.DecorationOf(label.DrawnQuads[0]).HasOutline);
+
+            builds = label.QuadBuilds;
+            label.Decoration = TextDecoration.DefaultOutline;
+            Draw(label);
+            Assert.AreEqual(builds, label.QuadBuilds,
+                "assigning the value already held must not pay a rebuild");
+        }
+
+        [Test]
         public void UndecoratedSpans_ShareSlotZero()
         {
             var label = NewLabel("plain <glow>lit</glow>");

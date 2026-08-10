@@ -277,6 +277,31 @@ namespace OneText.Editor
                     $"~{texels / (26 * 26):n0} Latin tiles @36px";
             }
 
+            // Above the budget controls because it is what spends them: a rung
+            // multiplies the texels every label at Project asks for, and the
+            // square of that is the atlas area the two knobs below have to
+            // find. The three rungs mean different multiples on the two sides
+            // (1/1.5/2 on a canvas, 1/2/4 in the world) and the hint says so
+            // rather than the labels, which would otherwise have to name four
+            // numbers in three buttons.
+            var rungs = new[] { TextQuality.Performance, TextQuality.Medium, TextQuality.High };
+            int rung = Array.IndexOf(rungs, _settings.DefaultQuality);
+            card.Add(HubUI.Field("Quality",
+                HubUI.Segments(new[] { "Performance", "Medium", "High" }, rung < 0 ? 0 : rung,
+                    index => Edit("_defaultQuality", p => p.intValue = (int)rungs[index],
+                        rebuildAtlas: true)),
+                "Atlas texels per em, for every label and world text whose own Quality says " +
+                "Project — which is all of them until somebody says otherwise. Performance " +
+                "bakes at the size the text asks for.\n\n" +
+                "Raise it when text is magnified after it is baked. On a canvas that is the " +
+                "scale factor: a CanvasScaler set to Scale With Screen Size draws a 36-point " +
+                "label at 108 screen pixels off a tile baked for 36, and nothing here can read " +
+                "that factor at bake time. In the world it is the camera getting close. The " +
+                "rungs are 1x, 1.5x and 2x on a canvas and 1x, 2x and 4x in the world, because " +
+                "a scale factor has a ceiling and a camera does not.\n\n" +
+                "Each rung costs the square of itself in atlas area, so a project that raises " +
+                "this usually raises the layers below with it."));
+
             int selected = Array.IndexOf(TextureSizes, budget.TextureSize);
             var labels = new string[TextureSizes.Length];
             for (int i = 0; i < TextureSizes.Length; i++) labels[i] = TextureSizes[i].ToString();

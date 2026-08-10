@@ -1222,7 +1222,12 @@ namespace OneText.Editor
         private static Component ReplaceDropdown(MigrationTarget target, GameObject go, bool undo,
             MigrationReport report)
         {
-            var old = (Dropdown)target.Source;
+            // Not typed as Unity's dropdown: TMP's is the other one that lands
+            // here, and everything below reads the old component through a
+            // SerializedObject by field name rather than through its API. The
+            // two agree on every one of those names, because TMP's dropdown is
+            // Unity's with the label types changed.
+            var old = target.Source;
 
             // Read off the target rather than off the component: by now the
             // labels have been converted and the old dropdown's own fields, which
@@ -1249,6 +1254,13 @@ namespace OneText.Editor
                 var carrier = scratch.AddComponent<OneTextDropdown>();
                 if (carrier == null)
                     throw new InvalidOperationException("the carrier would not take a OneTextDropdown");
+                // The options first, and then everything else, because
+                // m_Value is in "everything else" and the component clamps it
+                // against the options it can see when the write is applied. Set
+                // the other way round, a dropdown sitting on its third option
+                // comes back sitting on its first — quietly, since a value of
+                // zero is what an untouched dropdown has.
+                CarryOptions(new SerializedObject(old), new SerializedObject(carrier));
                 Carry(new SerializedObject(old), new SerializedObject(carrier),
                     Both(SelectableFields, DropdownFields));
 
@@ -1266,6 +1278,7 @@ namespace OneText.Editor
                         "the object would not take a OneTextDropdown after the old one was " +
                         "removed. What is on it: " + string.Join(", ", present));
                 }
+                CarryOptions(new SerializedObject(carrier), new SerializedObject(made));
                 Carry(new SerializedObject(carrier), new SerializedObject(made),
                     Both(SelectableFields, DropdownFields));
             }
@@ -1274,6 +1287,15 @@ namespace OneText.Editor
             var to = new SerializedObject(made);
             SetObject(to, "m_CaptionText", Label(captionObject));
             SetObject(to, "m_ItemText", Label(itemObject));
+
+            // A TMP dropdown with a placeholder holds -1 for "nothing chosen",
+            // and there is no placeholder to come back to here. Left alone it
+            // would be a value the component clamps every time it draws and
+            // never writes down, which is a field that disagrees with what is
+            // on screen for the rest of the prefab's life.
+            var value = to.FindProperty("m_Value");
+            if (value != null && value.intValue < 0) value.intValue = 0;
+
             if (undo) to.ApplyModifiedProperties();
             else to.ApplyModifiedPropertiesWithoutUndo();
 
@@ -1348,12 +1370,66 @@ namespace OneText.Editor
             "m_AnimationTriggers", "m_Interactable", "m_TargetGraphic",
         };
 
-        /// <summary>What a dropdown carries on top of Selectable's own state.</summary>
+        /// <summary>
+        /// What a dropdown carries on top of Selectable's own state.
+        ///
+        /// The options are not in here: they are the one field whose shape is
+        /// not the same on both sides — see <see cref="CarryOptions"/>.
+        /// </summary>
         private static readonly string[] DropdownFields =
         {
             "m_Template", "m_CaptionImage", "m_ItemImage", "m_Value",
-            "m_Options", "m_OnValueChanged", "m_AlphaFadeSpeed",
+            "m_OnValueChanged", "m_AlphaFadeSpeed",
         };
+
+        /// <summary>
+        /// The options list, element by element, because the element is where
+        /// the two dropdowns stop agreeing.
+        ///
+        /// Unity's <c>OptionData</c> holds a string and a sprite; TextMesh
+        /// Pro's holds those and a colour. <c>CopyFromSerializedProperty</c>
+        /// moves a structure by walking it, so a source with a field the
+        /// destination has not got is not a copy this can be trusted to make —
+        /// and the options are the field with the least to spare: a dropdown
+        /// that converts, reports nothing and comes back empty is the failure
+        /// this whole path is arranged against.
+        ///
+        /// The colour is written on every element rather than left to the
+        /// resize, which fills a new element with whatever the last one held or
+        /// with zeroes. Zero is a transparent black, and a caption image tinted
+        /// with it is invisible — a converted dropdown losing its image for a
+        /// field the source never had.
+        /// </summary>
+        private static void CarryOptions(SerializedObject from, SerializedObject to)
+        {
+            var source = from.FindProperty("m_Options.m_Options");
+            var destination = to.FindProperty("m_Options.m_Options");
+            if (source == null || destination == null || !source.isArray || !destination.isArray)
+                return;
+
+            destination.arraySize = source.arraySize;
+            for (int i = 0; i < source.arraySize; i++)
+            {
+                var one = source.GetArrayElementAtIndex(i);
+                var other = destination.GetArrayElementAtIndex(i);
+                if (one == null || other == null) continue;
+
+                var text = one.FindPropertyRelative("m_Text");
+                var into = other.FindPropertyRelative("m_Text");
+                if (text != null && into != null) into.stringValue = text.stringValue;
+
+                var image = one.FindPropertyRelative("m_Image");
+                var intoImage = other.FindPropertyRelative("m_Image");
+                if (image != null && intoImage != null)
+                    intoImage.objectReferenceValue = image.objectReferenceValue;
+
+                var colour = one.FindPropertyRelative("m_Color");
+                var intoColour = other.FindPropertyRelative("m_Color");
+                if (intoColour != null)
+                    intoColour.colorValue = colour != null ? colour.colorValue : Color.white;
+            }
+            to.ApplyModifiedPropertiesWithoutUndo();
+        }
 
         /// <summary>Every named field that exists on both, moved whole.</summary>
         private static void Carry(SerializedObject from, SerializedObject to,
@@ -1599,7 +1675,21 @@ namespace OneText.Editor
                     if (asset != null) _report.FontsCreated++;
                 }
 
-                if (asset == null) NoteMissing(sourcePath, target);
+                if (asset == null)
+                {
+                    NoteMissing(sourcePath, target);
+                    // And then a placeholder, the same answer the no-source-path
+                    // branch above has always given. This branch used to return
+                    // the null: the font asset named a file, the file was not
+                    // there (deleted, or in a package the project no longer
+                    // has, or unreadable), and every label that wanted it was
+                    // converted pointing at nothing. That is the case with the
+                    // least excuse for it — the file name is known exactly, so
+                    // the placeholder can say what to go and find, and dropping
+                    // it in fixes every label at once.
+                    asset = FontRecovery.PlaceholderForFile(_report, sourcePath);
+                    if (asset != null) NoteRecoveredFile(sourcePath, asset, target);
+                }
 
                 _byPath[sourcePath] = asset;
                 return asset;
@@ -1666,6 +1756,32 @@ namespace OneText.Editor
             }
 
             /// <summary>
+            /// The same note for a font known by its file rather than by the
+            /// name of the asset that wanted it, and tolerant of having no
+            /// target: <see cref="AdoptDefaults"/> resolves the project's
+            /// default font through this cache with nothing to hang a finding
+            /// on.
+            /// </summary>
+            private void NoteRecoveredFile(string sourcePath, OneFontAsset placeholder,
+                MigrationTarget target)
+            {
+                string message =
+                    $"{sourcePath} is not there, so the migration made a placeholder font at " +
+                    $"{AssetDatabase.GetAssetPath(placeholder)} and pointed everything that " +
+                    "wanted that file at it instead of at nothing. Put " +
+                    $"{System.IO.Path.GetFileName(sourcePath)} anywhere in the project and drop " +
+                    "it into the placeholder, and they all have their font back.";
+                _report.Add(target != null
+                    ? target.Note(DoctorSeverity.Info, FontRecovery.RecoveredRule, message)
+                    : new MigrationFinding
+                    {
+                        Severity = DoctorSeverity.Info,
+                        Rule = FontRecovery.RecoveredRule,
+                        Message = message,
+                    });
+            }
+
+            /// <summary>
             /// Said through the report as well as the target: by the time a
             /// font is being made, the target's own findings were already
             /// folded in, so a note added only there would never reach the
@@ -1674,8 +1790,10 @@ namespace OneText.Editor
             private void NoteMissing(string sourcePath, MigrationTarget target)
             {
                 const string rule = "font-source-missing";
-                string message = $"no OneText font asset could be made from {sourcePath}. The " +
-                                 "label is left with no font, which means the project default.";
+                string message = $"no OneText font asset could be made from {sourcePath}. " +
+                                 "A placeholder stands in for it, so the reference survives; " +
+                                 "until the file is supplied the text draws in the project " +
+                                 "default, or in one of the device's own fonts, or not at all.";
                 _report.Add(target != null
                     ? target.Note(DoctorSeverity.Error, rule, message)
                     : new MigrationFinding

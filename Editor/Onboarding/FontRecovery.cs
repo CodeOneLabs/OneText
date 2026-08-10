@@ -614,6 +614,42 @@ namespace OneText.Editor
         }
 
         /// <summary>
+        /// The placeholder for a font known by the file it should have been
+        /// read from, rather than by the name of the baked asset that wanted
+        /// it.
+        ///
+        /// The other half of <see cref="PlaceholderFor"/>. That one answers "a
+        /// TextMesh Pro font asset shipped its atlas and not its font"; this
+        /// one answers "the font asset named a file and the file is not in the
+        /// project" — deleted, or in a package this project no longer has, or
+        /// unreadable. Until now that second case converted to a null and the
+        /// labels lost the reference, which is the one outcome this module
+        /// exists to prevent, and the odd one to have kept: the file name is
+        /// known exactly here, so the placeholder can name what to go and find
+        /// instead of guessing it from a family and a style.
+        /// </summary>
+        public static OneFontAsset PlaceholderForFile(MigrationReport report, string sourcePath)
+        {
+            if (report == null || string.IsNullOrEmpty(sourcePath)) return null;
+
+            string fileName = Path.GetFileName(sourcePath);
+            // Deduplicated by face name like everything else, so a project that
+            // lost one Cairo-Bold.ttf two hundred labels wanted gets one
+            // placeholder and one thing to go and find.
+            var entry = Entry(report.Recovery, Path.GetFileNameWithoutExtension(sourcePath));
+
+            // Known, not parsed. Entry() derives an expected file name from the
+            // family and style it reads out of the name, which is a good guess
+            // and this is not a guess.
+            entry.ExpectedFileName = fileName;
+            var facts = entry.Facts;
+            facts.ExpectedFileName = fileName;
+            entry.Facts = facts;
+
+            return EnsurePlaceholder(entry, report);
+        }
+
+        /// <summary>
         /// Creates the placeholder asset for an entry, or picks up the one a
         /// previous run left.
         ///

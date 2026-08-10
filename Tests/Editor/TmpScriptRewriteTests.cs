@@ -221,12 +221,12 @@ namespace OneText.Tests
                 "public class A\n" +        // 2
                 "{\n" +                     // 3
                 "    TextMeshProUGUI l;\n" +// 4
-                "    TMP_Dropdown d;\n" +   // 5
+                "    TMP_SpriteAsset s;\n" +// 5
                 "    TMP_FontAsset f;\n" +  // 6
                 "}\n");                     // 7
 
             Assert.AreEqual(2, result.Residuals.Count, "expected exactly the two unmapped types");
-            Assert.AreEqual("TMP_Dropdown", result.Residuals[0].Name);
+            Assert.AreEqual("TMP_SpriteAsset", result.Residuals[0].Name);
             Assert.AreEqual(5, result.Residuals[0].Line);
             Assert.AreEqual("TMP_FontAsset", result.Residuals[1].Name);
             Assert.AreEqual(6, result.Residuals[1].Line);
@@ -238,8 +238,41 @@ namespace OneText.Tests
             Assert.IsFalse(result.Viable);
             Assert.IsFalse(result.Changed);
             Assert.IsFalse(result.Text.Contains("OneTextLabel l;"));
-            CollectionAssert.AreEqual(new[] { "TMP_Dropdown", "TMP_FontAsset" },
+            CollectionAssert.AreEqual(new[] { "TMP_SpriteAsset", "TMP_FontAsset" },
                 result.BlockingNames);
+        }
+
+        /// <summary>
+        /// TextMesh Pro's dropdown, which used to be the example of a name this
+        /// could not handle.
+        ///
+        /// It is mapped now for the reason uGUI's is: the labels a dropdown
+        /// points at are converted, and a field still typed <c>TMP_Dropdown</c>
+        /// would be holding a component that no longer exists. The nested types
+        /// come with it — <c>OptionData</c> is where a project's own code builds
+        /// the list, and it is written through the dropdown's name.
+        /// </summary>
+        [Test]
+        public void TheTmpDropdown_AndTheTypesUnderIt_AreRewritten()
+        {
+            var result = TmpScriptRewriter.Rewrite(
+                "using TMPro;\n" +
+                "public class A\n" +
+                "{\n" +
+                "    TMP_Dropdown d;\n" +
+                "    void Fill() { d.options.Add(new TMP_Dropdown.OptionData(\"one\")); }\n" +
+                "}\n");
+
+            Assert.IsTrue(result.Viable);
+            Assert.IsEmpty(result.Residuals);
+            Assert.AreEqual(
+                "using OneText.UGUI;\n" +
+                "public class A\n" +
+                "{\n" +
+                "    OneTextDropdown d;\n" +
+                "    void Fill() { d.options.Add(new OneTextDropdown.OptionData(\"one\")); }\n" +
+                "}\n",
+                result.Text);
         }
 
         [Test]

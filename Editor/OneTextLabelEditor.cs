@@ -25,12 +25,13 @@ namespace OneText.Editor
 
         private SerializedProperty _text, _fontAssetProperty, _fallbackFonts, _fontSize;
         private SerializedProperty _autoSize, _autoSizeMin, _autoSizeMax;
-        private SerializedProperty _style, _namedStyles, _namedFonts, _sprites;
+        private SerializedProperty _style, _namedStyles, _namedFonts, _sprites, _decoration;
         private SerializedProperty _alignment, _verticalAlignment, _wrap, _overflow, _lineSpacing;
         private SerializedProperty _writingMode;
         private SerializedProperty _language, _kinsoku, _cjkLatinSpacing, _punctuationCompression;
         private SerializedProperty _rubyScale;
         private SerializedProperty _richText, _parseEscapes, _precise, _linkClicked, _graphemeRevealed;
+        private SerializedProperty _quality;
         private SerializedProperty _animateProperty, _maxVisibleGraphemes;
         private SerializedProperty _revealGranularity, _charactersPerSecond, _punctuationDelays;
         private SerializedProperty _characterRevealed, _revealComplete;
@@ -59,6 +60,7 @@ namespace OneText.Editor
             _namedStyles = serializedObject.FindProperty("_namedStyles");
             _namedFonts = serializedObject.FindProperty("_namedFonts");
             _sprites = serializedObject.FindProperty("_sprites");
+            _decoration = serializedObject.FindProperty("_decoration");
             _writingMode = serializedObject.FindProperty("_writingMode");
             _alignment = serializedObject.FindProperty("_alignment");
             _verticalAlignment = serializedObject.FindProperty("_verticalAlignment");
@@ -73,6 +75,7 @@ namespace OneText.Editor
             _richText = serializedObject.FindProperty("_richText");
             _parseEscapes = serializedObject.FindProperty("_parseEscapes");
             _precise = serializedObject.FindProperty("_precise");
+            _quality = serializedObject.FindProperty("_quality");
             _linkClicked = serializedObject.FindProperty("_linkClicked");
             _graphemeRevealed = serializedObject.FindProperty("_graphemeRevealed");
             _animateProperty = serializedObject.FindProperty("_animate");
@@ -182,11 +185,54 @@ namespace OneText.Editor
                 "costs more atlas memory: four bytes a texel instead of one, in an atlas " +
                 "of its own. Off, the label renders through the ordinary single-channel " +
                 "SDF, which is what body text wants."));
-            if (!_richText.boolValue)
-                EditorGUILayout.HelpBox("Decoration tags need Rich text on.", MessageType.Info);
-            else if (targets.Length == 1)
-                DrawDecorationTable();
+            EditorGUILayout.PropertyField(_quality, new GUIContent("Quality",
+                "Atlas texels per em, as a multiple of what the font size asks for: " +
+                "Performance 1x, Medium 1.5x, High 2x, Project whichever the project sets. " +
+                "Raise it when the canvas is scaled — the tile is baked for the font size " +
+                "and then magnified by the scale factor, and that is the softness. Costs " +
+                "the square of itself in atlas area."));
+            CanvasScaleHintGUI();
+            if (targets.Length == 1) DrawDecorationTable();
             AppearanceControlsGUI();
+        }
+
+        /// <summary>
+        /// Says when this label is magnified more than its density pays for.
+        ///
+        /// Both answers are checked, because both exist: the measured screen
+        /// scale, which handles this automatically and is capped, and the
+        /// quality rung, which is the manual floor under it. What is left is
+        /// the gap — a canvas scaled beyond
+        /// <see cref="OneTextLabel.PpemCap"/>, or the measurement turned
+        /// off — and only that gap is worth a line in the inspector. Nagging
+        /// about magnification the label already answered is how a hint teaches
+        /// people to stop reading hints.
+        /// </summary>
+        private void CanvasScaleHintGUI()
+        {
+            if (targets.Length != 1) return;
+            var label = target as OneTextLabel;
+            if (label == null) return;
+
+            var canvas = label.canvas;
+            if (canvas == null) return;
+
+            // The live factor rather than the CanvasScaler's settings: the
+            // scaler writes the factor, and the factor is what magnifies.
+            float factor = canvas.rootCanvas != null
+                ? canvas.rootCanvas.scaleFactor
+                : canvas.scaleFactor;
+            float rung = TextQualityScale.ForCanvas((TextQuality)_quality.intValue);
+            float covered = Mathf.Max(rung, label.AppliedPpemScale);
+            // A tenth of slack: a reference resolution that divides unevenly
+            // lands on 1.0667 and nobody needs telling about that.
+            if (factor <= covered * 1.1f) return;
+
+            EditorGUILayout.HelpBox(
+                $"This canvas scales by {factor:0.##}x, so a {label.FontSize:0.#}-point label " +
+                $"is drawn at about {label.FontSize * factor:0} screen pixels off a tile baked " +
+                $"for {label.FontSize * covered:0}. Raising Quality bakes a finer tile; it " +
+                "costs the square of itself in atlas area.", MessageType.Info);
         }
 
         private void DrawLayoutTab()
@@ -199,20 +245,10 @@ namespace OneText.Editor
                             (int)TextWritingMode.VerticalRightToLeft;
             // The two alignments turn with the text: one places it along its
             // line or column, the other places the stack of them across the
-            // box. Relabelled rather than reordered, so the inspector says
-            // which is which instead of leaving the reader to work it out from
-            // a label that now means the other axis.
-            EditorGUILayout.PropertyField(_alignment, new GUIContent(
-                vertical ? "Along column" : "Horizontal",
-                vertical
-                    ? "Where the text sits in its column: Left is the top, Right the bottom."
-                    : null));
-            EditorGUILayout.PropertyField(_verticalAlignment, new GUIContent(
-                vertical ? "Across columns" : "Vertical",
-                vertical
-                    ? "Where the columns sit in the box: Top is the right edge, which is " +
-                      "where a right-to-left column stack starts."
-                    : null));
+            // box. Both rows, their labels and the way they turn live in
+            // AlignmentRows, which draws them as icon buttons.
+            AlignmentRows.InlineAxis(_alignment, vertical);
+            AlignmentRows.BlockAxis(_verticalAlignment, vertical);
             EditorGUILayout.PropertyField(_wrap);
             EditorGUILayout.PropertyField(_overflow);
             EditorGUILayout.PropertyField(_lineSpacing, new GUIContent("Line spacing"));
@@ -414,26 +450,48 @@ namespace OneText.Editor
 
         // ---------------------------------------------------------- decorations
 
-        private static readonly string[] s_decorations = { "outline", "shadow", "glow" };
+        private static readonly (string Name, TextDecoration.Parts Part)[] s_decorations =
+        {
+            ("outline", TextDecoration.Parts.Outline),
+            ("shadow", TextDecoration.Parts.Shadow),
+            ("glow", TextDecoration.Parts.Glow),
+            // The face is not a tag — there is no <face> to parse defaults out
+            // of — and it was not in this table either, which meant a label the
+            // migration handed a dilate of 0.25 showed nothing anywhere in the
+            // inspector to say so. It draws thicker text and there was no way
+            // to see the number, let alone change it.
+            ("face", TextDecoration.Parts.Face),
+        };
 
         /// <summary>
-        /// The decoration table, built the same way the effect table is: the
-        /// name toggles the tag around the whole text, the cells show what the
-        /// tag will run with: defaults greyed in until a cell is edited, dashes
-        /// where a decoration does not read that column. The tag string in the
-        /// text stays the truth; this is a window onto it.
+        /// What a row shows before it is switched on. Every other row reads it
+        /// off the bare tag; the face has no tag, and zero dilate is exactly
+        /// what "off" means for it anyway.
+        /// </summary>
+        private static TextDecoration RowDefaults(string name) =>
+            RichTextParser.TryParseDecoration(name, null, out var parsed)
+                ? parsed
+                : new TextDecoration { Set = TextDecoration.Parts.Face, FaceDilate = 0f };
+
+        /// <summary>
+        /// The decoration table, editing the component's decoration field: the
+        /// name toggles the part, the cells show what it draws with — the bare
+        /// tag's defaults greyed in while a part is off, dashes where a part
+        /// does not read that column.
         ///
-        /// Which is the entire point of the feature being data. This table can
-        /// exist at all because a decoration is nine numbers in a tag rather
-        /// than a material preset; there is no asset to create, nothing to
-        /// assign, and turning one on cannot cost a draw call.
+        /// The component field and not tags in the text, which is where this
+        /// table once wrote: the text is the one thing an external system
+        /// owns — a Localize String Event, a data binding — and replacing the
+        /// string took the decoration with it. Tags remain the way to decorate
+        /// a span, and a tag still wins the parts it sets over what is set
+        /// here.
         /// </summary>
         private void DrawDecorationTable()
         {
-            EditorGUILayout.LabelField("Decorations (wrap whole text, or tag a span in the text yourself)",
+            EditorGUILayout.LabelField("Decorations (whole label; tag a span in the text to override)",
                 EditorStyles.miniBoldLabel);
 
-            var wraps = PeelWraps(_text.stringValue, out string core);
+            var value = ReadDecoration();
             bool changed = false;
 
             EditorGUILayout.BeginHorizontal();
@@ -443,24 +501,28 @@ namespace OneText.Editor
                 GUILayout.Label(column, EditorStyles.centeredGreyMiniLabel, GUILayout.Width(CellWidth));
             EditorGUILayout.EndHorizontal();
 
-            foreach (string name in s_decorations)
+            foreach (var (name, part) in s_decorations)
             {
-                int at = wraps.FindIndex(w => w.Name == name);
-                RichTextParser.TryParseDecoration(name, at >= 0 ? wraps[at].Args.TrimStart() : null,
-                    out var current);
+                bool on = (value.Set & part) != 0;
+                var defaults = RowDefaults(name);
 
                 EditorGUILayout.BeginHorizontal();
-                bool active = GUILayout.Toggle(at >= 0, name, EditorStyles.miniButton,
+                bool active = GUILayout.Toggle(on, name, EditorStyles.miniButton,
                     GUILayout.Width(NameWidth));
-                if (active != at >= 0)
+                if (active != on)
                 {
-                    if (active) { wraps.Insert(0, (name, "")); at = 0; }
-                    else { wraps.RemoveAt(at); at = -1; }
+                    // Turning a part on seeds it with the bare tag's defaults,
+                    // so the first click draws something; turning it off clears
+                    // only its flag, so it comes back as it was.
+                    if (active) value = defaults.Over(value);
+                    else value.Set &= ~part;
                     changed = true;
+                    on = active;
                 }
+                var current = on ? value : defaults;
 
                 bool rowChanged = false;
-                using (new EditorGUI.DisabledScope(at < 0))
+                using (new EditorGUI.DisabledScope(!on))
                 {
                     var edited = current;
                     // The outline's alpha is not carried to the shader (the
@@ -474,6 +536,19 @@ namespace OneText.Editor
                             edited.OutlineColor = ColorCell(current.OutlineColor, alpha, ref rowChanged);
                             edited.OutlineWidth =
                                 DecorationCell(true, current.OutlineWidth, ref rowChanged);
+                            DecorationCell(false, 0f, ref rowChanged);
+                            DecorationCell(false, 0f, ref rowChanged);
+                            // The softness has always been carried, from tags
+                            // and from a TMP material's Outline Softness, and
+                            // had no cell to be seen in.
+                            edited.OutlineSoftness =
+                                DecorationCell(true, current.OutlineSoftness, ref rowChanged);
+                            break;
+                        case "face":
+                            // No colour: the face draws in the label's own.
+                            DecorationCell(false, 0f, ref rowChanged);
+                            edited.FaceDilate =
+                                DecorationCell(true, current.FaceDilate, ref rowChanged);
                             DecorationCell(false, 0f, ref rowChanged);
                             DecorationCell(false, 0f, ref rowChanged);
                             DecorationCell(false, 0f, ref rowChanged);
@@ -498,17 +573,82 @@ namespace OneText.Editor
                             break;
                     }
 
-                    if (rowChanged && at >= 0)
+                    if (rowChanged && on)
                     {
-                        wraps[at] = (name, BuildDecorationArgs(name, edited.Clamped()));
+                        value = edited;
                         changed = true;
                     }
                 }
                 EditorGUILayout.EndHorizontal();
             }
 
-            if (!changed) return;
-            WriteWraps(wraps, core);
+            if (changed) WriteDecoration(value.Clamped());
+            DrawDecorationTagMigration();
+        }
+
+        private TextDecoration ReadDecoration() => new TextDecoration
+        {
+            Set = (TextDecoration.Parts)_decoration.FindPropertyRelative("Set").intValue,
+            OutlineColor = _decoration.FindPropertyRelative("OutlineColor").colorValue,
+            OutlineWidth = _decoration.FindPropertyRelative("OutlineWidth").floatValue,
+            OutlineSoftness = _decoration.FindPropertyRelative("OutlineSoftness").floatValue,
+            ShadowColor = _decoration.FindPropertyRelative("ShadowColor").colorValue,
+            ShadowOffset = _decoration.FindPropertyRelative("ShadowOffset").vector2Value,
+            ShadowSoftness = _decoration.FindPropertyRelative("ShadowSoftness").floatValue,
+            GlowColor = _decoration.FindPropertyRelative("GlowColor").colorValue,
+            GlowRadius = _decoration.FindPropertyRelative("GlowRadius").floatValue,
+            GlowInner = _decoration.FindPropertyRelative("GlowInner").floatValue,
+            FaceDilate = _decoration.FindPropertyRelative("FaceDilate").floatValue,
+        };
+
+        private void WriteDecoration(in TextDecoration value)
+        {
+            _decoration.FindPropertyRelative("Set").intValue = (int)value.Set;
+            _decoration.FindPropertyRelative("OutlineColor").colorValue = value.OutlineColor;
+            _decoration.FindPropertyRelative("OutlineWidth").floatValue = value.OutlineWidth;
+            _decoration.FindPropertyRelative("OutlineSoftness").floatValue = value.OutlineSoftness;
+            _decoration.FindPropertyRelative("ShadowColor").colorValue = value.ShadowColor;
+            _decoration.FindPropertyRelative("ShadowOffset").vector2Value = value.ShadowOffset;
+            _decoration.FindPropertyRelative("ShadowSoftness").floatValue = value.ShadowSoftness;
+            _decoration.FindPropertyRelative("GlowColor").colorValue = value.GlowColor;
+            _decoration.FindPropertyRelative("GlowRadius").floatValue = value.GlowRadius;
+            _decoration.FindPropertyRelative("GlowInner").floatValue = value.GlowInner;
+            _decoration.FindPropertyRelative("FaceDilate").floatValue = value.FaceDilate;
+        }
+
+        /// <summary>
+        /// The way out for text this table's earlier version wrote: whole-text
+        /// decoration wraps still render (a tag is a tag), but they live in
+        /// the string, and the string is what a Localize String Event or a
+        /// script replaces. One click parses them into the component field and
+        /// takes them out of the text; effect wraps stay where they are.
+        /// </summary>
+        private void DrawDecorationTagMigration()
+        {
+            var wraps = PeelWraps(_text.stringValue, out string core);
+            if (!wraps.Exists(w => RichTextParser.IsDecoration(w.Name))) return;
+
+            EditorGUILayout.HelpBox(
+                "This text is wrapped in decoration tags (an earlier version of this table " +
+                "wrote them there). They render, but anything that sets the text — a Localize " +
+                "String Event, a script — replaces them with it. Moving them onto the " +
+                "component keeps them through any text change.", MessageType.Info);
+            if (!GUILayout.Button("Move tags onto the component")) return;
+
+            var value = ReadDecoration();
+            var rest = new List<(string Name, string Args)>();
+            foreach (var wrap in wraps)
+            {
+                // Forward order is outermost first, and Over gives the last
+                // word to the caller, so the innermost tag lands last — the
+                // same part-by-part resolution the parser gives nested tags.
+                if (RichTextParser.IsDecoration(wrap.Name) &&
+                    RichTextParser.TryParseDecoration(wrap.Name, wrap.Args.TrimStart(), out var tag))
+                    value = tag.Over(value);
+                else rest.Add(wrap);
+            }
+            WriteDecoration(value.Clamped());
+            WriteWraps(rest, core);
         }
 
         private static Color32 ColorCell(Color32 value, bool alpha, ref bool changed)
@@ -539,46 +679,6 @@ namespace OneText.Editor
             if (Mathf.Approximately(now, value)) return value;
             changed = true;
             return now;
-        }
-
-        /// <summary>
-        /// The shortest tag argument string meaning these values: only what
-        /// differs from the bare tag's own defaults, so a tag says what the
-        /// author changed and nothing else.
-        /// </summary>
-        private static string BuildDecorationArgs(string name, in TextDecoration decoration)
-        {
-            RichTextParser.TryParseDecoration(name, null, out var defaults);
-            var invariant = System.Globalization.CultureInfo.InvariantCulture;
-            var parts = new List<string>(4);
-
-            void Number(string key, float value, float fallback)
-            {
-                if (!Mathf.Approximately(value, fallback))
-                    parts.Add($"{key}={value.ToString("0.###", invariant)}");
-            }
-
-            switch (name)
-            {
-                case "outline":
-                    if (!Same(decoration.OutlineColor, defaults.OutlineColor))
-                        parts.Add("color=#" + ColorUtility.ToHtmlStringRGBA(decoration.OutlineColor));
-                    Number("w", decoration.OutlineWidth, defaults.OutlineWidth);
-                    break;
-                case "shadow":
-                    if (!Same(decoration.ShadowColor, defaults.ShadowColor))
-                        parts.Add("color=#" + ColorUtility.ToHtmlStringRGBA(decoration.ShadowColor));
-                    Number("x", decoration.ShadowOffset.x, defaults.ShadowOffset.x);
-                    Number("y", decoration.ShadowOffset.y, defaults.ShadowOffset.y);
-                    Number("soft", decoration.ShadowSoftness, defaults.ShadowSoftness);
-                    break;
-                default:
-                    if (!Same(decoration.GlowColor, defaults.GlowColor))
-                        parts.Add("color=#" + ColorUtility.ToHtmlStringRGBA(decoration.GlowColor));
-                    Number("w", decoration.GlowRadius, defaults.GlowRadius);
-                    break;
-            }
-            return parts.Count > 0 ? " " + string.Join(" ", parts) : "";
         }
 
         private static bool Same(Color32 a, Color32 b) =>

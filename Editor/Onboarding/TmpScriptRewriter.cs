@@ -40,7 +40,7 @@ namespace OneText.Editor
     public enum TmpResidualKind
     {
         /// <summary>
-        /// A bare type name — <c>TMP_MeshInfo</c>, <c>TMP_Dropdown</c> — which
+        /// A bare type name — <c>TMP_MeshInfo</c>, <c>TMP_SpriteAsset</c> — which
         /// only compiles for as long as <c>using TMPro;</c> is above it. These
         /// are the ones that decide a file cannot be rewritten.
         /// </summary>
@@ -69,7 +69,7 @@ namespace OneText.Editor
     /// </summary>
     public readonly struct TmpResidual
     {
-        /// <summary>The identifier, e.g. <c>TMP_Dropdown</c>.</summary>
+        /// <summary>The identifier, e.g. <c>TMP_SpriteAsset</c>.</summary>
         public readonly string Name;
 
         /// <summary>1-based line number in the <em>rewritten</em> text.</summary>
@@ -265,7 +265,7 @@ namespace OneText.Editor
     /// localization diff.
     ///
     /// Whatever it cannot handle it still reports. A file that mentions
-    /// <c>TMP_Dropdown</c> comes back with that name and a line number, so the
+    /// <c>TMP_SpriteAsset</c> comes back with that name and a line number, so the
     /// person migrating is told where the manual work is before they press the
     /// button rather than by a wall of compile errors after.
     ///
@@ -312,6 +312,11 @@ namespace OneText.Editor
             // something of its own, and the cost of being wrong about it is
             // someone else's class quietly renamed.
             ("UnityEngine.UI.Dropdown", "OneText.UGUI.OneTextDropdown"),
+            // TextMesh Pro's dropdown, for the same reason and with no
+            // ambiguity to be careful of: the name is TMP's own, so unlike the
+            // bare "Dropdown" below there is no project that might mean
+            // something else by it.
+            ("TMPro.TMP_Dropdown", "OneText.UGUI.OneTextDropdown"),
             ("TMPro.TMP_Text", "OneText.UGUI.OneTextLabel"),
             // The two enums the parity aliases take. Only the qualified forms
             // are here: OneText declares these under the names TMP used, so an
@@ -323,6 +328,7 @@ namespace OneText.Editor
             ("TMPro.TextOverflowModes", "OneText.UGUI.TextOverflowModes"),
             ("TextMeshProUGUI", "OneTextLabel"),
             ("TMP_InputField", "OneTextInputField"),
+            ("TMP_Dropdown", "OneTextDropdown"),
             ("TextMeshPro", "OneTextMesh"),
             ("TMP_TextInfo", "OneTextTextInfo"),
             ("TMP_CharacterInfo", "OneTextCharacterInfo"),
@@ -859,7 +865,7 @@ namespace OneText.Editor
         /// <summary>A type this rewriter would move, by its short or its namespace name.</summary>
         private static bool Mapped(string word) =>
             word == "TextMeshProUGUI" || word == "TextMeshPro" || word == "TMP_Text" ||
-            word == "TMP_InputField" || word == "TMPro";
+            word == "TMP_InputField" || word == "TMP_Dropdown" || word == "TMPro";
 
         /// <summary>
         /// Every <c>.cs</c> file under a folder, skipping the ones no human
@@ -1335,7 +1341,7 @@ namespace OneText.Editor
         ///
         /// The point is not completeness of the map; it is that the person
         /// migrating is told, before they apply anything, that this file still
-        /// has work in it. <c>TMP_Dropdown</c>, <c>TMP_FontAsset</c> and
+        /// has work in it. <c>TMP_SpriteAsset</c>, <c>TMP_FontAsset</c> and
         /// <c>TMP_Settings</c> all land here, and so does a stray
         /// <c>using TMP = TMPro;</c> alias.
         /// </summary>
@@ -1387,7 +1393,7 @@ namespace OneText.Editor
                         : TmpResidualKind.Reference;
 
                 // A qualified name reports the type rather than the namespace:
-                // TMPro.TMP_Dropdown is a dropdown problem, not a using problem.
+                // TMPro.TMP_SpriteAsset is a sprite problem, not a using problem.
                 if (name == "TMPro" && end + 1 < text.Length && text[end] == '.' &&
                     IsIdentifierStart(text[end + 1]))
                 {

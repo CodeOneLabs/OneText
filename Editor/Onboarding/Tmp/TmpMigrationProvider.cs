@@ -409,39 +409,107 @@ namespace OneText.Editor
             var material = MaterialOf(text);
             if (material == null) return decoration;
 
-            // Keywords, not values. TextMesh Pro's SDF shader gates the outline
-            // behind OUTLINE_ON and the underlay behind UNDERLAY_ON, so a
-            // material can carry a width of 0.33 and a border colour and draw
-            // neither — which most of them do, because the values are whatever
-            // the preset was made from and the keyword is what the inspector's
-            // checkbox writes. Reading the values alone put an outline on some
-            // two thousand seven hundred labels that never had one, and a drop
-            // shadow on two thousand eight hundred more.
-            //
-            // The face dilate is the exception, and it is the one that mattered:
-            // it is folded into the weight unconditionally, no keyword, which is
-            // why text that looked right in TMP came out thin here.
-            if (material.IsKeywordEnabled("OUTLINE_ON") &&
-                Number(material, "_OutlineWidth") > 0f &&
-                Colour(material, "_OutlineColor").a > 0f)
-            {
-                decoration.Set |= TextDecoration.Parts.Outline;
-                decoration.OutlineColor = Colour(material, "_OutlineColor");
-                decoration.OutlineWidth = Mathf.Clamp01(Number(material, "_OutlineWidth"));
-                decoration.OutlineSoftness = Mathf.Clamp01(Number(material, "_OutlineSoftness"));
-            }
+            float reach = ReachFactor(text, material, target);
 
-            float faceDilate = Number(material, "_FaceDilate");
+            // Keywords, not values — where the shader has the keyword. TextMesh
+            // Pro's SDF shaders gate the underlay behind UNDERLAY_ON and the
+            // glow behind GLOW_ON, so a material can carry a border colour and
+            // draw nothing, which most of them do: the values are whatever the
+            // preset was made from and the keyword is what the inspector's
+            // checkbox writes. Reading the values alone put a drop shadow on
+            // some two thousand eight hundred labels that never had one.
+            //
+            // The outline is the trap. `OUTLINE_ON` exists only in the *Mobile*
+            // SDF shaders; `TMP_SDF.shader` and its SSD, Overlay and Surface
+            // siblings have no such keyword and draw the outline from the value
+            // alone (`TMP_SDF.shader`: `float outline = (_OutlineWidth *
+            // _ScaleRatioA) * scale;`, no #if around it). Asking a material for
+            // a keyword its shader never declared answers false, so gating on
+            // it dropped the outline from every label using the desktop shader
+            // — measured on a real project: 166 labels came out with the face
+            // dilate carried and the outline silently gone.
+            //
+            // The face dilate is gated by nothing on either shader: it is
+            // folded into the weight unconditionally, which is why text that
+            // looked right in TMP came out thin when it was dropped.
+            bool outlined = Drawn(material, "OUTLINE_ON", Number(material, "_OutlineWidth")) &&
+                            Colour(material, "_OutlineColor").a > 0f;
+            float thickness = outlined
+                ? Number(material, "_OutlineWidth") * RatioA(material) * reach : 0f;
+
+            // `weight = lerp(_WeightNormal, _WeightBold, bold) / 4.0;`
+            // `weight = (weight + _FaceDilate) * _ScaleRatioA * 0.5;`
+            // — the bold half of that lerp is the fake bold, which is a font
+            // style question and reported as one; this is the normal weight,
+            // which is a permanent part of how thick the material draws and
+            // has nowhere else to go.
+            //
+            // Less half the outline, because the two renderers put the outline
+            // in different places. TextMesh Pro straddles the face's edge with
+            // it — `faceAlpha` is read at `d - outline*0.5` and `outlineAlpha`
+            // at `d + outline*0.5` — so half the outline is drawn *inside* the
+            // face and the dilate under it never shows. Here the outline is
+            // wholly outside a face its width does not touch. Copied straight
+            // across, a real material's 0.25 under an outline of 0.23 drew a
+            // face 45% heavier in ink than the same material in TMP.
+            float faceDilate = (Number(material, "_FaceDilate") +
+                                Number(material, "_WeightNormal") / 4f) * RatioA(material) * reach
+                               - thickness * 0.5f;
+
             if (faceDilate != 0f)
             {
                 decoration.Set |= TextDecoration.Parts.Face;
                 decoration.FaceDilate = Mathf.Clamp(faceDilate, -1f, 1f);
             }
 
+            if (outlined)
+            {
+                decoration.Set |= TextDecoration.Parts.Outline;
+                decoration.OutlineColor = Colour(material, "_OutlineColor");
+
+                // The outer edge, not the thickness. Both of this shader's
+                // thresholds are measured from the undilated glyph edge —
+                // `faceT = 0.5 - faceDilate * REACH_FIELD` and
+                // `outlineT = 0.5 - outlineWidth * REACH_FIELD` — so a width
+                // handed the ring's thickness has the dilated face eat into it,
+                // and a face dilated further than the width swallows it whole.
+                // Which is what happened: 0.207 of outline over 0.225 of face
+                // put the outline's threshold *inside* the face's and drew no
+                // outline at all, on 166 labels of a real project. The width
+                // that draws TMP's ring is where its outer edge is, which is
+                // the face plus the thickness.
+                float outer = faceDilate + thickness;
+                if (outer > 1f)
+                {
+                    target.Note(DoctorSeverity.Warning, "material-effect",
+                        $"the outline reaches {outer:0.##} of the distance field and the field " +
+                        "knows one, so it is drawn as thick as it can be and comes out thinner " +
+                        "than TextMesh Pro drew it. A thicker outline needs a wider field than " +
+                        "this renderer bakes.");
+                }
+                decoration.OutlineWidth = Mathf.Clamp01(outer);
+                decoration.OutlineSoftness =
+                    Mathf.Clamp01(Number(material, "_OutlineSoftness") * RatioA(material) * reach);
+            }
+
+            // The underlay's own ratio, and the glow's. Every one of these four
+            // numbers is multiplied by its ratio in the shader before it means
+            // anything — `(_UnderlayOffsetX * _ScaleRatioC) * _GradientScale /
+            // _TextureWidth`, `_GlowOuter * _ScaleRatioB` — and the ratios are
+            // how TextMesh Pro compensates for the font asset's own padding and
+            // point size. Two materials with the same 0.5 on the same slider
+            // draw different thicknesses on two font assets, which is exactly
+            // what a migration copying the raw slider cannot know.
+            //
+            // `_GlowInner` is deliberately not scaled: TMP's own shader leaves
+            // it out of the lerp's ratio (`lerp(_GlowInner, (_GlowOuter *
+            // _ScaleRatioB), ...)`), so scaling it here would draw an inner glow
+            // TextMesh Pro does not.
+            float ratioC = Ratio(material, "_ScaleRatioC") * reach;
             var underlay = Colour(material, "_UnderlayColor");
-            float dx = Number(material, "_UnderlayOffsetX");
-            float dy = Number(material, "_UnderlayOffsetY");
-            float softness = Number(material, "_UnderlaySoftness");
+            float dx = Number(material, "_UnderlayOffsetX") * ratioC;
+            float dy = Number(material, "_UnderlayOffsetY") * ratioC;
+            float softness = Number(material, "_UnderlaySoftness") * ratioC;
             if (material.IsKeywordEnabled("UNDERLAY_ON") && underlay.a > 0f)
             {
                 decoration.Set |= TextDecoration.Parts.Shadow;
@@ -456,8 +524,9 @@ namespace OneText.Editor
             {
                 decoration.Set |= TextDecoration.Parts.Glow;
                 decoration.GlowColor = glow;
-                decoration.GlowRadius = Mathf.Clamp01(Number(material, "_GlowOuter"));
-                decoration.GlowInner = Mathf.Clamp01(Number(material, "_GlowInner"));
+                decoration.GlowRadius = Mathf.Clamp01(
+                    Number(material, "_GlowOuter") * Ratio(material, "_ScaleRatioB") * reach);
+                decoration.GlowInner = Mathf.Clamp01(Number(material, "_GlowInner") * reach);
             }
 
             LintMaterial(material, decoration, target);
@@ -512,6 +581,144 @@ namespace OneText.Editor
         private static Color Colour(Material material, string property) =>
             material.HasProperty(property) ? material.GetColor(property) : new Color(0, 0, 0, 0);
 
+        /// <summary>
+        /// One of TextMesh Pro's three scale ratios, defaulting to 1 where the
+        /// shader has no such property.
+        ///
+        /// They are not a setting anybody types: TMP's material inspector
+        /// computes them from the font asset's gradient scale, atlas padding and
+        /// sampling point size, and every effect value is multiplied by one of
+        /// them in the shader. Which is to say the sliders are in units of that
+        /// font asset, and the same 0.5 on two font assets is two thicknesses.
+        /// A migration that copies the slider and not the ratio is copying a
+        /// number whose unit it left behind.
+        /// </summary>
+        private static float Ratio(Material material, string property) =>
+            material.HasProperty(property) ? material.GetFloat(property) : 1f;
+
+        /// <summary>A shorthand for the one ratio two effects share.</summary>
+        private static float RatioA(Material material) => Ratio(material, "_ScaleRatioA");
+
+        /// <summary>
+        /// What one unit of a TextMesh Pro effect is worth here.
+        ///
+        /// Both renderers measure their effects in the width of their own
+        /// distance field and both call it 1, and the two are not the same
+        /// distance. TMP's is the atlas's gradient scale over the size the
+        /// atlas was sampled at — 10 texels over 60 points is a sixth of an em.
+        /// OneText's is <see cref="GlyphRasterizer.SpreadPixels"/> texels at the
+        /// density the tile is baked at, which for a 40-point label is four
+        /// over forty, a tenth. The same 0.23 is a third thinner here, and on
+        /// the label that reported this it came out as a hairline where TMP had
+        /// a two-pixel edge.
+        ///
+        /// So the numbers are converted rather than copied, per label, because
+        /// the denominator is the label's own baked density and two labels in
+        /// different sizes do not share it. That is exactly as far as this goes:
+        /// it makes the conversion faithful at the size the label is now. A
+        /// label whose size changes afterwards — by hand, by code, by
+        /// auto-sizing — drifts, because a reach is texels and not ems. Said
+        /// out loud for the labels where that is likely rather than left to be
+        /// discovered.
+        /// </summary>
+        private static float ReachFactor(TMP_Text text, Material material, MigrationTarget target)
+        {
+            float gradient = Number(material, "_GradientScale");
+            float points = text.font != null ? text.font.faceInfo.pointSize : 0f;
+            if (gradient <= 0f || points <= 0f) return 1f;
+
+            float size = text.fontSize > 0f ? text.fontSize : points;
+            int ppem = GlyphAtlas.QuantizePixelsPerEm(size);
+            if (ppem <= 0) return 1f;
+
+            float tmpSpread = gradient / points;              // in ems
+            float reach = GlyphRasterizer.SpreadPixels / ppem; // in ems
+            float factor = tmpSpread / reach;
+
+            if (text.enableAutoSizing && !Mathf.Approximately(factor, 1f))
+            {
+                target.Note(DoctorSeverity.Info, "material-effect",
+                    $"its outline and dilate are converted for {size:0.#} points, the size it is " +
+                    "at now. This label auto-sizes, and a reach is texels rather than ems, so at " +
+                    "a very different size they will not be in quite the same proportion.");
+            }
+            return factor;
+        }
+
+        /// <summary>
+        /// Whether an effect is actually drawn: the keyword decides where the
+        /// shader has one, and the value decides where it has not.
+        ///
+        /// A material answers false to <c>IsKeywordEnabled</c> for a keyword its
+        /// shader never declared, which is indistinguishable from a checkbox
+        /// somebody left off — and TextMesh Pro's desktop SDF shaders declare
+        /// no <c>OUTLINE_ON</c> at all while drawing the outline from the value.
+        /// So the keyword is only evidence when the shader admits to knowing it.
+        /// </summary>
+        private static bool Drawn(Material material, string keyword, float value)
+        {
+            if (value <= 0f) return false;
+            var shader = material.shader;
+            if (shader == null) return true;
+
+            switch (Declares(shader, keyword))
+            {
+                case true: return material.IsKeywordEnabled(keyword);
+                case false: return true; // The value is the whole story.
+                // Unreadable: keep the older, quieter answer rather than put an
+                // effect on a project we could not check.
+                default: return material.IsKeywordEnabled(keyword);
+            }
+        }
+
+        /// <summary>
+        /// Whether a shader declares a keyword, read out of its source, or null
+        /// where the source cannot be read.
+        ///
+        /// Not <c>Shader.keywordSpace</c>, which was the obvious way and is the
+        /// wrong one: a keyword space holds every global keyword the project
+        /// declares anywhere, so the Mobile shader's <c>OUTLINE_ON</c> is in the
+        /// desktop shader's space too and the space answers yes for a shader
+        /// that has never heard of it. Not <c>ShaderUtil</c> either — it has no
+        /// public way to ask. The source file is the only thing that knows, and
+        /// a shader's source is an asset like any other.
+        ///
+        /// Cached per shader, because this is asked once per material on a
+        /// project with thousands of them.
+        /// </summary>
+        private static bool? Declares(Shader shader, string keyword)
+        {
+            if (!s_shaderSource.TryGetValue(shader, out string source))
+            {
+                source = null;
+                string path = AssetDatabase.GetAssetPath(shader);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    try { source = System.IO.File.ReadAllText(path); }
+                    catch (System.Exception) { source = null; }
+                }
+                s_shaderSource[shader] = source;
+            }
+            if (source == null) return null;
+
+            // A whole word: OUTLINE_ON must not match OUTLINE_ONLY.
+            int at = source.IndexOf(keyword, System.StringComparison.Ordinal);
+            while (at >= 0)
+            {
+                int end = at + keyword.Length;
+                bool before = at == 0 || !IsWordCharacter(source[at - 1]);
+                bool after = end >= source.Length || !IsWordCharacter(source[end]);
+                if (before && after) return true;
+                at = source.IndexOf(keyword, end, System.StringComparison.Ordinal);
+            }
+            return false;
+        }
+
+        private static bool IsWordCharacter(char c) => c == '_' || char.IsLetterOrDigit(c);
+
+        private static readonly Dictionary<Shader, string> s_shaderSource =
+            new Dictionary<Shader, string>();
+
         // ----------------------------------------------------------- dropdown
 
         private static MigrationTarget FromDropdown(TMP_Dropdown dropdown, string container,
@@ -519,28 +726,53 @@ namespace OneText.Editor
         {
             var target = new MigrationTarget
             {
-                Kind = MigrationKind.ReportOnly,
+                Kind = MigrationKind.Dropdown,
                 ComponentType = nameof(TMP_Dropdown),
                 Provider = MigrationProviders.TextMeshProName,
                 Source = dropdown,
                 Container = container,
                 Path = path,
+                Values = new MigrationValues(),
             };
 
-            target.Note(DoctorSeverity.Info, "no-counterpart",
-                "OneText has no dropdown, so this component is left exactly as it is and keeps " +
-                "needing TextMesh Pro.");
+            // Noted here, during the scan, because here is the last moment they
+            // can be: the labels are converted before the dropdown is, and a
+            // field naming a destroyed component reads None. Same reason as the
+            // uGUI dropdown, and the same two fields.
+            target.Companions.Add(dropdown.captionText != null
+                ? dropdown.captionText.gameObject : null);
+            target.Companions.Add(dropdown.itemText != null
+                ? dropdown.itemText.gameObject : null);
 
-            // The caption and item labels are TMP_Text components, and this
-            // migration converts every TMP_Text it can see. Saying so here is
-            // the difference between a dropdown that visibly loses its caption
-            // and one whose owner was warned.
-            if (dropdown.captionText != null || dropdown.itemText != null)
+            // The two members OneTextDropdown does not have. Both are TMP's own
+            // additions to Unity's dropdown, and both are the kind of thing that
+            // would otherwise be discovered by a dropdown behaving differently
+            // rather than by anything saying so.
+            //
+            // Read off the serialized object rather than through the properties
+            // because both arrived late in TextMesh Pro's life, and this
+            // assembly compiles against every TMP from 3.0.0 up: a property
+            // that is not there yet is a build error, not a missing feature.
+            // The field names are what the file holds on every version that has
+            // them at all.
+            var serialized = new SerializedObject(dropdown);
+            var multiSelect = serialized.FindProperty("m_MultiSelect");
+            var placeholder = serialized.FindProperty("m_Placeholder");
+
+            if (multiSelect != null && multiSelect.boolValue)
             {
-                target.Note(DoctorSeverity.Warning, "dangling-reference",
-                    "its caption and item labels are TextMesh Pro components that this migration " +
-                    "will convert, and a TMP_Dropdown cannot hold a OneTextLabel. Exclude this " +
-                    "container, or keep the dropdown and accept re-wiring it by hand.");
+                target.Note(DoctorSeverity.Warning, "no-counterpart",
+                    "multi-select is on, and OneTextDropdown selects one option like Unity's " +
+                    "dropdown does. The converted dropdown keeps the options and the wiring, and " +
+                    "selects one at a time.");
+            }
+            if (placeholder != null && placeholder.objectReferenceValue is Component graphic)
+            {
+                target.Note(DoctorSeverity.Warning, "no-counterpart",
+                    $"its placeholder graphic ('{graphic.gameObject.name}') is not carried: " +
+                    "OneTextDropdown has no placeholder, so the first option shows where the " +
+                    "placeholder used to when nothing is selected. The object itself is left " +
+                    "alone.");
             }
             return target;
         }

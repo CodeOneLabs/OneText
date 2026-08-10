@@ -555,9 +555,15 @@ namespace OneText.Editor
             tiles.Add(HubUI.Tile("input fields",
                 (_migration.CountOfKind(MigrationKind.InputField)).ToString("n0"),
                 "become OneTextInputField"));
-            tiles.Add(HubUI.Tile("no counterpart",
-                (_migration.CountOfKind(MigrationKind.ReportOnly)).ToString("n0"), "stay as TMP",
-                _migration.CountOfKind(MigrationKind.ReportOnly) == 0 ? HubTone.Good : HubTone.Warn));
+            // Where "no counterpart · stay as TMP" used to be. The dropdown was
+            // the last component that stayed, so that tile could only ever say
+            // zero — and the count worth four tiles' worth of space is the one
+            // that replaced it. Components with no counterpart are still
+            // reported; they are findings on a component that converts, not a
+            // component that does not.
+            tiles.Add(HubUI.Tile("dropdowns",
+                (_migration.CountOfKind(MigrationKind.Dropdown)).ToString("n0"),
+                "become OneTextDropdown"));
             card.Add(tiles);
 
             var severity = HubUI.Box("tiles");

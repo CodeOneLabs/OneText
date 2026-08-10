@@ -11,11 +11,16 @@ namespace OneText.UGUI
     /// A dropdown whose caption and item labels are <see cref="OneTextLabel"/>.
     ///
     /// It exists because <c>UnityEngine.UI.Dropdown</c> declares those two
-    /// fields as <c>Text</c> and nothing can widen them. Convert the labels a
+    /// fields as <c>Text</c>, <c>TMP_Dropdown</c> declares them as
+    /// <c>TMP_Text</c>, and nothing can widen either. Convert the labels a
     /// dropdown points at and the fields cannot hold what replaced them: they
     /// read None, the caption goes blank, and the list draws empty rows. On a
     /// real project that was the single largest group of references the
     /// migration could name but not mend — every one of them a dropdown.
+    ///
+    /// It stands in for both, which is why <c>OptionData</c> carries a colour
+    /// Unity's has not got: TextMesh Pro's does, and a dropdown converted from
+    /// there arrives holding it.
     ///
     /// Deliberately the same shape as Unity's, member for member, because the
     /// point is that a converted scene keeps working and a project's own code
@@ -37,14 +42,26 @@ namespace OneText.UGUI
         {
             [SerializeField] private string m_Text;
             [SerializeField] private Sprite m_Image;
+            // TextMesh Pro's dropdown has this and Unity's does not, and a
+            // dropdown converted from TMP arrives holding it. It tints the
+            // image, not the text — the same thing it does there.
+            [SerializeField] private Color m_Color = Color.white;
 
             public string text { get => m_Text; set => m_Text = value; }
             public Sprite image { get => m_Image; set => m_Image = value; }
+            public Color color { get => m_Color; set => m_Color = value; }
 
             public OptionData() { }
             public OptionData(string text) { m_Text = text; }
             public OptionData(Sprite image) { m_Image = image; }
             public OptionData(string text, Sprite image) { m_Text = text; m_Image = image; }
+
+            public OptionData(string text, Sprite image, Color color)
+            {
+                m_Text = text;
+                m_Image = image;
+                m_Color = color;
+            }
         }
 
         [Serializable]
@@ -159,6 +176,7 @@ namespace OneText.UGUI
             if (m_CaptionImage != null)
             {
                 m_CaptionImage.sprite = data?.image;
+                if (data != null) m_CaptionImage.color = data.color;
                 m_CaptionImage.enabled = m_CaptionImage.sprite != null;
             }
         }
@@ -293,6 +311,7 @@ namespace OneText.UGUI
             if (item.image != null)
             {
                 item.image.sprite = data.image;
+                item.image.color = data.color;
                 item.image.enabled = item.image.sprite != null;
             }
             return item;

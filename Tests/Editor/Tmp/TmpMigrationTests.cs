@@ -324,19 +324,151 @@ namespace OneText.Tests
 
         // ----------------------------------------------------------- dropdown
 
-        [Test]
-        public void Dropdown_IsReportedAndLeftExactlyWhereItIs()
+        /// <summary>
+        /// A dropdown the way a scene has one, with the two labels this
+        /// migration is about to convert underneath it.
+        /// </summary>
+        private TMP_Dropdown BuildDropdown(out GameObject root, out int listeners)
         {
-            var root = NewObject("Dropdown");
+            root = NewObject("Dropdown");
+            var caption = NewObject("Label", root.transform).AddComponent<TextMeshProUGUI>();
+            var item = NewObject("Item Label", root.transform).AddComponent<TextMeshProUGUI>();
+
             var dropdown = root.AddComponent<TMP_Dropdown>();
+            dropdown.captionText = caption;
+            dropdown.itemText = item;
+            dropdown.options = new List<TMP_Dropdown.OptionData>
+            {
+                new TMP_Dropdown.OptionData("First"),
+                new TMP_Dropdown.OptionData("Second"),
+                new TMP_Dropdown.OptionData("Third"),
+            };
+            dropdown.value = 2;
+            dropdown.interactable = false;
 
-            var report = ComponentMigration.ConvertInPlace(new[] { root }, "(test)", false);
+            // Inspector wiring, which is the thing with nowhere else to live.
+            UnityEventTools.AddPersistentListener(dropdown.onValueChanged,
+                root.transform.SetSiblingIndex);
+            listeners = dropdown.onValueChanged.GetPersistentEventCount();
+            return dropdown;
+        }
 
-            Assert.NotNull(root.GetComponent<TMP_Dropdown>(),
-                "a component with no counterpart was destroyed anyway");
-            Assert.AreEqual(1, report.CountOfKind(MigrationKind.ReportOnly));
-            Assert.GreaterOrEqual(CountOf(report, "no-counterpart"), 1);
-            Assert.NotNull(dropdown);
+        /// <summary>
+        /// The case this used to report and leave alone: a TMP dropdown whose
+        /// caption and item labels this same run converts. Leaving it meant a
+        /// dropdown pointing at two components that no longer existed — a blank
+        /// caption and empty rows, in the one project shape that is guaranteed
+        /// to be there, since a dropdown's labels are always TMP labels.
+        /// </summary>
+        [Test]
+        public void ADropdown_BecomesOneTextDropdown_KeepingItsOptionsWiringAndLabels()
+        {
+            BuildDropdown(out var root, out int listeners);
+            Assert.Greater(listeners, 0, "the fixture did not wire a listener, so this test is " +
+                                         "not standing where the loss would be");
+
+            ComponentMigration.ConvertInPlace(new[] { root }, "(test)", false);
+
+            Assert.IsNull(root.GetComponent<TMP_Dropdown>(), "the old dropdown is still there");
+            var made = root.GetComponent<OneTextDropdown>();
+            Assert.NotNull(made, "no OneTextDropdown replaced it");
+
+            Assert.AreEqual(3, made.options.Count, "the options list did not survive the swap");
+            Assert.AreEqual("First", made.options[0].text);
+            Assert.AreEqual("Third", made.options[2].text);
+            Assert.AreEqual(Color.white, made.options[0].color,
+                "an option that never named a colour came out with one — a resize filling the " +
+                "element with zeroes, which is a transparent black, and an image tinted with " +
+                "that is not there");
+            Assert.AreEqual(2, made.value, "the selected value did not survive");
+            Assert.IsFalse(made.interactable, "Selectable's own state did not survive");
+
+            Assert.AreEqual(listeners, made.onValueChanged.GetPersistentEventCount(),
+                "the inspector's wiring on onValueChanged was dropped, which nothing else " +
+                "records and nobody can recover");
+
+            Assert.NotNull(made.captionText,
+                "the caption label was not re-pointed at what replaced it");
+            Assert.AreEqual("Label", made.captionText.gameObject.name);
+            Assert.NotNull(made.itemText, "the item label was not re-pointed");
+            Assert.AreEqual("Item Label", made.itemText.gameObject.name);
+        }
+
+        /// <summary>
+        /// The two members TMP's dropdown has and OneText's has not. Both
+        /// convert — neither is a reason to leave a dropdown pointing at nothing
+        /// — and both are said out loud, because the alternative is finding out
+        /// from a dropdown behaving differently.
+        /// </summary>
+        /// <summary>
+        /// The colour TextMesh Pro's option data has and Unity's has not, which
+        /// is the one field the two dropdowns disagree about and so the one that
+        /// cannot be moved by copying the list whole.
+        ///
+        /// Written through the serialized object because this test has to build
+        /// and run against a TextMesh Pro that predates the field — the same
+        /// reason the migration reads it that way.
+        /// </summary>
+        [Test]
+        public void AnOptionColour_IsCarried()
+        {
+            var dropdown = BuildDropdown(out var root, out _);
+            var serialized = new SerializedObject(dropdown);
+            var colour = serialized.FindProperty("m_Options.m_Options")
+                ?.GetArrayElementAtIndex(1).FindPropertyRelative("m_Color");
+            if (colour == null)
+                Assert.Ignore("this TextMesh Pro's option data has no colour to carry");
+
+            colour.colorValue = Color.red;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+
+            ComponentMigration.ConvertInPlace(new[] { root }, "(test)", false);
+
+            var made = root.GetComponent<OneTextDropdown>();
+            Assert.NotNull(made, "no OneTextDropdown replaced it");
+            Assert.AreEqual(Color.red, made.options[1].color,
+                "the option colour was dropped, which is an image tinted differently at runtime " +
+                "and nothing anywhere saying why");
+        }
+
+        /// <summary>
+        /// The two members TMP's dropdown has and OneText's has not. Both
+        /// convert — neither is a reason to leave a dropdown pointing at nothing
+        /// — and both are said out loud, because the alternative is finding out
+        /// from a dropdown behaving differently.
+        /// </summary>
+        [Test]
+        public void MultiSelectAndPlaceholder_AreNamedRatherThanSilentlyDropped()
+        {
+            var dropdown = BuildDropdown(out var root, out _);
+            var placeholder = NewObject("Placeholder", root.transform)
+                .AddComponent<TextMeshProUGUI>();
+
+            var serialized = new SerializedObject(dropdown);
+            var multiSelect = serialized.FindProperty("m_MultiSelect");
+            var slot = serialized.FindProperty("m_Placeholder");
+            if (multiSelect == null || slot == null)
+                Assert.Ignore("this TextMesh Pro's dropdown has neither of the two members");
+
+            multiSelect.boolValue = true;
+            slot.objectReferenceValue = placeholder;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+
+            var scan = ComponentMigration.ScanInPlace(new[] { root }, "(test)");
+            int named = 0;
+            foreach (var finding in scan.Findings)
+            {
+                if (finding.Rule != "no-counterpart") continue;
+                if (finding.Message.Contains("multi-select") ||
+                    finding.Message.Contains("placeholder")) named++;
+            }
+            Assert.AreEqual(2, named,
+                "multi-select and the placeholder both vanish in the swap, and the report has to " +
+                "be where that is learned");
+
+            ComponentMigration.ConvertInPlace(new[] { root }, "(test)", false);
+            Assert.NotNull(root.GetComponent<OneTextDropdown>(),
+                "a dropdown was left unconverted over two members, which costs more than it saves");
         }
 
         // -------------------------------------------------------- idempotence
