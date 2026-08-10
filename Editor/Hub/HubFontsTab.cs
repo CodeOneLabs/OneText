@@ -18,9 +18,6 @@ namespace OneText.Editor
     /// </summary>
     public sealed class HubFontsTab : HubSection
     {
-        private static readonly string[] LanguageSuggestions =
-            { "", "ja", "zh-Hans", "zh-Hant", "ko", "th", "ar", "hi" };
-
         public override OneTextHub.Tab Tab => OneTextHub.Tab.Fonts;
 
         public override string Title => "Fonts";
@@ -237,18 +234,22 @@ namespace OneText.Editor
 
         private void ShowLanguageMenu(OneFontAsset font, TextField field)
         {
+            // The same four the inspector offers, and for the same reason: they
+            // are the tags that change which glyph a reader sees. This list used
+            // to carry th, ar and hi as well, which read as an invitation to tag
+            // every font and did nothing whatsoever — the tag is consulted for
+            // Han, kana and Hangul only.
             var menu = new GenericMenu();
-            foreach (string suggestion in LanguageSuggestions)
+            foreach (var choice in FontLanguages.Choices)
             {
-                string captured = suggestion;
-                menu.AddItem(new GUIContent(suggestion.Length == 0 ? "(none)" : suggestion),
-                    (font.Language ?? "") == suggestion, () =>
-                    {
-                        SetLanguage(font, captured);
-                        field.SetValueWithoutNotify(captured);
-                        Say($"{font.FamilyName} is now tagged " +
-                            (captured.Length == 0 ? "with no language." : captured));
-                    });
+                string captured = choice.Tag;
+                menu.AddItem(new GUIContent(choice.Label), (font.Language ?? "") == captured, () =>
+                {
+                    SetLanguage(font, captured);
+                    field.SetValueWithoutNotify(captured);
+                    Say($"{font.FamilyName} is now tagged " +
+                        (captured.Length == 0 ? "with no language." : captured));
+                });
             }
             menu.ShowAsContext();
         }
