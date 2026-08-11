@@ -111,10 +111,13 @@ convert keeps working. Scan again whenever you want to see what is left.
 
 ## Status
 
-**v0.2.0.** Everything above is shipped; v0.1.0 was the first public release
-and this one adds world-space text, self-sizing labels, MSDF error correction
-and the Onboarding tab. What comes next is verification and reach, not
-features:
+**v0.3.0.** Everything above is shipped. v0.1.0 was the first public release,
+v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
+the Onboarding tab, and this one is about coming from TextMesh Pro and finding
+less missing: a migration you can run on part of a project without the rest
+going quiet, the rich-text tags a real TMP project turns out to contain, and a
+`<b>` that reaches a designed bold instead of silently drawing regular. What
+comes next is verification and reach, not features:
 
 | | |
 |---|---|
