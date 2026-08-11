@@ -123,6 +123,7 @@ namespace OneText.Editor
         private static MigrationReport Run(Options options, bool convert)
         {
             var report = new MigrationReport();
+            options = Widened(options, report);
 
             var prefabs = options.IncludePrefabs ? OrderedPrefabPaths() : new List<string>();
             var scenes = options.IncludeScenes ? ScenePaths(options.AllScenes) : new List<string>();
@@ -145,7 +146,8 @@ namespace OneText.Editor
                 return report;
             }
 
-            var references = Watch(options, convert, prefabs, scenes, report);
+            var covered = Covered(options, prefabs, scenes);
+            var references = Watch(options, convert, covered, prefabs, scenes, report);
 
             var fonts = new FontAssetCache(report);
             if (convert && options.AdoptProjectFontDefaults) AdoptDefaults(fonts, report);
@@ -177,12 +179,17 @@ namespace OneText.Editor
                 if (references != null && !convert) references.Report(report);
                 else if (references != null)
                 {
+                    // The rest of the project, before the assets: a field in a
+                    // prefab nobody selected is broken by this run just as
+                    // thoroughly as one in a prefab that was, and this is the
+                    // pass that goes and gets it.
+                    Mend(references, covered, report);
+
                     // ScriptableObjects last, because they are the one referrer
                     // that is never opened for its own sake, and by now every
                     // component they could name has a replacement.
                     references.RelinkAssets(report);
-                    references.Settle(report);
-                    Narrowed(options, references, report);
+                    Narrowed(options, references, report, references.Settle(report));
                 }
             }
             finally
@@ -233,6 +240,7 @@ namespace OneText.Editor
                 _shown = !Application.isBatchMode && total > 0;
             }
 
+
             /// <summary>
             /// Announces the container about to be opened. Returns false when the
             /// user has asked to stop, which every loop treats as "do no more".
@@ -268,40 +276,219 @@ namespace OneText.Editor
         /// is called there instead for nothing.
         /// </summary>
         private static ContainerReferences Watch(Options options, bool convert,
-            List<string> prefabs, List<string> scenes, MigrationReport report)
+            HashSet<string> covered, List<string> prefabs, List<string> scenes,
+            MigrationReport report)
         {
-            if (!options.CrossContainerReferences) return null;
+            if (!options.CrossContainerReferences || covered.Count == 0) return null;
 
-            var scope = new HashSet<string>(StringComparer.Ordinal);
-            foreach (string path in prefabs) if (options.Wants(path)) scope.Add(path);
-            foreach (string path in scenes) if (options.Wants(path)) scope.Add(path);
-            if (scope.Count == 0) return null;
+            // Only an apply pays for the candidate sweep. The list exists to be
+            // censused, a scan censuses nothing — it reads what it opens anyway —
+            // and asking the asset database about the dependencies of every
+            // prefab in a project is not a thing to do for a report.
+            if (!convert) return new ContainerReferences(covered);
 
-            var references = new ContainerReferences(ContainerReferences.Candidates(scope));
-            if (convert) references.Census(report);
+            var references = new ContainerReferences(
+                ContainerReferences.Candidates(covered, Everywhere(options, prefabs, scenes)));
+            references.Census(report);
             return references;
         }
 
+        /// <summary>The containers this run will actually open and convert.</summary>
+        private static HashSet<string> Covered(Options options, List<string> prefabs,
+            List<string> scenes)
+        {
+            var covered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string path in prefabs) if (options.Wants(path)) covered.Add(path);
+            foreach (string path in scenes) if (options.Wants(path)) covered.Add(path);
+            return covered;
+        }
+
         /// <summary>
-        /// Says, once, that a run over part of a project can only mend the
-        /// references held by the part it was given.
+        /// Every container a referrer could be sitting in, which is every
+        /// container there is.
         ///
-        /// The census reads the assets in the run. A prefab left out of it, or a
-        /// scene outside the build when only the build's scenes were opened, is
-        /// never opened and so is never even asked whether it points at anything
-        /// that changed — and if it does, that field is reading None from now on
-        /// with nothing anywhere saying so. This is the one place that can say
-        /// it, because this is the only place that knows the run was narrow.
+        /// Not the same list as the one being converted, and deliberately: what
+        /// empties a field is its target being replaced, and the field has no
+        /// opinion about whether its own file was ticked. Searching only the
+        /// selection is how converting four prefabs used to leave the other four
+        /// hundred quietly holding None. Nothing here is opened — this is the
+        /// list <see cref="ContainerReferences.Candidates"/> asks the asset
+        /// database about, and the answer for most projects is "almost none of
+        /// them depend on the selection", cheaply.
         /// </summary>
-        private static void Narrowed(Options options, ContainerReferences references,
+        private static List<string> Everywhere(Options options, List<string> prefabs,
+            List<string> scenes)
+        {
+            var everywhere = new List<string>(options.IncludePrefabs ? prefabs
+                                                                    : OrderedPrefabPaths());
+            everywhere.AddRange(options.IncludeScenes && options.AllScenes ? scenes
+                                                                          : ScenePaths(all: true));
+            return everywhere;
+        }
+
+        /// <summary>
+        /// Opens the containers that were not converted but were pointing at
+        /// something that was, and re-points them.
+        ///
+        /// This is what makes "convert this prefab" a thing a person can do on a
+        /// Tuesday. Before it, a narrow run was a trade: fewer files touched
+        /// now, a scatter of fields reading None in the files you did not pick,
+        /// and a warning saying so. The list is bounded by what actually
+        /// changed — a run that converted nothing opens nothing here — and each
+        /// file is written only if a field in it really was re-pointed, so a
+        /// migration still shows up in a diff as the work it did.
+        ///
+        /// It gets a progress bar of its own rather than sharing the run's,
+        /// because it also has to happen after the run's was cancelled. Stopping
+        /// a conversion half way leaves containers converted, and a converted
+        /// container with nothing sent to mend the references into it is the one
+        /// state this module refuses to leave a project in.
+        /// </summary>
+        private static void Mend(ContainerReferences references, HashSet<string> covered,
             MigrationReport report)
         {
-            if (references == null || references.Changes == 0) return;
+            var outsiders = references.Outsiders(covered);
+            if (outsiders.Count == 0) return;
+
+            var prefabs = new List<string>();
+            var scenes = new List<string>();
+            foreach (string path in outsiders)
+            {
+                if (path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase)) scenes.Add(path);
+                else prefabs.Add(path);
+            }
+
+            using (var progress = new Progress("Mending references", outsiders.Count))
+            {
+                MendPrefabs(prefabs, references, report, progress);
+                if (scenes.Count == 0 || progress.Cancelled) return;
+
+                var setup = EditorSceneManager.GetSceneManagerSetup();
+                try { MendScenes(scenes, references, report, progress); }
+                finally
+                {
+                    if (setup != null && setup.Length > 0)
+                    {
+                        try { EditorSceneManager.RestoreSceneManagerSetup(setup); }
+                        catch (Exception) { EditorSceneManager.NewScene(NewSceneSetup.EmptyScene); }
+                    }
+                }
+            }
+        }
+
+        private static void MendPrefabs(List<string> paths, ContainerReferences references,
+            MigrationReport report, Progress progress)
+        {
+            foreach (string path in paths)
+            {
+                if (!progress.Step(path)) return;
+
+                GameObject root = null;
+                try
+                {
+                    root = PrefabUtility.LoadPrefabContents(path);
+                }
+                catch (Exception error)
+                {
+                    Unreadable(report, path, "prefab", error);
+                    continue;
+                }
+
+                try
+                {
+                    var roots = new[] { root };
+
+                    // Same rule as the main pass, for the same reason: Unity
+                    // will not save a prefab holding a script it cannot resolve,
+                    // so mending one in memory is work thrown away with a
+                    // reference reported as settled.
+                    if (MissingScripts(roots).Count > 0)
+                    {
+                        references.Refused(roots, path);
+                        continue;
+                    }
+
+                    int relinked = references.Relink(roots, path, report);
+                    if (relinked > 0)
+                    {
+                        PrefabUtility.SaveAsPrefabAsset(root, path, out bool saved);
+                        if (!saved) Unsaved(report, path, 0, relinked, references);
+                    }
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(root);
+                }
+            }
+        }
+
+        private static void MendScenes(List<string> paths, ContainerReferences references,
+            MigrationReport report, Progress progress)
+        {
+            foreach (string path in paths)
+            {
+                if (!progress.Step(path)) return;
+
+                var scene = default(UnityEngine.SceneManagement.Scene);
+                try
+                {
+                    scene = EditorSceneManager.OpenScene(path, OpenSceneMode.Single);
+                }
+                catch (Exception error)
+                {
+                    Unreadable(report, path, "scene", error);
+                    continue;
+                }
+
+                var roots = scene.GetRootGameObjects();
+                if (MissingScripts(roots).Count > 0)
+                {
+                    references.Refused(roots, path);
+                    continue;
+                }
+
+                int relinked = references.Relink(roots, path, report);
+                if (relinked <= 0) continue;
+                EditorSceneManager.MarkSceneDirty(scene);
+                if (!EditorSceneManager.SaveScene(scene))
+                    Unsaved(report, path, 0, relinked, references);
+            }
+        }
+
+        private static void Unreadable(MigrationReport report, string path, string kind,
+            Exception error)
+        {
+            report.Add(new MigrationFinding
+            {
+                Severity = DoctorSeverity.Warning,
+                Rule = "unreadable-container",
+                Message = $"this {kind} holds a field pointing at something this run converted " +
+                          $"and could not be opened to mend it: {error.Message}",
+                Container = path,
+            });
+        }
+
+        /// <summary>
+        /// Says, once, which part of the project was converted and which fields
+        /// reaching into it are still empty.
+        ///
+        /// This used to be the warning that a narrow run leaves a scatter of
+        /// dead references behind it, because it did: only the selection was
+        /// searched for referrers, so a prefab left out of the run was never
+        /// asked whether it pointed at anything that changed. <see cref="Mend"/>
+        /// is that question being asked project-wide, and what is left here is
+        /// the far smaller thing — a run that was narrow <em>and</em> could not
+        /// mend everything, where the two facts belong in one sentence because
+        /// the reader is about to wonder whether they are connected.
+        /// </summary>
+        private static void Narrowed(Options options, ContainerReferences references,
+            MigrationReport report, int unmended)
+        {
+            if (references == null || references.Changes == 0 || unmended == 0) return;
 
             var left = new List<string>();
             if (!options.IncludePrefabs) left.Add("prefabs were excluded");
             if (!options.IncludeScenes) left.Add("scenes were excluded");
-            else if (!options.AllScenes) left.Add("only the build's scenes were opened");
             if (options.OnlyContainers != null && options.OnlyContainers.Count > 0)
                 left.Add($"only {options.OnlyContainers.Count:n0} container(s) were selected");
             if (left.Count == 0) return;
@@ -311,12 +498,94 @@ namespace OneText.Editor
                 Severity = DoctorSeverity.Warning,
                 Rule = ContainerReferences.Rule,
                 Message = $"{references.Changes:n0} container(s) were converted, and " +
-                          string.Join(", ", left) + ". A field in a prefab, scene or asset that " +
-                          "was not part of this run and pointed at a component in one that was is " +
-                          "reading None now, and nothing here has looked at it. Convert the whole " +
-                          "project — All Scenes included — and every one of those is found and " +
-                          "re-pointed.",
+                          string.Join(", ", left) + $". References into them were followed across " +
+                          $"the whole project, not just the selection, and {unmended:n0} of them " +
+                          "could not be re-pointed — those are the errors above, each naming the " +
+                          "field and why. Converting the rest of the project will not fix them on " +
+                          "its own.",
             });
+        }
+
+        /// <summary>
+        /// A selection, plus the prefabs the selection is built out of.
+        ///
+        /// The same hazard the ordering below exists for, arriving by a
+        /// different road. A prefab or scene opened for editing shows the
+        /// components of everything nested inside it as its own, and converting
+        /// one of those records the swap as an override on top of a prefab asset
+        /// that still holds the old component — so when that asset is converted
+        /// in a later run, the object ends up carrying both. Ordering solves it
+        /// for a run that holds the whole chain; this is what solves it for a run
+        /// that was handed the top of one.
+        ///
+        /// Public because the person confirming a conversion should be reading
+        /// the same list the conversion is about to act on, which means the Hub
+        /// has to be able to ask this before the dialog rather than after.
+        /// </summary>
+        public static List<string> WithWhatTheyNest(IEnumerable<string> containers)
+        {
+            var closure = new List<string>();
+            if (containers == null) return closure;
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string path in containers)
+                if (!string.IsNullOrEmpty(path) && seen.Add(path)) closure.Add(path);
+            if (closure.Count == 0) return closure;
+
+            // Recursive: a scene nests a prefab that nests the one holding the
+            // label, and the middle link is as unconvertible on its own as the
+            // top one. The asset database answers this in one call and the
+            // narrowing is already done for us — a dependency of a prefab is a
+            // very short list next to a project.
+            foreach (string dependency in AssetDatabase.GetDependencies(closure.ToArray(), true))
+            {
+                if (!dependency.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)) continue;
+                if (seen.Add(dependency)) closure.Add(dependency);
+            }
+            return closure;
+        }
+
+        /// <summary>
+        /// The options a narrowed run is really asking for, with the widening
+        /// said out loud.
+        ///
+        /// The caller's own <see cref="Options"/> is left alone: it is theirs,
+        /// they may run it twice, and a method that quietly grows a list it was
+        /// lent is a method that makes the second run different from the first.
+        /// </summary>
+        private static Options Widened(Options options, MigrationReport report)
+        {
+            if (options.OnlyContainers == null || options.OnlyContainers.Count == 0) return options;
+
+            var closure = WithWhatTheyNest(options.OnlyContainers);
+            if (closure.Count == options.OnlyContainers.Count) return options;
+
+            var added = closure.GetRange(options.OnlyContainers.Count,
+                closure.Count - options.OnlyContainers.Count);
+            added.Sort(StringComparer.Ordinal);
+
+            report.Add(new MigrationFinding
+            {
+                Severity = DoctorSeverity.Info,
+                Rule = "nested-selection",
+                Message = $"{added.Count:n0} prefab(s) were added to this run because the ones you " +
+                          "chose are built out of them: " +
+                          string.Join(", ", added.GetRange(0, Math.Min(5, added.Count))) +
+                          (added.Count > 5 ? $" and {added.Count - 5:n0} more" : string.Empty) +
+                          ". Converting a label that lives in a nested prefab from the outside " +
+                          "writes it as an override, and the object ends up holding both " +
+                          "components the day that prefab is converted for itself.",
+            });
+
+            return new Options
+            {
+                AllScenes = options.AllScenes,
+                IncludeScenes = options.IncludeScenes,
+                IncludePrefabs = options.IncludePrefabs,
+                OnlyContainers = closure,
+                AdoptProjectFontDefaults = options.AdoptProjectFontDefaults,
+                CrossContainerReferences = options.CrossContainerReferences,
+            };
         }
 
         /// <summary>

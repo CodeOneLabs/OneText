@@ -104,6 +104,11 @@ the components, re-points every reference and carries the listeners, and
 rewrites the mechanical type renames in your own source. Boring, on
 purpose.
 
+You do not have to do it all in one afternoon. Tick the scenes and prefabs you
+want and convert those; the fields elsewhere in the project that named a
+component inside them are found and re-pointed anyway, so the part you did not
+convert keeps working. Scan again whenever you want to see what is left.
+
 ## Status
 
 **v0.2.0.** Everything above is shipped; v0.1.0 was the first public release

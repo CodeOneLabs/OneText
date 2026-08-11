@@ -38,18 +38,39 @@ namespace OneText.Editor
         private bool _crossContainer = true;
         private bool _showNotes;
 
+        /// <summary>
+        /// The containers ticked for the next conversion, empty meaning all of
+        /// them.
+        ///
+        /// Empty rather than "everything ticked" is the state a fresh scan lands
+        /// in, because the button that reads "Convert all 1,204 component(s)" is
+        /// the one most projects want and it should not require a hundred clicks
+        /// to be unticked back into existence.
+        /// </summary>
+        private readonly HashSet<string> _picked = new HashSet<string>();
+
+        /// <summary>Whether the conversion that produced the report on screen was a selection.</summary>
+        private bool _partial;
+
         public override OneTextHub.Tab Tab => OneTextHub.Tab.Onboarding;
 
         /// <summary>
-        /// Puts a report on the screen as though a conversion had just produced
-        /// it. Here so a test can hand this tab the report a real project makes
-        /// and measure what it draws, which is the only way to catch this screen
-        /// growing a card per finding again.
+        /// Puts a report on the screen as though a conversion — or, with
+        /// <paramref name="converted"/> false, a scan — had just produced it.
+        ///
+        /// Here so a test can hand this tab the report a real project makes and
+        /// measure what it draws, which is the only way to catch this screen
+        /// growing a card per finding again. The scan half matters for a
+        /// different reason: the ticks and the button that follows them only
+        /// exist before a conversion, so a screen that quietly stopped offering
+        /// them would be invisible to a test that could only adopt an aftermath.
         /// </summary>
-        public void Adopt(MigrationReport report)
+        public void Adopt(MigrationReport report, bool converted = true)
         {
             _migration = report;
-            _converted = true;
+            _converted = converted;
+            _partial = false;
+            _picked.Clear();
         }
 
         public override string Title => "Onboarding";
@@ -491,8 +512,20 @@ namespace OneText.Editor
 
             card.Act(HubUI.Ghost(_migration == null ? "Scan Scenes & Prefabs…" : "Scan again",
                 ScanComponents));
-            if (_migration != null && Convertible() > 0)
-                card.Act(HubUI.Primary($"Convert {Convertible():n0} component(s)", () => Convert(null)));
+
+            // One button, saying which of the two jobs it is about to do. A
+            // second button for "convert everything" next to a selection is how
+            // somebody converts a project they meant to convert a corner of.
+            if (_migration != null && !_converted && Convertible() > 0)
+            {
+                card.Act(_picked.Count == 0
+                    ? HubUI.Primary($"Convert all {Convertible():n0} component(s)",
+                        () => Convert(null))
+                    : HubUI.Primary(
+                        $"Convert {ConvertibleIn(_picked):n0} component(s) in " +
+                        $"{_picked.Count:n0} container(s)",
+                        () => Convert(new List<string>(_picked))));
+            }
 
             if (!MigrationProviders.HasTextMeshPro)
             {
@@ -585,6 +618,20 @@ namespace OneText.Editor
                     $"font asset(s) created, {_migration.Relinked:n0} reference(s) re-pointed. " +
                     "Everything still listed below is what remains after the conversion.",
                     _migration.Errors == 0 ? HubTone.Good : HubTone.Warn));
+
+                // A narrowed run reports on the containers it was given and on
+                // nothing else — it never opened the rest — so the report on
+                // screen is not a picture of the project any more. Saying so is
+                // the difference between "part of the job is done" and "the job
+                // looks done".
+                if (_partial)
+                {
+                    card.Add(HubUI.Notice(
+                        "That was the part you picked, and this report covers only those " +
+                        "containers — the rest of the project was not opened to be counted. " +
+                        "Scan again for what is left; anything already converted is skipped, so " +
+                        "the count only ever goes down.", HubTone.Info));
+                }
             }
             else if (_migration.Targets.Count == 0)
             {
@@ -608,6 +655,15 @@ namespace OneText.Editor
             return n;
         }
 
+        private int ConvertibleIn(ICollection<string> containers)
+        {
+            if (_migration == null) return 0;
+            int n = 0;
+            foreach (var target in _migration.Targets)
+                if (target.Convertible && containers.Contains(target.Container ?? string.Empty)) n++;
+            return n;
+        }
+
         private void ScanComponents()
         {
             _migration = ComponentMigration.Scan(new ComponentMigration.Options
@@ -619,23 +675,49 @@ namespace OneText.Editor
             // is built so the count can be on screen before anybody commits.
             FontRecovery.Collect(_migration);
             _converted = false;
+            _partial = false;
+
+            // The ticks named containers in the report that has just been
+            // replaced. Keeping the ones that are still here would be tidier and
+            // wronger: a tick nobody put there is how a conversion happens to a
+            // prefab nobody chose.
+            _picked.Clear();
             Refresh();
             Say(_migration.Summary());
         }
 
         /// <summary>
-        /// The containers, each with what it holds and a button that converts
-        /// only that one.
+        /// The containers, each with what it holds, a tick, and a button that
+        /// converts only that one.
         ///
-        /// One at a time is the option a real project uses. A migration that is
-        /// all-or-nothing across four hundred prefabs is a migration nobody
-        /// starts on a Tuesday.
+        /// A few at a time is the option a real project uses. A migration that
+        /// is all-or-nothing across four hundred prefabs is a migration nobody
+        /// starts on a Tuesday — and the reason it used to be all-or-nothing was
+        /// not squeamishness, it was that a narrow run left dead references in
+        /// every file it did not open. It no longer does: whatever the tick
+        /// says, the references reaching into what was converted are followed
+        /// across the whole project and re-pointed.
         /// </summary>
         private VisualElement ContainersCard()
         {
             var card = HubUI.MakeCard("Where they are",
-                "Prefabs convert before scenes, and a base prefab before anything built out of " +
-                "it, so a variant never ends up holding both components.").Flush();
+                "Tick the ones to convert, or convert them all and skip the ticking. Prefabs " +
+                "convert before scenes, and a base prefab before anything built out of it, so a " +
+                "variant never ends up holding both components.").Flush();
+
+            if (!_converted)
+            {
+                card.Act(HubUI.Quiet("Tick all", () =>
+                {
+                    foreach (string container in _migration.Containers) _picked.Add(container);
+                    Refresh();
+                }));
+                card.Act(HubUI.Quiet("Tick none", () =>
+                {
+                    _picked.Clear();
+                    Refresh();
+                }));
+            }
 
             // Counted in two passes over the report rather than one pass per
             // container. A project with a thousand containers and six thousand
@@ -660,18 +742,30 @@ namespace OneText.Editor
                 targetsIn.TryGetValue(container, out int targets);
                 errorsIn.TryGetValue(container, out int errors);
 
+                // Loaded when the button is pressed, not when the row is built:
+                // building the row for every container would otherwise load
+                // every prefab in the project into memory to decide whether to
+                // draw a button.
+                string only = container;
+
                 var row = HubUI.Box("folder-row");
+                if (!_converted)
+                {
+                    row.Add(HubUI.Pill(System.IO.Path.GetFileNameWithoutExtension(container),
+                        _picked.Contains(container), on =>
+                        {
+                            if (on) _picked.Add(only);
+                            else _picked.Remove(only);
+                            Refresh();
+                        }));
+                }
+
                 var name = HubUI.Mono(HubUI.Text(container, "kv__value"));
                 name.style.flexGrow = 1f;
                 row.Add(name);
                 row.Add(HubUI.Badge($"{targets:n0} component(s)", HubTone.Info));
                 if (errors > 0) row.Add(HubUI.Badge($"{errors:n0} error(s)", HubTone.Bad));
 
-                // Loaded when the button is pressed, not when the row is built:
-                // building the row for every container would otherwise load
-                // every prefab in the project into memory to decide whether to
-                // draw a button.
-                string only = container;
                 row.Add(HubUI.Quiet("Show", () => Ping(only)));
                 if (!_converted)
                     row.Add(HubUI.Quiet("Convert", () => Convert(new List<string> { only })));
@@ -895,6 +989,13 @@ namespace OneText.Editor
         /// </summary>
         private void Convert(List<string> only)
         {
+            // Asked here rather than left to the run, so the dialog lists the
+            // files that are really about to be written. A selection quietly
+            // growing between the confirmation and the work is the one thing a
+            // confirmation cannot survive.
+            int picked = only?.Count ?? 0;
+            if (only != null) only = ComponentMigration.WithWhatTheyNest(only);
+
             var containers = only ?? new List<string>(_migration.Containers);
             if (containers.Count == 0)
             {
@@ -906,9 +1007,27 @@ namespace OneText.Editor
             foreach (var target in _migration.Targets)
                 if (target.Convertible && containers.Contains(target.Container)) components++;
 
+            // Said out loud because it is the one thing about a partial run that
+            // surprises people in a diff: converting four prefabs writes those
+            // four, and also whichever files elsewhere held a field naming
+            // something inside them. That write is the point — the alternative
+            // is those fields reading None — but a person about to commit it
+            // should have read the sentence first.
+            string spread = only != null && _crossContainer
+                ? " Files outside this selection that point at a component in it are opened " +
+                  "afterwards and re-pointed, so some of them will be saved too."
+                : string.Empty;
+
+            string nested = only != null && only.Count > picked
+                ? $" {only.Count - picked:n0} of these you did not tick: your selection is built " +
+                  "out of them, and a label that lives in a nested prefab has to be converted " +
+                  "there rather than as an override."
+                : string.Empty;
+
             if (!OnboardingGit.ConfirmOverwrite("Convert components?",
                     $"{components:n0} component(s) in {containers.Count:n0} scene(s) and prefab(s) " +
-                    "will be destroyed and replaced, and those files will be saved.",
+                    "will be destroyed and replaced, and those files will be saved." +
+                    nested + spread,
                     containers, "Convert"))
                 return;
 
@@ -921,6 +1040,8 @@ namespace OneText.Editor
             });
             FontRecovery.Collect(_migration, createPlaceholders: true);
             _converted = true;
+            _partial = only != null;
+            _picked.Clear();
             Refresh();
             Say($"Converted {_migration.Converted:n0} component(s). {_migration.Summary()}");
         }

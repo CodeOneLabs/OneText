@@ -233,7 +233,8 @@ namespace OneText.Editor
 
         /// <summary>
         /// Every asset that could hold a field pointing into one of these
-        /// containers: the containers themselves, plus the ScriptableObjects.
+        /// containers: whatever <paramref name="elsewhere"/> offers, plus the
+        /// containers themselves, plus the ScriptableObjects.
         ///
         /// The dependency list is the narrowing and it is the reason this is
         /// affordable. A reference into a prefab is a reference to that prefab's
@@ -246,8 +247,17 @@ namespace OneText.Editor
         /// <c>TMP_Text</c> field on it is an ordinary thing to have, it is not a
         /// scene and it is not a prefab, and nothing in the migration has ever
         /// looked at one.
+        ///
+        /// <paramref name="elsewhere"/> is what makes converting part of a
+        /// project a sane thing to do. What breaks a field is the target being
+        /// converted, and the field does not care whether its own file was in
+        /// the run — so the search for referrers is over the whole project even
+        /// when the conversion is over four prefabs. Passing null keeps the
+        /// search inside <paramref name="containers"/>, which is what a caller
+        /// that has already decided nothing outside will be opened wants.
         /// </summary>
-        public static HashSet<string> Candidates(IEnumerable<string> containers)
+        public static HashSet<string> Candidates(IEnumerable<string> containers,
+            IEnumerable<string> elsewhere = null)
         {
             var known = new HashSet<string>(StringComparer.Ordinal);
             if (containers != null) foreach (string path in containers) known.Add(path);
@@ -255,11 +265,16 @@ namespace OneText.Editor
             var candidates = new HashSet<string>(StringComparer.Ordinal);
             if (known.Count == 0) return candidates;
 
+            var seen = new HashSet<string>(known, StringComparer.Ordinal);
             var universe = new List<string>(known);
+            if (elsewhere != null)
+                foreach (string path in elsewhere)
+                    if (!string.IsNullOrEmpty(path) && seen.Add(path)) universe.Add(path);
+
             foreach (string guid in AssetDatabase.FindAssets("t:ScriptableObject", new[] { "Assets" }))
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (!string.IsNullOrEmpty(path)) universe.Add(path);
+                if (!string.IsNullOrEmpty(path) && seen.Add(path)) universe.Add(path);
             }
 
             foreach (string path in universe)
@@ -272,6 +287,45 @@ namespace OneText.Editor
                 }
             }
             return candidates;
+        }
+
+        /// <summary>
+        /// The containers holding a reference this run broke that the run itself
+        /// will never open.
+        ///
+        /// A conversion of part of a project is only honest if the rest of the
+        /// project is mended, and the rest of the project is exactly this list:
+        /// files that were censused because they point into the run, hold a
+        /// field whose target really was converted, and are not themselves being
+        /// converted. Each one is opened once, has its fields re-pointed, and is
+        /// written only if something in it changed.
+        ///
+        /// Asked after the run rather than before it, because what makes an
+        /// entry belong here is <see cref="Changed"/> having been said about its
+        /// target — a container that was refused, or whose save failed, breaks
+        /// nothing and gets nobody opened on its account.
+        /// </summary>
+        public List<string> Outsiders(ICollection<string> covered)
+        {
+            var outsiders = new List<string>();
+            foreach (var pair in _byReferrer)
+            {
+                string referrer = pair.Key;
+                if (string.IsNullOrEmpty(referrer) || !IsContainer(referrer)) continue;
+                if (covered != null && covered.Contains(referrer)) continue;
+
+                foreach (var reference in pair.Value)
+                {
+                    if (reference.Settled || !_changed.Contains(reference.Target)) continue;
+                    outsiders.Add(referrer);
+                    break;
+                }
+            }
+
+            // Sorted so a run is the same run twice, and so the progress bar
+            // reads as a walk through the project rather than a hash order.
+            outsiders.Sort(StringComparer.Ordinal);
+            return outsiders;
         }
 
         // -------------------------------------------------------------- census
@@ -1080,9 +1134,12 @@ namespace OneText.Editor
         // ------------------------------------------------------------ reporting
 
         /// <summary>
-        /// What a scan has to say: every one of these will break, and the
-        /// migration can only mend the ones whose referring asset is in the same
-        /// run.
+        /// What a scan has to say: every one of these will break, and every one
+        /// of them is expected to be mended in the same breath.
+        ///
+        /// Listed anyway, because "this field will be rewritten by the migration"
+        /// is something the person deciding whether to run it should be able to
+        /// read beforehand rather than discover in a diff.
         /// </summary>
         public void Report(MigrationReport report)
         {
@@ -1096,9 +1153,9 @@ namespace OneText.Editor
                               $"{reference.TargetComponent} at '{reference.TargetPath}' in " +
                               $"{reference.Target}. Converting that container gives the component a " +
                               "new identity in its own file, and this field is in a different file, " +
-                              "so nothing that happens while that one is open can mend it. Convert " +
-                              "both in the same run and it is re-pointed here; convert only that " +
-                              "one and this field reads None.",
+                              "so nothing that happens while that one is open can mend it. This " +
+                              "file is opened afterwards and the field re-pointed — whether or not " +
+                              "it is itself part of the run — and that write will be in the diff.",
                     Container = reference.Referrer,
                     Path = reference.ReferrerPath,
                     Component = reference.ReferrerType,
@@ -1114,9 +1171,15 @@ namespace OneText.Editor
         /// otherwise migrated cleanly, which is the whole failure this module was
         /// written against. Reporting it is the floor; the re-point above is what
         /// we would rather do, and this is what is said when we could not.
+        ///
+        /// Returns how many there were, because the sentence a narrowed run adds
+        /// on top of these depends on whether there are any: a run over four
+        /// prefabs that mended everything reaching into them does not need to be
+        /// told to go and do the whole project.
         /// </summary>
-        public void Settle(MigrationReport report)
+        public int Settle(MigrationReport report)
         {
+            int unmended = 0;
             foreach (var reference in _records)
             {
                 if (reference.Settled) continue;
@@ -1129,6 +1192,7 @@ namespace OneText.Editor
                 // nobody opened.
                 if (!reference.Broken && !_changed.Contains(reference.Target)) continue;
 
+                unmended++;
                 report.Add(new MigrationFinding
                 {
                     Severity = DoctorSeverity.Error,
@@ -1144,14 +1208,15 @@ namespace OneText.Editor
                                     ". Deal with that and convert again, or set the field by hand."
                                   : reference.Severed
                                       ? Severance(reference)
-                                      : ", because that container was converted and the asset " +
-                                        "holding this field was not part of this run. Include it " +
-                                        "and convert again, or set the field by hand."),
+                                      : ", because that container was converted and the file " +
+                                        "holding this field was never opened — it is not a scene " +
+                                        "or a prefab this run could reach. Set the field by hand."),
                     Container = reference.Referrer,
                     Path = reference.ReferrerPath,
                     Component = reference.ReferrerType,
                 });
             }
+            return unmended;
         }
 
         /// <summary>
