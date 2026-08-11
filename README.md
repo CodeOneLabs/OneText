@@ -21,7 +21,7 @@ https://github.com/CodeOneLabs/OneText.git
 ```
 
 That is the whole install; the HarfBuzz/FreeType natives ship inside the
-package. Then **GameObject > UI > OneText Label**, assign a font, and type in
+package. Then **GameObject > UI > OneText > Label**, assign a font, and type in
 any language on Earth. For text in the world rather than on a canvas —
 nameplates, signs, diegetic UI — add `OneTextMesh` instead: the same pipeline
 through a MeshRenderer, no Canvas and no uGUI dependency at all. Shipping

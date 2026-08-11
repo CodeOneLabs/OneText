@@ -317,6 +317,7 @@ namespace OneText.Editor
             values.TextComponentId = InstanceId(field.textComponent);
             values.PlaceholderId = InstanceId(field.placeholder);
             values.TargetGraphicId = InstanceId(field.targetGraphic);
+            values.ViewportId = InstanceId(field.textViewport);
 
             // TMP's onValueChanged and onSubmit are both UnityEvent<string>,
             // and so are OneText's, which is the only reason the persistent

@@ -1839,6 +1839,15 @@ namespace OneText.Editor
                 var graphic = EditorUtility.InstanceIDToObject(values.TargetGraphicId) as Component;
                 if (graphic != null) SetObject(serialized, "m_TargetGraphic", graphic);
             }
+            // Looked up directly rather than through the replacement map: the
+            // viewport is a bare RectTransform holding a mask, so nothing ever
+            // replaced it and it is still the object it was before the labels
+            // under it changed type.
+            if (values.ViewportId != 0)
+            {
+                var viewport = EditorUtility.InstanceIDToObject(values.ViewportId) as RectTransform;
+                if (viewport != null) SetObject(serialized, "_textViewport", viewport);
+            }
             serialized.ApplyModifiedPropertiesWithoutUndo();
 
             serialized.Update();

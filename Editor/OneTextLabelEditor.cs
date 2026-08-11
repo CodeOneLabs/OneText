@@ -21,6 +21,12 @@ namespace OneText.Editor
     public sealed class OneTextLabelEditor : GraphicEditor
     {
         private const string TabPref = "OneText.LabelEditorTab";
+        // Whether the preview was left running, remembered the way the tab is:
+        // per user, per machine, never in the scene. Somebody who switched the
+        // preview on is working on the animation, and making them find the
+        // button again every time the selection leaves the label and comes back
+        // is how a feature that works reads as a feature that does not.
+        private const string PreviewPref = "OneText.LabelEditorPreview";
         private static readonly string[] s_tabs = { "Style", "Layout", "Animation", "Interaction" };
 
         private SerializedProperty _text, _fontAssetProperty, _fallbackFonts, _fontSize;
@@ -86,6 +92,16 @@ namespace OneText.Editor
             _characterRevealed = serializedObject.FindProperty("_characterRevealed");
             _revealComplete = serializedObject.FindProperty("_revealComplete");
             _axes = null;
+
+            // The remembered preview, brought back through the same call the
+            // button makes, so a driver has exactly one way of coming into
+            // existence and StopPreview only ever has one shape to undo. Play
+            // mode and a multi-selection are excluded because those are the two
+            // states the button itself is not drawn in, and a preview ticking
+            // with no visible control to stop it is worse than no preview.
+            if (EditorPrefs.GetBool(PreviewPref, false) && !Application.isPlaying &&
+                targets.Length == 1 && _label != null)
+                StartPreview();
         }
 
         protected override void OnDisable()
@@ -725,6 +741,24 @@ namespace OneText.Editor
             EditorGUILayout.Space(2f);
             bool now = GUILayout.Toggle(_previewing, _previewing ? "■ Stop preview" : "▶ Preview animation",
                 GUI.skin.button);
+            // The line the "animation preview doesn't work, you have to press
+            // Play" report was missing. A still label with a tag in it looks
+            // identical whether the engine is broken or doing the deliberate
+            // thing — drawing the effect at its finished state so a fresh
+            // <fade> is readable text and not an empty rect — and the button
+            // above never said which. Only with a tag to move and the clock
+            // stopped: a label with nothing to animate has nothing to explain,
+            // and while the preview runs the readout below is the better
+            // answer. Rich text off counts as no tags, so a label whose
+            // <wave> is only characters stays quiet here too, and the two
+            // boxes below cannot collide with this — they want the preview
+            // running and no tags, where this wants neither.
+            if (!_previewing && PreviewEffectTagCount() > 0)
+            {
+                EditorGUILayout.LabelField(
+                    "Edit mode draws effects finished. Preview animation runs the clock.",
+                    EditorStyles.miniLabel);
+            }
             // Three numbers, because a still preview has three unrelated
             // causes and one readout that cannot tell them apart is worse than
             // none: it sends you to fix the plumbing on a label that has no
@@ -760,19 +794,50 @@ namespace OneText.Editor
                 }
             }
             if (now == _previewing) return;
-            if (now)
-            {
-                var go = new GameObject("OneText Preview") { hideFlags = HideFlags.HideAndDontSave };
-                _driver = go.AddComponent<PreviewDriver>();
-                _driver.Label = _label;
-                if (_label != null) _label.RegisterDirtyVerticesCallback(_driver.NoteDirty);
-                // The first kick; the driver keeps the loop alive from inside.
-                EditorApplication.QueuePlayerLoopUpdate();
-            }
-            else
-            {
-                StopPreview();
-            }
+            // The preference is written here and nowhere else, because this is
+            // the only place the user says anything about the preview.
+            // StopPreview runs on every selection change and on the way into
+            // play mode; if it wrote the preference too, "on" would be undone a
+            // moment after being set and would never survive to be restored.
+            EditorPrefs.SetBool(PreviewPref, now);
+            if (now) StartPreview();
+            else StopPreview();
+        }
+
+        /// <summary>
+        /// Stands the driver up: a hidden GameObject to carry the tick loop and
+        /// a dirty-vertices callback so the readouts can tell a clock that is
+        /// running from a mesh that is moving. Its own method because both the
+        /// button and the restored-from-preferences path in
+        /// <see cref="OnEnable"/> have to build it identically — two
+        /// constructions that drifted apart would give <see cref="StopPreview"/>
+        /// something it does not know how to take down.
+        /// </summary>
+        private void StartPreview()
+        {
+            var go = new GameObject("OneText Preview") { hideFlags = HideFlags.HideAndDontSave };
+            _driver = go.AddComponent<PreviewDriver>();
+            _driver.Label = _label;
+            if (_label != null) _label.RegisterDirtyVerticesCallback(_driver.NoteDirty);
+            // Entering play mode is the one exit this editor cannot count on
+            // hearing about as OnDisable: the inspector survives it whole when
+            // the project has domain and scene reload switched off. The driver
+            // is HideAndDontSave, so nothing else would collect it, and it is
+            // now started far more often than a deliberate click. Subscribed
+            // only while a preview exists, and idempotently, since OnEnable can
+            // restore one that a click then stops and starts again.
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
+            // The first kick; the driver keeps the loop alive from inside.
+            EditorApplication.QueuePlayerLoopUpdate();
+        }
+
+        // ExitingEditMode rather than EnteredPlayMode: the driver has to be
+        // gone before play begins, not cleaned up after it has already spent a
+        // frame or two in a mode it has no business ticking in.
+        private void OnPlayModeChanged(PlayModeStateChange change)
+        {
+            if (change == PlayModeStateChange.ExitingEditMode) StopPreview();
         }
 
         /// <summary>
@@ -817,6 +882,10 @@ namespace OneText.Editor
 
         private void StopPreview()
         {
+            // Dropped whether or not there is a driver to tear down: this also
+            // runs from OnDisable on labels that were never previewing, and a
+            // handler left on a dead editor is its own small leak.
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             if (_driver != null && _label != null)
                 _label.UnregisterDirtyVerticesCallback(_driver.NoteDirty);
             if (_driver != null) Object.DestroyImmediate(_driver.gameObject);

@@ -236,7 +236,7 @@ namespace OneText.Editor
             card.Add(HubUI.Field("Canvas size",
                 Size(defaults.CanvasSize,
                     value => Edit("_defaultCanvasSize", p => p.vector2Value = value)),
-                "The rect a label made from GameObject > UI > OneText Label starts with."));
+                "The rect a label made from GameObject > UI > OneText > Label starts with."));
 
             card.Add(HubUI.Field("World size",
                 Size(defaults.WorldSize,

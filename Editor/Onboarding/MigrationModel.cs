@@ -197,6 +197,16 @@ namespace OneText.Editor
         public int PlaceholderId;
         public int TargetGraphicId;
 
+        /// <summary>
+        /// The masked box the text scrolls inside — TMP's Text Area, which the
+        /// conversion leaves standing because it is a plain GameObject nobody
+        /// replaces. Carried anyway, because the reference is what the caret
+        /// scroll measures against: without it a converted field still clips,
+        /// but it keeps the caret inside the label's rect rather than the
+        /// viewport's, and a long value scrolls to the wrong edge.
+        /// </summary>
+        public int ViewportId;
+
         /// <summary>The defaults a label starts life with, so a partial read is still sane.</summary>
         public static MigrationValues Default => new MigrationValues
         {
