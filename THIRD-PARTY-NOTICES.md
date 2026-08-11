@@ -1,5 +1,35 @@
 # Third-party notices
 
+## Pretendard
+
+Typeface by Kil Hyung-jin, licensed under the SIL Open Font License 1.1 with
+Reserved Font Name "Pretendard". https://github.com/orioncactus/pretendard
+
+`Samples~/Demo/Fonts/PretendardVariable.ttf.bytes` is Pretendard Variable
+1.3.9, unmodified except for the `.bytes` suffix Unity needs to import a file
+as a `TextAsset`. It ships with the demo sample so that the sample draws
+something the first time somebody opens it; nothing in `Runtime/` or `Editor/`
+references it, and a project that imports the sample can delete it and assign
+its own face. The licence travels beside it as
+`Samples~/Demo/Fonts/Pretendard-OFL.txt`, which the OFL requires and which must
+not be separated from the font.
+
+The reserved name means a *modified* copy may not be called Pretendard. This
+copy is not modified, so it keeps the name.
+
+## Noto Sans (Arabic, Thai, Devanagari, Hebrew)
+
+Typefaces by the Noto Project Authors, licensed under the SIL Open Font
+License 1.1. https://github.com/notofonts
+
+Four faces ship in `Samples~/Demo/Fonts/` as the demo's fallback chain, so the
+page that argues about shaping has Arabic, Thai and Devanagari to argue with
+rather than boxes. Unmodified except for the `.bytes` suffix. Their licence is
+`Samples~/Demo/Fonts/Noto-OFL.txt` and must not be separated from them.
+
+The same faces are also used, uncommitted, as test fixtures; see
+`Tests/Fonts~/OFL.txt`.
+
 ## HarfBuzz
 
 OpenType text shaping engine, including `harfbuzz-subset`. Licensed under the
