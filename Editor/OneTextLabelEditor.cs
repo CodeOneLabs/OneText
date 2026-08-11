@@ -716,27 +716,47 @@ namespace OneText.Editor
         /// <summary>
         /// Runs the animation clock outside play mode, so seeing a wave means
         /// clicking a button rather than entering play mode. The clock rides
-        /// <see cref="EditorApplication.update"/> and resets to zero on stop;
-        /// zero is the "show effects finished" state the label already knows.
+        /// the queued player loop inside <see cref="PreviewDriver"/> and resets
+        /// to zero on stop; zero is the "show effects finished" state the label
+        /// already knows.
         /// </summary>
         private void DrawPreviewControls()
         {
             EditorGUILayout.Space(2f);
             bool now = GUILayout.Toggle(_previewing, _previewing ? "■ Stop preview" : "▶ Preview animation",
                 GUI.skin.button);
-            // The clock and the first drawn quad, visible: the clock running
-            // proves the tick loop is alive, the quad position moving proves
-            // the mesh is actually being rebuilt with that clock, leaving a
-            // still screen as purely a repaint problem. Diagnosing a preview
-            // needs the same split the preview itself needed.
+            // Three numbers, because a still preview has three unrelated
+            // causes and one readout that cannot tell them apart is worse than
+            // none: it sends you to fix the plumbing on a label that has no
+            // effect tag in it. Tags say whether there is anything to animate,
+            // the clock says whether the tick loop is alive, and the mesh
+            // counter says whether those ticks are actually changing what is
+            // drawn — leaving a still screen with all three healthy as purely
+            // a repaint problem.
             if (_previewing && _label != null)
             {
+                int tags = PreviewEffectTagCount();
+                EditorGUILayout.LabelField("Effect tags", tags.ToString());
                 EditorGUILayout.LabelField("Clock", $"{_label.AnimationTime:F2}s");
-                if (_label.DrawnQuads.Count > 0)
+                EditorGUILayout.LabelField("Mesh", _driver.Ticks == 0
+                    ? "waiting for the first tick"
+                    : $"{_driver.MovedTicks} of {_driver.Ticks} ticks changed it");
+                // Only when the mesh is standing still, and then everything a
+                // rebuild can be stopped by, at once. A label that is not
+                // dirtied never reaches the rebuild; a culled one is turned
+                // away at the top of it; a rebuild that runs with no spans
+                // re-emits the same tiles it emitted last time. Three
+                // different repairs, and from a still label they look alike.
+                if (_driver.Ticks > 0 && _driver.MovedTicks == 0)
+                    EditorGUILayout.LabelField(" ", StalledPreviewReport(), EditorStyles.miniLabel);
+                if (tags == 0)
                 {
-                    var quad = _label.DrawnQuads[0];
-                    EditorGUILayout.LabelField("First quad",
-                        $"x={quad.Position.x:F1} y={quad.Position.y:F1}");
+                    EditorGUILayout.HelpBox(_richText.boolValue
+                        ? "No effect tag in this text, so there is nothing for the clock to " +
+                          "move. Tag a span (<wave>like this</wave>) or use the toggles above."
+                        : "Rich text is off, so any effect tag in this text is just " +
+                          "characters. Turn it on for the tags to become effects.",
+                        MessageType.Info);
                 }
             }
             if (now == _previewing) return;
@@ -745,6 +765,7 @@ namespace OneText.Editor
                 var go = new GameObject("OneText Preview") { hideFlags = HideFlags.HideAndDontSave };
                 _driver = go.AddComponent<PreviewDriver>();
                 _driver.Label = _label;
+                if (_label != null) _label.RegisterDirtyVerticesCallback(_driver.NoteDirty);
                 // The first kick; the driver keeps the loop alive from inside.
                 EditorApplication.QueuePlayerLoopUpdate();
             }
@@ -754,8 +775,50 @@ namespace OneText.Editor
             }
         }
 
+        /// <summary>
+        /// Everything that can hold a rebuild still, read off the label rather
+        /// than guessed at: whether the clock's writes are reaching the dirty
+        /// flag at all, whether the tags became spans, and whether the canvas
+        /// is turning the rebuild away before it starts.
+        /// </summary>
+        private string StalledPreviewReport()
+        {
+            var renderer = _label.canvasRenderer;
+            return $"dirtied {_driver.DirtiedTicks}  ·  spans {_label.EffectSpanCount}  ·  " +
+                   $"quads {_label.DrawnQuads.Count}  ·  " +
+                   (_label.isActiveAndEnabled ? "active" : "NOT ACTIVE") + "  ·  " +
+                   (_label.canvas != null ? $"canvas '{_label.canvas.name}'" : "NO CANVAS") + "  ·  " +
+                   (renderer != null && renderer.cull ? "CULLED" : "not culled");
+        }
+
+        private string _previewTagsFrom;
+        private int _previewTagCount;
+
+        /// <summary>
+        /// Effect tags in the text as the animator will see them: counted off
+        /// a real parse rather than off a search for '&lt;', so an unknown
+        /// name, a decoration tag and anything inside a <c>&lt;noparse&gt;</c>
+        /// all count as nothing, which is exactly what they will animate as.
+        /// Cached on the string, because the inspector repaints every frame
+        /// while a preview runs and the text almost never changes between two
+        /// of them.
+        /// </summary>
+        private int PreviewEffectTagCount()
+        {
+            if (!_richText.boolValue) return 0;
+            string text = _text.stringValue ?? "";
+            if (_previewTagsFrom == text) return _previewTagCount;
+            var parsed = new RichTextResult();
+            RichTextParser.Parse(text, parsed);
+            _previewTagsFrom = text;
+            _previewTagCount = parsed.Effects.Count;
+            return _previewTagCount;
+        }
+
         private void StopPreview()
         {
+            if (_driver != null && _label != null)
+                _label.UnregisterDirtyVerticesCallback(_driver.NoteDirty);
             if (_driver != null) Object.DestroyImmediate(_driver.gameObject);
             _driver = null;
             if (_label != null) _label.AnimationTime = 0f;
@@ -782,7 +845,28 @@ namespace OneText.Editor
         private sealed class PreviewDriver : MonoBehaviour
         {
             public OneTextLabel Label;
+
+            /// <summary>
+            /// Ticks run, and how many of them changed what is drawn. The
+            /// second number is the one that matters: it is the difference
+            /// between a preview that is not running and a preview that is
+            /// running on a label with nothing to animate.
+            /// </summary>
+            public int Ticks, MovedTicks;
+
+            /// <summary>
+            /// Times the label reported its vertices dirty. The clock's own
+            /// writes should raise this once a tick; a label that never raises
+            /// it is one whose <c>SetVerticesDirty</c> is being dropped, and no
+            /// amount of forcing the canvas afterwards will draw a new frame.
+            /// </summary>
+            public int DirtiedTicks;
+
+            public void NoteDirty() => DirtiedTicks++;
+
             private double _last;
+            private int _checksum;
+            private bool _checksumTaken;
 
             private void OnEnable() => _last = EditorApplication.timeSinceStartup;
 
@@ -793,14 +877,58 @@ namespace OneText.Editor
                 Label.AnimationTime += (float)(now - _last);
                 _last = now;
                 // The rebuild the dirty flag is waiting for; nothing else runs
-                // it in edit mode.
+                // it in edit mode. Both calls, because they fail in different
+                // places: the canvas pass is what a real frame does, and the
+                // direct rebuild is the one every animation test drives, so a
+                // label the rebuild queue never took still gets its mesh.
+                // Whichever runs first leaves the other a no-op, finding the
+                // vertices already clean.
                 Canvas.ForceUpdateCanvases();
+                Label.Rebuild(UnityEngine.UI.CanvasUpdate.PreRender);
+
+                Ticks++;
+                // Whether that rebuild changed a pixel, which is the only
+                // honest answer to "is the preview running". One quad's
+                // position cannot give it: a tag that starts mid-string leaves
+                // the first quad still while the tagged ones move, and a
+                // <fade> moves no quad anywhere — it moves alpha.
+                int checksum = MeshChecksum(Label);
+                if (_checksumTaken && checksum != _checksum) MovedTicks++;
+                _checksum = checksum;
+                _checksumTaken = true;
+
                 EditorApplication.QueuePlayerLoopUpdate();
                 // The queued loop repaints game views on its own. Scene views
                 // need asking, and ONLY scene views: repainting every editor
                 // window per frame (RepaintAllViews) is what turns a smooth
                 // preview into a slideshow.
                 SceneView.RepaintAll();
+            }
+
+            /// <summary>
+            /// Everything an effect can change about a tile, in one number:
+            /// position for the ambient effects, size for a scale, rotation
+            /// for a spin, colour for every appearance effect there is. A
+            /// checksum watching only position would call a working
+            /// <c>&lt;fade&gt;</c> frozen.
+            /// </summary>
+            private static int MeshChecksum(OneTextLabel label)
+            {
+                var drawn = label.DrawnQuads;
+                int hash = drawn.Count;
+                for (int i = 0; i < drawn.Count; i++)
+                {
+                    var quad = drawn[i];
+                    hash = hash * 31 + quad.Position.GetHashCode();
+                    hash = hash * 31 + quad.Size.GetHashCode();
+                    hash = hash * 31 + quad.Rotation.GetHashCode();
+                    // Built by hand rather than through Color32's own hash,
+                    // which is ValueType's: it boxes, and this runs per tile
+                    // per tick.
+                    hash = hash * 31 + (quad.Color.r << 24 | quad.Color.g << 16 |
+                                        quad.Color.b << 8 | quad.Color.a);
+                }
+                return hash;
             }
         }
 

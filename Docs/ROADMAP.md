@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Done** | M0 to M15, shipped as v0.1.0 (2026-08-05): shaping, the Unicode algorithms, layout, the shared atlas, uGUI components, natives for every platform including wasm, rich text, colour emoji, animation, Asian typography, the Hub, an input field that survives an IME, decorations, MSDF, ruby, vertical writing. Then v0.2.0 (2026-08-08): world-space text, auto-size, MSDF error correction, and the Hub's Onboarding tab for leaving TMP |
-| **Now: M16** | Ship it: a remote and CI's first green run, the browser demo, the platform and IME matrix on real hardware, OpenUPM listing and the TMP migration guide (the tooling shipped in v0.2.0; the prose has not) |
+| **Done** | M0 to M15, shipped as v0.1.0 (2026-08-05): shaping, the Unicode algorithms, layout, the shared atlas, uGUI components, natives for every platform including wasm, rich text, colour emoji, animation, Asian typography, the Hub, an input field that survives an IME, decorations, MSDF, ruby, vertical writing. Then v0.2.0 (2026-08-08): world-space text, auto-size, MSDF error correction, and the Hub's Onboarding tab for leaving TMP. Then v0.3.0 (2026-08-11): a migration that runs on part of a project and mends the rest, the rich-text tags a real TMP project actually contains, and a `<b>` that can reach a designed bold |
+| **Now: M16** | Ship it: a remote and CI's first green run, the browser demo, the platform and IME matrix on real hardware, OpenUPM listing and the TMP migration guide (the tooling shipped in v0.2.0 and grew up in v0.3.0; the prose has not) |
 | **Next: M17** | The known gaps: COLRv1, tate-chū-yoko, vertical editing, Thai proven against real data |
 | **Later** | The open squares: UI Toolkit frontend, ECS/DOTS, accessibility |
 | **1.0** | A trust claim, not a feature list: every platform verified on real hardware, CI green as a standing condition, the IME matrix passed, external projects shipping on the package |
