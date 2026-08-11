@@ -102,6 +102,25 @@ namespace OneText
         public float LineSpacing;
 
         /// <summary>
+        /// Letter spacing in ems for text that has no opinion of its own, and
+        /// whether the caller is expressing one at all.
+        ///
+        /// This is the whole-label knob, and it is a pair rather than a single
+        /// number for the same reason <see cref="TextStyle.LetterSpacingEm"/>
+        /// has a flag: 0 is a value an author asks for, not an absence. A
+        /// label whose style asset sets spacing to 0 over a font that ships
+        /// wide means 0, and without the flag the font would win.
+        ///
+        /// Precedence, tightest scope first: <c>&lt;cspace&gt;</c> markup, a
+        /// named style, this, then the face's own
+        /// <c>LetterSpacingEm</c> from the font stack.
+        /// </summary>
+        public float LetterSpacingEm;
+
+        /// <inheritdoc cref="LetterSpacingEm"/>
+        public bool HasLetterSpacing;
+
+        /// <summary>
         /// Paragraph direction: 0 = LTR, 1 = RTL,
         /// <see cref="Unicode.BidiAlgorithm.AutoDirection"/> = from content (default).
         /// </summary>
@@ -248,6 +267,25 @@ namespace OneText
 
         /// <summary>Baseline offset in render units, positive up.</summary>
         public float BaselineShift;
+
+        /// <summary>
+        /// Markup asked this run for bold and the family had none to give, so
+        /// its weight is being faked by thickening the face rather than by a
+        /// different set of outlines.
+        ///
+        /// Recorded on the run rather than worked out at emit because only the
+        /// layout pass has the font stack to ask, and because it is constant
+        /// over a run by construction — a change of font or of style ends an
+        /// item, and this can only change with one of those.
+        ///
+        /// It is a last resort and it is meant to look like one. A dilated
+        /// regular is not a designed bold: it fattens every stroke by the same
+        /// amount where a type designer would have thickened the stems and left
+        /// the counters alone, which is why the counters are the first thing to
+        /// close up, and why this is worst on the scripts with the least room
+        /// in them. Hangul and Han lose legibility here before Latin does.
+        /// </summary>
+        public bool SyntheticBold;
 
         /// <summary>
         /// True if this run is a ruby annotation rather than text on the line.

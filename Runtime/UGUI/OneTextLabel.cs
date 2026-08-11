@@ -878,6 +878,20 @@ namespace OneText.UGUI
         private Color EffectiveColor =>
             _style != null && _style.Sets(OneTextStyle.Fields.Color) ? _style.Color * color : color;
 
+        /// <summary>
+        /// Whether the base style has an opinion about letter spacing, and
+        /// what it is. There is no field of the label's own behind this: the
+        /// style asset is the whole-label knob, deliberately, and the pair
+        /// exists because a style that sets spacing to 0 over a font that
+        /// ships wide means 0 rather than "no opinion".
+        /// </summary>
+        private bool HasBaseLetterSpacing =>
+            _style != null && _style.Sets(OneTextStyle.Fields.LetterSpacing);
+
+        /// <inheritdoc cref="HasBaseLetterSpacing"/>
+        private float EffectiveLetterSpacing =>
+            HasBaseLetterSpacing ? _style.LetterSpacingEm : 0f;
+
         protected override void OnDestroy()
         {
             AtlasInvalidation.Unregister(this);
@@ -1298,16 +1312,23 @@ namespace OneText.UGUI
                         _styleVariations.AddRange(_style.Variations);
                         axes = _styleVariations;
                     }
-                    _fonts.Add(main.GetVariant(axes), main.Language);
+                    // The designed bold rides in with the family it belongs to.
+                    // Null for a variable font and for most static ones, and the
+                    // stack treats null as "no bold here", which is what makes
+                    // <b> fall through to the wght axis, then to a faked weight.
+                    _fonts.Add(main.GetVariant(axes), main.BoldFace, main.Language,
+                        main.LetterSpacingEm);
                 }
 
                 foreach (var asset in _fallbackFonts)
-                    if (asset != null) _fonts.Add(asset.Font, asset.Language);
+                    if (asset != null)
+                        _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
 
                 if (settings != null)
                 {
                     foreach (var asset in settings.FallbackFonts)
-                        if (asset != null) _fonts.Add(asset.Font, asset.Language);
+                        if (asset != null)
+                            _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
                 }
             }
         }
@@ -1327,6 +1348,8 @@ namespace OneText.UGUI
                 Overflow = _overflow,
                 WritingMode = _writingMode,
                 LineSpacing = EffectiveLineSpacing,
+                LetterSpacingEm = EffectiveLetterSpacing,
+                HasLetterSpacing = HasBaseLetterSpacing,
                 BaseDirection = BidiAlgorithm.AutoDirection,
                 ResolveFontOverride = NamedFont,
                 ResolveNamedStyle = ApplyNamedStyle,
@@ -1651,7 +1674,7 @@ namespace OneText.UGUI
         /// number of distinct decorations in one label, which is one or two and
         /// has never in any real text been ten.
         /// </summary>
-        private int ResolveDecoration(int textIndex, in TextStyle style)
+        private int ResolveDecoration(int textIndex, in TextStyle style, bool syntheticBold)
         {
             var decoration = _style != null
                 ? _style.Decoration.Over(_decoration)
@@ -1663,6 +1686,12 @@ namespace OneText.UGUI
             }
             if (_markup.HasMarkup && _markup.Decorations.Count > 0)
                 decoration = _markup.DecorationAt(textIndex).Over(decoration);
+
+            // Last, and additively, because it is not a decoration anybody
+            // wrote: it is the weight this run could not get from a font. A
+            // label that also asked for a dilated face gets both, which is the
+            // honest reading of "thicker than that, and bold on top".
+            if (syntheticBold) decoration = decoration.WithSyntheticBold();
 
             if (decoration.IsNone) return 0;
             for (int i = 1; i < _decorations.Count; i++)
@@ -1849,7 +1878,7 @@ namespace OneText.UGUI
                 // The tag's colour, not the label's: the label's is multiplied
                 // in at emit for a bar exactly as it is for a letter, so a
                 // fading label fades its own underline.
-                var color = style.HasColor ? style.Color : new Color32(255, 255, 255, 255);
+                var color = style.ResolveColor();
                 if (style.Underline)
                 {
                     // Beside the em box, on the left of the column: the side a
@@ -1999,7 +2028,7 @@ namespace OneText.UGUI
                 // monochrome glyphs too, and the ones that fall through to the
                 // SDF path below are ordinary text that ordinary decorations
                 // apply to.
-                int decoration = ResolveDecoration(glyph.Cluster, run.Style);
+                int decoration = ResolveDecoration(glyph.Cluster, run.Style, run.SyntheticBold);
                 if (TryEmitColorGlyph(font, glyph, ppem, pixelsPerUnit, runColor, colorAtlas,
                         frame, along, glyph.YOffset, run, runIndex, runTextEnd, i, decoration))
                 {
@@ -2897,7 +2926,7 @@ namespace OneText.UGUI
                 // never invalidates these quads, and never re-bakes a colour
                 // tile, which would otherwise put one tile per fade step into
                 // the atlas.
-                var runColor = run.Style.HasColor ? run.Style.Color : new Color32(255, 255, 255, 255);
+                var runColor = run.Style.ResolveColor();
                 float unitsPerTilePixel = font.UnitsPerEm / (float)runPpem;
                 // A cluster's merged tile must fit the atlas; cap its ink width.
                 float maxClusterUnits = 1000f * unitsPerTilePixel;
@@ -2973,7 +3002,8 @@ namespace OneText.UGUI
                         RunIndex = runIndex,
                         Baseline = frame.Baseline,
                         Style = run.Style,
-                        Decoration = ResolveDecoration(cluster.TextStart, run.Style),
+                        Decoration = ResolveDecoration(cluster.TextStart, run.Style,
+                            run.SyntheticBold),
                         IsPrecise = _precise,
                     });
                 }
@@ -3676,9 +3706,10 @@ namespace OneText.UGUI
         // them to a search engine, and the message below sends them to the
         // member that does the job.
 
-        [System.Obsolete("OneText has no label-wide letter spacing. Use <cspace=0.1em> markup " +
-                         "for a range, or a OneTextStyle asset with Letter Spacing set for the " +
-                         "whole label.", true)]
+        [System.Obsolete("OneText has no letter spacing field on the label. Use <cspace=0.1em> " +
+                         "markup for a range, a OneTextStyle asset with Letter Spacing set for " +
+                         "the whole label, or the font asset's own Letter Spacing when the face " +
+                         "itself is the thing that is too tight.", true)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         public float characterSpacing
         {
@@ -3687,8 +3718,8 @@ namespace OneText.UGUI
         }
 
         [System.Obsolete("OneText has no word spacing. The nearest thing is letter spacing, as " +
-                         "<cspace> markup or a OneTextStyle asset; there is no per-space knob.",
-            true)]
+                         "<cspace> markup, a OneTextStyle asset or the font asset's own Letter " +
+                         "Spacing; there is no per-space knob.", true)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         public float wordSpacing
         {

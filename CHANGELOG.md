@@ -4,6 +4,137 @@
 
 ### Added
 
+- **Onboarding converts a corner of a project, and the rest of the project
+  survives it.** Step 1 was all-or-nothing in practice. The engine had taken
+  `OnlyContainers` since it was written and the Hub drew a per-row **Convert**
+  button, but the honest advice next to it was to convert everything anyway,
+  because a narrow run searched for referring fields only inside its own
+  selection: convert four prefabs, and a field in the four hundred you did not
+  pick that named a label in one of the four was reading None afterwards, with
+  a warning saying so and nothing done about it.
+
+  What changed is which list is narrow. The conversion is the selection; the
+  search for referrers is the whole project, always. Whatever really converted,
+  every prefab, scene and ScriptableObject that pointed into it is opened once
+  afterwards, re-pointed, and written only if a field in it actually moved — so
+  the diff of a narrow run is the containers you picked plus the files that had
+  to be told about them, and nothing else. It runs after a cancelled
+  conversion too, because half a conversion with nothing sent to mend it is the
+  one state this module refuses to leave a project in.
+
+  A selection also now arrives carrying what it is built out of. Picking a
+  prefab that nests another, or a scene that instantiates one, used to convert
+  the nested label from the outside — written as an override on top of an asset
+  still holding the old component, which is how an object comes to carry both
+  the day that asset is converted for itself. The run widens to the nesting
+  closure and says in the report which files it added; the Hub asks for the
+  same closure before its confirmation dialog, so the list you approve is the
+  list that gets written.
+
+  In the Hub, **Where they are** grew a tick per container with **Tick all** and
+  **Tick none**, and Step 1's button follows the ticks — *Convert all 1,204
+  component(s)* with none ticked, *Convert 38 component(s) in 6 container(s)*
+  with some. The report after a partial run says it covered only what was
+  picked, because it did: nothing else was opened to be counted, and re-scanning
+  is how you see what is left.
+
+  Two smaller consequences. The end-of-run warning about having been narrow now
+  fires only when something really was left unmended, and names the count rather
+  than telling you to go and convert the project. And a **scan** no longer pays
+  for the dependency sweep at all — it censuses nothing, so it was buying a list
+  it never read.
+
+- **`<b>` gets a bold, in three tiers, and the last one is a last resort.**
+  Bold used to resolve two ways — a designed face registered on the family, or
+  an instance off a variable font's `wght` axis — and there was no way to
+  register the first. `FontStack.Add(regular, bold, italic, boldItalic)` had
+  existed since it was written, with a comment saying "a designed bold is not
+  an interpolated one", and nothing called it: the label passed nulls, and a
+  font asset had nowhere to put a bold file even if the project shipped one. So
+  on any static single-face font — which is what a TMP project migrating with
+  LiberationSans has — `<b>` did nothing, silently.
+
+  A font asset now has a **Bold** slot, and the label and the world-text
+  component hand it to the stack with the family it belongs to. It is skipped
+  for a variable font on purpose: that font instances its own bold, the stack
+  prefers an explicit face over an instanced one, so a bold assigned there
+  would win by being the worse of two answers. There is no italic slot, and
+  that is not an oversight — a slant is a transform a static face survives being
+  given, and the stack already instances one from `slnt` or `ital`. Weight is
+  the one that cannot be faked honestly, which is why it is the one with a slot.
+
+  When neither tier has anything, the weight is **faked**, by moving the face's
+  own threshold outward — the mechanism the shader already carries as Face
+  Dilate, which is also what TextMesh Pro does and what the migration already
+  reads off TMP materials. It costs no second atlas tile: the dilate rides in a
+  spare byte of the atlas discriminator, so a faked bold and a regular share a
+  tile and differ by a number. It is a drawing trick and it is meant to look
+  like one — a dilate fattens every stroke by the same amount where a designer
+  would have thickened stems and left counters alone, so the counters close up
+  first, and they close up soonest on Hangul and Han. The constant is modest
+  for that reason. `<font>`-overridden runs are exempt: the author named a file.
+
+- **Five tags TextMesh Pro text actually contains: `<sup>`, `<sub>`,
+  `<alpha>`, `<mspace>`, `<noparse>` and `<br>`.** The migration report used to
+  name twenty-four tags OneText would print rather than obey, and the list was
+  sorted by how hard they are rather than by whether anybody writes them.
+  Sorted the other way, six rose to the top and the rest can wait: `<rotate>`
+  is not why projects stay on TMP.
+
+  Two of them cost nothing at all, because the state was already there.
+  `<sup>` and `<sub>` are `SizeScale` and `BaselineShiftEm` — the fields behind
+  `<size>` and `<voffset>` — set together, with TMP's own default constants, so
+  they compose: a superscript inside a `<size=200%>` is half of *that*, not
+  half of the label. The lift is stated in the size the text had *before* it
+  shrank, which is not free: a baseline shift resolves against the size of the
+  run holding it, and a half-size run written the offset straight in buys half
+  the raise — a superscript sitting visibly too low. `<noparse>` and `<br>`
+  never reach the style at all;
+  they are settled in the parse loop, which is the only thing that can obey an
+  instruction about how to read what comes next.
+
+  `<alpha=#80>` gets a field rather than the alpha channel of the colour,
+  because it is the tag that says nothing about hue: folding it in would mean
+  either setting `HasColor` — which paints the run black, the colour an unset
+  `Color` happens to be — or reading an alpha out of a colour nobody wrote. It
+  resolves over whatever the colour turns out to be, and rides the same channel
+  the label's own colour is multiplied into, so a typewriter reveal built out
+  of `<alpha=#00>` costs a re-parse and no re-bake. Two hex digits only: a
+  parser that also took `0.5` would read a migrated tag one way and a
+  hand-written one another.
+
+  `<mspace>` is the one with real work in it, and it goes exactly where
+  tracking goes — an extra on the shaper's advance, applied identically in the
+  measuring pass and the shaping pass, because a wrapper that measures one
+  width and a renderer that draws another accepts a line as fitting and then
+  draws it wider than the box. The glyph is centred in the cell it was given;
+  a `1` against the left of a digit-wide box is the thing people notice, and
+  columns of digits that stop being ragged is the whole reason the tag exists.
+  Asian spacing does not apply inside a monospaced run: a cell whose width the
+  author named is not a width to take a fraction of.
+
+  Nothing costs anything when unused. An unrecognised tag was already parsed in
+  full and then rejected, so recognising one is a `case`; and the two new style
+  fields only split a run where they appear. The migration lint stops naming
+  all six.
+
+- **A TextMesh Pro scene built to fail, for trying the migration against.**
+  *Tools > OneText > Dev > Build TMP Torture Scene*, in the same
+  tests-only assembly as the proof generators. It writes a scene, two prefabs,
+  four material presets, a font asset with its source cut and two small scripts
+  into `Assets/OneTextTmpTorture`, and converts none of them — the point is to
+  press Scan yourself and read what comes back.
+
+  Every label in it exists because it is the one that makes some rule fire.
+  Measured on the fixture it builds: 46 components, and eleven distinct rules —
+  `unsupported-tag`, `alignment-approximated`, `overflow-approximated`,
+  `margin-lost`, `line-spacing-approximated`, `font-style`, `material-effect`,
+  `font-source-missing`, `font-default`, `reference-would-break` and
+  `cross-container-reference`. The scripts are generated into the project
+  rather than shipped in the package, because a MonoBehaviour compiled into an
+  editor-only assembly is one Unity will not put on a GameObject — which means
+  the first run writes them and the second, after the reload, builds the scene.
+
 - **`OneTextLabel.Decoration`: the whole-label outline, shadow and glow as
   component state, which is what survives a Localize String Event.** The
   inspector's decoration table used to write itself into the text as tags
@@ -116,6 +247,31 @@
   `using` rewrite, because the new enums live under the names TMP used.
 
 ### Added
+
+- **A font that ships too tight is fixed once, on the font.** Some faces come
+  with tracking that reads wrong at the sizes a game uses them at, and until
+  now there was nothing to do about it but wrap every string in
+  `<cspace>` — including the strings that arrive from a localization table with
+  nowhere to put a tag.
+
+  A font asset now carries a **Letter spacing** of its own, in ems, applied
+  wherever that face is used and nothing more specific has an opinion. It is on
+  the font rather than on the label for a reason that only shows up in mixed
+  text: spacing set label-wide is applied to every face on the line, so a
+  correction meant for the Latin font also spreads the CJK fallback that drew
+  the middle of the sentence. This travels with the face through the font
+  stack, so a run that falls back keeps the fallback's spacing, and a bold or
+  an instanced weight of the same family keeps the family's. It also cannot be
+  forgotten on the next label somebody makes, which the alternative — one style
+  asset per problem font, dragged onto each label by hand — cannot promise.
+
+  Precedence, tightest first: `<cspace>` markup, a named style, the label's
+  base style, then the face. Every level can say zero and mean it: spacing is
+  carried with a flag rather than inferred from a non-zero number, so
+  `<cspace=0>` is an instruction to draw at the face's own spacing and not an
+  absence of one. Style assets gained `SetLetterSpacing` to go with the rest of
+  the runtime theming API, and editing a font asset now rebuilds the labels
+  drawing with it instead of waiting for a domain reload.
 
 - **A font asset has an inspector, and its two confusing fields stop being text
   boxes.** Unity was drawing the three serialized fields it could see, and two
@@ -350,6 +506,24 @@
   every click in the window. They ask the search index for a count now.
 
 ### Fixed
+
+- **A style asset's Letter Spacing never reached the label.** The field was on
+  the asset, the inspector drew it, and the compile error on TMP's
+  `characterSpacing` named it as the way to space a whole label. It did
+  nothing. Only `<style=…>` markup folded a style's spacing into the text; the
+  label's own Style slot was read field by field for size, line spacing,
+  colour, font and variations, and letter spacing was not one of them. Plain
+  text made it worse: a label with no markup passes no spans at all, so even
+  the one path that worked had nothing to fold spacing into.
+
+  Whole-label spacing is a layout setting now, alongside font size and line
+  spacing, which is the channel plain text, markup and the mesh component all
+  come through. That last one is a gain in itself: `OneTextMesh` has no style
+  asset, and until now had no way to be spaced at all.
+
+  This is the redirect that made "OneText declares what it will not fake and
+  points you at what does the job" honest. A compiler error sending an author
+  to a knob that silently no-ops is worse than the field it replaced.
 
 - **Converted text came out fat and unedged: the outline was dropped from
   every label on the desktop SDF shader, and the numbers that survived were in

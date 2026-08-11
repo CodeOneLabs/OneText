@@ -120,6 +120,37 @@ namespace OneText
         /// <summary>Nothing drawn around the glyph: what a plain label carries.</summary>
         public static TextDecoration None => default;
 
+        /// <summary>
+        /// How much thicker a faked bold is drawn than the regular face it is
+        /// faked from.
+        ///
+        /// A designed bold has stems around 1.4 times the regular's, and this
+        /// is nothing like that: the threshold moves by the same amount all the
+        /// way round, so a stem gains twice this while a counter loses twice
+        /// this. Which is the whole argument against faking, and the reason the
+        /// number is modest — enough that <c>&lt;b&gt;</c> is visibly bold,
+        /// short of where Hangul counters start filling in. A project that
+        /// ships the real bold file never sees it.
+        /// </summary>
+        public const float SyntheticBoldDilate = 0.22f;
+
+        /// <summary>
+        /// This decoration, plus the thickening that stands in for a bold face
+        /// nobody has.
+        ///
+        /// Added to whatever face dilate was already asked for rather than
+        /// replacing it, and clamped, because a label styled with a thicker
+        /// face and a span inside it asking for bold have both said something
+        /// and neither is wrong.
+        /// </summary>
+        public TextDecoration WithSyntheticBold()
+        {
+            var result = this;
+            result.Set |= Parts.Face;
+            result.FaceDilate = Mathf.Clamp(FaceDilate + SyntheticBoldDilate, -1f, 1f);
+            return result;
+        }
+
         /// <summary>True if no part is set, or every set part is invisible.</summary>
         public bool IsNone =>
             (!HasOutline || OutlineWidth <= 0f) &&

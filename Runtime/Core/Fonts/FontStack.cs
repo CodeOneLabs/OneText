@@ -62,6 +62,15 @@ namespace OneText
             /// because someone listed the Chinese font first.
             /// </summary>
             public string Language;
+
+            /// <summary>
+            /// Letter spacing this family is drawn with when nothing else has
+            /// an opinion, in ems. Per family and not per label because a face
+            /// that ships too tight is a fact about the face: a run that falls
+            /// back to another family mid-line must not inherit the
+            /// correction, which is exactly what a label-wide value does.
+            /// </summary>
+            public float LetterSpacingEm;
             public readonly FontData[] Explicit = new FontData[4];  // indexed by Face
             public readonly FontData[] Instanced = new FontData[4]; // built from variable axes
             public bool[] Attempted = new bool[4];
@@ -161,13 +170,43 @@ namespace OneText
         /// merely covers the character, which is how a Japanese label gets 直
         /// from the Japanese font with a Chinese font sitting above it.
         /// </summary>
-        public void Add(FontData font, string language)
+        public void Add(FontData font, string language) => Add(font, language, 0f);
+
+        /// <summary>
+        /// A family with the designed bold that goes with it, plus the language
+        /// and spacing the other overload takes.
+        ///
+        /// The bold is a separate file rather than an axis because a static
+        /// font has no axis to move: a project shipping Pretendard.ttf gets its
+        /// bold interpolated and needs nothing here, and one shipping
+        /// NotoSans-Regular.ttf and NotoSans-Bold.ttf has two files and no way
+        /// to say they are the same family until this is filled in.
+        /// </summary>
+        public void Add(FontData regular, FontData bold, string language, float letterSpacingEm)
+        {
+            int before = _entries.Count;
+            Add(regular, bold, null, null);
+            if (_entries.Count <= before) return;
+            var entry = _entries[_entries.Count - 1];
+            entry.Language = language;
+            entry.LetterSpacingEm = letterSpacingEm;
+        }
+
+        /// <summary>
+        /// Same, with the spacing correction this face is drawn with when
+        /// neither markup nor a style nor the label says otherwise. See
+        /// <see cref="LetterSpacingOf"/>.
+        /// </summary>
+        public void Add(FontData font, string language, float letterSpacingEm)
         {
             int before = _entries.Count;
             Add(font, null, null, null);
             // Only if the font was actually accepted: stamping the language on
             // whatever happened to be last would relabel someone else's family.
-            if (_entries.Count > before) _entries[_entries.Count - 1].Language = language;
+            if (_entries.Count <= before) return;
+            var entry = _entries[_entries.Count - 1];
+            entry.Language = language;
+            entry.LetterSpacingEm = letterSpacingEm;
         }
 
         /// <summary>
@@ -323,6 +362,50 @@ namespace OneText
         }
 
         /// <summary>
+        /// Whether this family can produce a bold face at all — a designed one
+        /// from a second file, or an instance off a <c>wght</c> axis.
+        ///
+        /// Asked of the family rather than of the face that came back, because
+        /// bold-italic falls back to whichever half exists: a run that got the
+        /// italic and no bold has to be able to find that out, or it is drawn
+        /// slanted at the regular weight and nobody can see why.
+        ///
+        /// Answering it is as far as this class goes. Faking the weight is the
+        /// caller's decision and the caller's business: a designed or
+        /// interpolated bold is a real face and belongs in the stack, and a
+        /// threshold pushed outward in a shader belongs where the drawing
+        /// happens. Cheap after the first ask per family — <see cref="TryGetStyled"/>
+        /// caches the instance it built and the fact that it could not build one.
+        /// </summary>
+        public bool HasBold(FontData font)
+        {
+            var regular = Family(font);
+            return regular != null && TryGetStyled(regular, Face.Bold, out var bold) &&
+                   bold != regular;
+        }
+
+        /// <summary>
+        /// The regular face of the family a font belongs to, or the font itself
+        /// when it is not one this stack knows.
+        ///
+        /// A resolved font is often a styled face rather than a family's
+        /// regular — the italic instance of a bold-italic run that found only
+        /// the italic — and asking that face whether it has a bold gets the
+        /// wrong answer, because an entry is keyed on its regular.
+        /// </summary>
+        private FontData Family(FontData font)
+        {
+            if (font == null) return null;
+            foreach (var entry in _entries)
+            {
+                if (entry.Regular == font) return entry.Regular;
+                foreach (var face in entry.Explicit) if (face == font) return entry.Regular;
+                foreach (var face in entry.Instanced) if (face == font) return entry.Regular;
+            }
+            return font;
+        }
+
+        /// <summary>
         /// The language tag a font was added under, or null.
         ///
         /// Diagnostics ask this: the Hub's forensics to say which family drew
@@ -340,6 +423,28 @@ namespace OneText
                 foreach (var face in entry.Instanced) if (face == font) return entry.Language;
             }
             return null;
+        }
+
+        /// <summary>
+        /// The spacing correction a face is drawn with, in ems, or 0.
+        ///
+        /// Asked per run rather than per glyph, and answered for the family
+        /// rather than the face: a bold or instanced face is the same design
+        /// with the same metrics problem, so it gets the same correction. A
+        /// face the operating system supplied is in no entry and gets 0, which
+        /// is the right answer — the project never said anything about it.
+        /// </summary>
+        public float LetterSpacingOf(FontData font)
+        {
+            if (font == null) return 0f;
+            foreach (var entry in _entries)
+            {
+                if (entry.LetterSpacingEm == 0f) continue;
+                if (entry.Regular == font) return entry.LetterSpacingEm;
+                foreach (var face in entry.Explicit) if (face == font) return entry.LetterSpacingEm;
+                foreach (var face in entry.Instanced) if (face == font) return entry.LetterSpacingEm;
+            }
+            return 0f;
         }
 
         /// <summary>True if any font in the stack can draw this character.</summary>
