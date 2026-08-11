@@ -165,6 +165,9 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
   .pass { color: var(--green); }
   .wip { color: var(--amber); }
+  /* The one row of the status table that is a door rather than a report. */
+  .playlink { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  .playlink:hover { color: var(--ink); }
   tr:hover td { background: rgba(126,231,180,0.035); }
 
   /* ==== hero: copy on the left, a turning specimen on the right ==== */
@@ -416,7 +419,8 @@
           <b>Free and open source.<br>Because correct text shouldn't cost extra.</b>
         </p>
         <div class="cta">
-          <a class="btn" href="#install" data-i18n="cta.install">Install</a>
+          <a class="btn" href="demo/" data-i18n="cta.demo">See the demo</a>
+          <a class="btn ghost" href="#install" data-i18n="cta.install">Install</a>
           <a class="btn ghost star" href="https://github.com/CodeOneLabs/OneText"
              ><span aria-hidden="true">★</span><span data-i18n="cta.star">Star on GitHub</span
              ><b class="stars" hidden></b></a>
@@ -809,7 +813,7 @@ label.RestartReveal();</pre>
       <tr><td data-i18n="sta.a3">Windows · macOS · Linux · Android · iOS natives</td><td class="pass" data-i18n="sta.shipped">shipped</td></tr>
       <tr><td data-i18n="sta.a4">Verified end to end on a real device</td><td class="wip" data-i18n="sta.macos">macOS only so far</td></tr>
       <tr><td data-i18n="sta.a5">Web native (HarfBuzz on wasm), verified in WebGL2 and WebGPU players</td><td class="pass" data-i18n="sta.shipped">shipped</td></tr>
-      <tr><td data-i18n="sta.a6">Playable browser demo</td><td class="wip" data-i18n="sta.soon">coming up</td></tr>
+      <tr><td data-i18n="sta.a6">Playable browser demo</td><td class="pass"><a class="playlink" href="demo/" data-i18n="sta.play">play it</a></td></tr>
       <tr><td data-i18n="sta.a7">Outline, shadow, glow</td><td class="pass" data-i18n="sta.done">done</td></tr>
       <tr><td data-i18n="sta.a8">MSDF, sharp corners at large sizes</td><td class="pass" data-i18n="sta.done">done</td></tr>
       <tr><td data-i18n="sta.a9">Ruby (furigana), vertical writing</td><td class="pass" data-i18n="sta.done">done</td></tr>
@@ -867,6 +871,7 @@ label.RestartReveal();</pre>
     'hero.h1': '모든 언어를,<br><span>드로우 콜 하나로</span>.',
     'hero.sub': '태국어는 쌓이고, 아랍어는 이어지고, 이모지는 온전합니다.<br>모든 문자를 제대로 그리는 Unity uGUI 텍스트 엔진. 드로우 콜은 하나.<b>무료입니다. ' +
       '오픈 소스입니다.<br>제대로 된 텍스트에 값을 더 치를 이유는 없으니까요.</b>',
+    'cta.demo': '데모 보기',
     'cta.install': '설치하기',
     'cta.star': 'GitHub에 별 주기',
     'cta.meta': '무료는 진짜 무료 &middot; 프로 버전 없음 &middot; 유료 모듈 없음',
@@ -1011,6 +1016,7 @@ label.RestartReveal();</pre>
     'sta.shipped': '출시',
     'sta.macos': '아직 macOS만',
     'sta.soon': '준비 중',
+    'sta.play': '해 보기',
     'sta.unbuilt': '미구현',
     'sta.note': '<b>요구 사항.</b> Unity 2022.3 LTS 이상. HarfBuzz와 FreeType 바이너리는 패키지에 함께 들어 있습니다. MIT 라이선스. ' +
       '네이티브 의존성도 모두 관대한 라이선스입니다. 태국어·라오어·크메르어·버마어의 전체 ICU 단어 분리 사전은 패키지 샘플로 임포트됩니다. 그 언어를 쓰지 않는 ' +
