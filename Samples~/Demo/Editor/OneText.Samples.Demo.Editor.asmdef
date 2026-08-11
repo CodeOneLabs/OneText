@@ -1,0 +1,21 @@
+{
+    "name": "OneText.Samples.Demo.Editor",
+    "rootNamespace": "OneText.Samples.Editor",
+    "references": [
+        "OneText",
+        "OneText.UGUI",
+        "OneText.Samples.Demo",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
