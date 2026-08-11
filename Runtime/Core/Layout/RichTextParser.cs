@@ -232,6 +232,44 @@ namespace OneText
                     continue;
                 }
 
+                // <noparse> is settled here rather than in ApplyOpen, because it
+                // is not a style: it is an instruction about how to read what
+                // comes next, and the only place that can obey it is the loop
+                // doing the reading. Everything up to </noparse> is copied out
+                // character for character, tags and all, which is the whole
+                // point — it is what a chat line or a player's name has to be
+                // shown through if a user typing <size=500> is not to resize the
+                // window.
+                if (!closing && argument == null && name == "noparse")
+                {
+                    result.HasMarkup = true;
+                    int literalStart = after;
+                    int end = source.IndexOf("</noparse>", literalStart,
+                        StringComparison.OrdinalIgnoreCase);
+
+                    // Unterminated, so the rest of the text is literal. The
+                    // house rule everywhere else is that unclosed markup runs to
+                    // the end, and this is that rule with nothing to close.
+                    if (end < 0) end = source.Length;
+                    output.Append(source, literalStart, end - literalStart);
+                    i = end < source.Length ? end + "</noparse>".Length : source.Length;
+                    continue;
+                }
+
+                // <br> writes a character and changes no style, so it belongs
+                // here beside <noparse> rather than in the style switch. It
+                // exists for the text a project does not get to type: a
+                // localisation table cell, a CSV column, an XML attribute —
+                // places where a literal newline is somebody else's escaping
+                // problem and a tag is not.
+                if (!closing && argument == null && name == "br")
+                {
+                    result.HasMarkup = true;
+                    output.Append('\n');
+                    i = after;
+                    continue;
+                }
+
                 var next = style;
                 int sprite = -1;
                 string josa = null;
@@ -430,7 +468,50 @@ namespace OneText
 
                 case "cspace":
                     if (!TryParseEms(argument, out style.LetterSpacingEm)) return false;
+                    // Flagged, not inferred from the number: <cspace=0> is an
+                    // author pulling a run back to the face's own metrics over
+                    // a label, a style asset or a font that widened it, and
+                    // reading 0 as "said nothing" would hand it straight back.
+                    style.Flags |= TextStyle.Flag.HasLetterSpacing;
                     break;
+
+                case "mspace":
+                    if (!TryParseEms(argument, out style.MonoAdvanceEm)) return false;
+                    // A cell of zero or less is not a cell. Unlike <cspace=0>,
+                    // which is a real request, <mspace=0> asks for every glyph
+                    // to be drawn on top of the last, and the house rule for a
+                    // tag that cannot mean what it says is that it stays visible.
+                    if (style.MonoAdvanceEm <= 0f) return false;
+                    style.Flags |= TextStyle.Flag.HasMonoAdvance;
+                    break;
+
+                // Superscript and subscript, which are not a new kind of state:
+                // they are the size and the baseline shift this parser already
+                // had, set together. The numbers are TMP's own defaults —
+                // OneText cannot read the face's superscriptOffset here because
+                // the parser has no font, and a constant that matches what
+                // everybody's text already looks like beats a lookup that
+                // arrives one layer too late.
+                case "sup":
+                    if (argument != null) return false;
+                    style.SizeScale = current.SizeScale * SuperscriptSize;
+                    style.BaselineShiftEm = Lift(current.BaselineShiftEm, SuperscriptOffsetEm,
+                        SuperscriptSize);
+                    break;
+
+                case "sub":
+                    if (argument != null) return false;
+                    style.SizeScale = current.SizeScale * SubscriptSize;
+                    style.BaselineShiftEm = Lift(current.BaselineShiftEm, SubscriptOffsetEm,
+                        SubscriptSize);
+                    break;
+
+                case "alpha":
+                {
+                    if (!TryParseAlpha(argument, out style.AlphaOverride)) return false;
+                    style.Flags |= TextStyle.Flag.HasAlpha;
+                    break;
+                }
 
                 case "align":
                 {
@@ -664,6 +745,59 @@ namespace OneText
                     CultureInfo.InvariantCulture, out float absolute) || absolute <= 0f) return false;
             style.SizeAbsolute = absolute;
             return true;
+        }
+
+        /// <summary>
+        /// TextMesh Pro's own superscript and subscript defaults, in ems.
+        ///
+        /// TMP reads these off the face — <c>superscriptOffset</c>,
+        /// <c>subscriptSize</c> and their pair — and a face may disagree with
+        /// them. Nothing here can ask: the parser is handed a string and no
+        /// font, deliberately, because it runs once per text change while the
+        /// font can change under it without the text changing at all. So the
+        /// defaults are the numbers, and text migrated from TMP lands where it
+        /// was for every face that never overrode them, which is nearly all.
+        /// </summary>
+        private const float SuperscriptSize = 0.5f;
+        private const float SuperscriptOffsetEm = 0.35f;
+        private const float SubscriptSize = 0.5f;
+        private const float SubscriptOffsetEm = -0.25f;
+
+        /// <summary>
+        /// The baseline shift a shrunk run needs to sit where the offset says,
+        /// in the run's own ems.
+        ///
+        /// <see cref="TextStyle.BaselineShiftEm"/> is resolved against the size
+        /// of the run holding it, and a superscript run is half size, so
+        /// writing the offset in unchanged buys half the lift — which reads,
+        /// correctly, as a superscript sitting too low. Dividing by the shrink
+        /// says the offset in the size the text had before it shrank, which is
+        /// what "a third of an em above the baseline" is meant to be measured
+        /// against, and is where TextMesh Pro puts it.
+        ///
+        /// The shift already in force is carried through the same division, so
+        /// a <c>&lt;sup&gt;</c> inside a <c>&lt;voffset&gt;</c> keeps the raise
+        /// it inherited instead of halving it.
+        /// </summary>
+        private static float Lift(float inherited, float offsetEm, float size) =>
+            (inherited + offsetEm) / size;
+
+        /// <summary>
+        /// <c>&lt;alpha=#80&gt;</c>: two hex digits, and nothing else.
+        ///
+        /// Deliberately not a percentage or a 0–1 float, both of which would be
+        /// reasonable designs and neither of which is what any text arriving
+        /// from TextMesh Pro says. A tag that silently accepted
+        /// <c>&lt;alpha=0.5&gt;</c> would read a migrated <c>&lt;alpha=#80&gt;</c>
+        /// one way and a hand-written one another.
+        /// </summary>
+        private static bool TryParseAlpha(string argument, out byte alpha)
+        {
+            alpha = 255;
+            if (string.IsNullOrEmpty(argument) || argument[0] != '#') return false;
+            if (argument.Length != 3) return false;
+            return byte.TryParse(argument.Substring(1), NumberStyles.HexNumber,
+                CultureInfo.InvariantCulture, out alpha);
         }
 
         private static bool TryParseEms(string argument, out float ems)

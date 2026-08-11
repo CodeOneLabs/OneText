@@ -220,10 +220,24 @@ namespace OneText.Tests
         public void TagLint_FindsWhatOneTextWillPrintLiterally()
         {
             var found = MigrationMapping.LintTags(
-                "x<sup>2</sup> and <noparse>raw</noparse> with <margin=2em>space");
-            CollectionAssert.Contains(found, "sup");
-            CollectionAssert.Contains(found, "noparse");
+                "x<indent=10%>2</indent> and <gradient=\"g\">raw</gradient> with " +
+                "<margin=2em>space");
+            CollectionAssert.Contains(found, "indent");
+            CollectionAssert.Contains(found, "gradient");
             CollectionAssert.Contains(found, "margin");
+        }
+
+        [Test]
+        public void TagLint_StopsReportingTheTagsThatNowWork()
+        {
+            // These five were on the list until the parser learned them, and a
+            // lint that goes on naming them is a migration report telling
+            // somebody to go and rewrite text that is about to work.
+            var found = MigrationMapping.LintTags(
+                "x<sup>2</sup> H<sub>2</sub>O <alpha=#80>faded <mspace=0.6em>111</mspace> " +
+                "<noparse><b>raw</b></noparse> one<br>two");
+            CollectionAssert.IsEmpty(found,
+                $"the lint named tags OneText now obeys: {string.Join(", ", found)}");
         }
 
         [Test]
@@ -262,7 +276,7 @@ namespace OneText.Tests
             Assert.IsEmpty(MigrationMapping.LintTags("<unterminated"));
             Assert.IsEmpty(MigrationMapping.LintTags("<>"));
             // A tag name is reported once however often it appears.
-            Assert.AreEqual(1, MigrationMapping.LintTags("<sup>a</sup><sup>b</sup>").Count);
+            Assert.AreEqual(1, MigrationMapping.LintTags("<pos=1>a</pos><pos=2>b</pos>").Count);
         }
 
         [Test]

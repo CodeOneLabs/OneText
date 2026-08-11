@@ -190,8 +190,11 @@ namespace OneText
                 style.Color = Color;
                 style.Flags |= TextStyle.Flag.HasColor;
             }
-            if (Sets(Fields.LetterSpacing) && style.LetterSpacingEm == 0f)
+            if (Sets(Fields.LetterSpacing) && !style.HasLetterSpacing)
+            {
                 style.LetterSpacingEm = LetterSpacingEm;
+                style.Flags |= TextStyle.Flag.HasLetterSpacing;
+            }
             if (Bold) style.Flags |= TextStyle.Flag.Bold;
             if (Italic) style.Flags |= TextStyle.Flag.Italic;
             return style;
@@ -222,6 +225,20 @@ namespace OneText
         {
             _font = font;
             _overrides |= Fields.Font;
+            NotifyChanged();
+        }
+
+        /// <summary>
+        /// Sets letter spacing in ems and tells every label. Not clamped away
+        /// from zero the way size is: 0 here is the style saying "this text is
+        /// drawn at the face's own spacing", which is a different instruction
+        /// from saying nothing, and it is how a style pulls text back from a
+        /// font that carries a correction of its own.
+        /// </summary>
+        public void SetLetterSpacing(float ems)
+        {
+            _letterSpacingEm = ems;
+            _overrides |= Fields.LetterSpacing;
             NotifyChanged();
         }
 

@@ -181,10 +181,10 @@ namespace OneText.Editor
         /// </summary>
         public static readonly string[] UnsupportedTags =
         {
-            "sup", "sub", "noparse", "alpha", "indent", "line-height", "line-indent",
+            "indent", "line-height", "line-indent",
             "margin", "margin-left", "margin-right", "pos", "space", "rotate", "width",
-            "gradient", "uppercase", "lowercase", "smallcaps", "allcaps", "br", "page",
-            "material", "mspace", "quad",
+            "gradient", "uppercase", "lowercase", "smallcaps", "allcaps", "page",
+            "material", "quad",
         };
 
         /// <summary>

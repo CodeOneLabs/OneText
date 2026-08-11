@@ -34,8 +34,45 @@ namespace OneText
         /// <summary>Baseline offset in ems, positive up (<c>&lt;voffset&gt;</c>).</summary>
         public float BaselineShiftEm;
 
-        /// <summary>Extra letter spacing in ems (<c>&lt;cspace&gt;</c>).</summary>
+        /// <summary>
+        /// Extra letter spacing in ems (<c>&lt;cspace&gt;</c>); only used when
+        /// <see cref="HasLetterSpacing"/>.
+        ///
+        /// Unlike <see cref="SizeAbsolute"/> this cannot carry its own absence
+        /// in the value, which is why it has a flag and size does not. Size 0
+        /// is nonsense and can safely mean "inherit"; spacing 0 is what an
+        /// author asks for to pull a run back to the face's own metrics, and
+        /// they have to be able to ask for it over a label, a style or a font
+        /// that says otherwise.
+        /// </summary>
         public float LetterSpacingEm;
+
+        /// <summary>
+        /// The advance every glyph in this run is given, in ems
+        /// (<c>&lt;mspace&gt;</c>); only used when <see cref="HasMonoAdvance"/>.
+        ///
+        /// Not a correction like <see cref="LetterSpacingEm"/> but a
+        /// replacement: a monospaced run is one where the author has decided
+        /// what a cell is worth and every character gets that, which is what
+        /// makes a score or a timer stop jittering as its digits change. The
+        /// glyph is centred in the cell it was given, because a 1 sitting hard
+        /// against the left of a digit-wide box is the thing people notice.
+        /// </summary>
+        public float MonoAdvanceEm;
+
+        /// <summary>
+        /// Alpha to draw this run at, 0–255; only used when
+        /// <see cref="HasAlpha"/>.
+        ///
+        /// Its own field rather than the alpha channel of <see cref="Color"/>,
+        /// because <c>&lt;alpha&gt;</c> is the tag that says nothing about hue.
+        /// Folding it into the colour would mean either setting
+        /// <see cref="HasColor"/> — which paints the run black, the colour an
+        /// unset <see cref="Color"/> happens to be — or reading an alpha out of
+        /// a colour nobody wrote. It is resolved over whatever the colour turns
+        /// out to be, by <see cref="ResolveColor"/>.
+        /// </summary>
+        public byte AlphaOverride;
 
         /// <summary>Index into the label's named-style table, or -1.</summary>
         public int NamedStyle;
@@ -57,6 +94,9 @@ namespace OneText
             HasMark = 1 << 6,
             /// <summary>Set on the placeholder character standing in for a sprite.</summary>
             Sprite = 1 << 7,
+            HasLetterSpacing = 1 << 8,
+            HasMonoAdvance = 1 << 9,
+            HasAlpha = 1 << 10,
         }
 
         public Flag Flags;
@@ -72,6 +112,9 @@ namespace OneText
         public bool HasColor => (Flags & Flag.HasColor) != 0;
         public bool HasMark => (Flags & Flag.HasMark) != 0;
         public bool IsSprite => (Flags & Flag.Sprite) != 0;
+        public bool HasLetterSpacing => (Flags & Flag.HasLetterSpacing) != 0;
+        public bool HasMonoAdvance => (Flags & Flag.HasMonoAdvance) != 0;
+        public bool HasAlpha => (Flags & Flag.HasAlpha) != 0;
 
         /// <summary>Neutral style: inherit everything from the label.</summary>
         public static TextStyle Default => new TextStyle
@@ -89,6 +132,25 @@ namespace OneText
             return SizeScale > 0f ? size * SizeScale : size;
         }
 
+        /// <summary>
+        /// The colour this run's quads are baked with: what markup said, or
+        /// white when it said nothing, with <c>&lt;alpha&gt;</c> laid over
+        /// either.
+        ///
+        /// White rather than the label's colour on purpose — the label's is
+        /// multiplied in at emit, so tinting or fading a label never
+        /// invalidates a baked quad. <c>&lt;alpha&gt;</c> rides along in the
+        /// same channel and gets the same benefit, which is what lets a
+        /// typewriter reveal built out of <c>&lt;alpha=#00&gt;</c> cost nothing
+        /// but a re-parse.
+        /// </summary>
+        public Color32 ResolveColor()
+        {
+            var color = HasColor ? Color : new Color32(255, 255, 255, 255);
+            if (HasAlpha) color.a = AlphaOverride;
+            return color;
+        }
+
         public bool Equals(TextStyle other) =>
             SizeAbsolute.Equals(other.SizeAbsolute) &&
             SizeScale.Equals(other.SizeScale) &&
@@ -96,6 +158,8 @@ namespace OneText
             ColorEquals(MarkColor, other.MarkColor) &&
             BaselineShiftEm.Equals(other.BaselineShiftEm) &&
             LetterSpacingEm.Equals(other.LetterSpacingEm) &&
+            MonoAdvanceEm.Equals(other.MonoAdvanceEm) &&
+            AlphaOverride == other.AlphaOverride &&
             NamedStyle == other.NamedStyle &&
             FontOverride == other.FontOverride &&
             Flags == other.Flags &&
@@ -114,6 +178,8 @@ namespace OneText
                 hash = hash * 397 ^ SizeScale.GetHashCode();
                 hash = hash * 397 ^ (Color.r << 24 | Color.g << 16 | Color.b << 8 | Color.a);
                 hash = hash * 397 ^ (int)Flags;
+                hash = hash * 397 ^ AlphaOverride;
+                hash = hash * 397 ^ MonoAdvanceEm.GetHashCode();
                 hash = hash * 397 ^ NamedStyle;
                 hash = hash * 397 ^ FontOverride;
                 hash = hash * 397 ^ Sprite;
@@ -132,6 +198,9 @@ namespace OneText
             if (HasColor) parts.Append($"#{Color.r:X2}{Color.g:X2}{Color.b:X2}{Color.a:X2} ");
             if (SizeAbsolute > 0f) parts.Append($"size={SizeAbsolute} ");
             if (SizeScale != 1f) parts.Append($"x{SizeScale} ");
+            if (HasLetterSpacing) parts.Append($"cspace={LetterSpacingEm} ");
+            if (HasMonoAdvance) parts.Append($"mspace={MonoAdvanceEm} ");
+            if (HasAlpha) parts.Append($"alpha=#{AlphaOverride:X2} ");
             if (NamedStyle >= 0) parts.Append($"style#{NamedStyle} ");
             if (Sprite >= 0) parts.Append($"sprite#{Sprite} ");
             return parts.Length == 0 ? "default" : parts.ToString().TrimEnd();

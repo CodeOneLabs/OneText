@@ -521,15 +521,24 @@ namespace OneText
                 var settings = OneTextSettings.Instance;
                 var main = _font != null ? _font
                     : settings != null ? settings.DefaultFont : null;
-                if (main != null) _fonts.Add(main.GetVariant(_variations), main.Language);
+                if (main != null)
+                {
+                    // Same bargain as the canvas label: the designed bold comes
+                    // in with its family, and a variable font is left to its own
+                    // wght axis.
+                    _fonts.Add(main.GetVariant(_variations), main.BoldFace,
+                        main.Language, main.LetterSpacingEm);
+                }
 
                 foreach (var asset in _fallbackFonts)
-                    if (asset != null) _fonts.Add(asset.Font, asset.Language);
+                    if (asset != null)
+                        _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
 
                 if (settings != null)
                 {
                     foreach (var asset in settings.FallbackFonts)
-                        if (asset != null) _fonts.Add(asset.Font, asset.Language);
+                        if (asset != null)
+                            _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
                 }
             }
         }
@@ -844,7 +853,7 @@ namespace OneText
                 // <see cref="TextQuality"/>.
                 float runPixelsPerEm =
                     runSize / PointsToUnits * TextQualityScale.ForWorld(_quality);
-                var runColor = run.Style.HasColor ? run.Style.Color : new Color32(255, 255, 255, 255);
+                var runColor = run.Style.ResolveColor();
                 var color = Multiply(runColor, tint);
                 var frame = FrameOf(run, vertical, scale);
 

@@ -241,7 +241,11 @@ namespace OneText.Tests
         public void UnsupportedMarkup_IsNamedBeforeItIsPrinted()
         {
             var go = NewObject("Tagged", typeof(RectTransform), typeof(CanvasRenderer));
-            go.AddComponent<Text>().text = "H<sub>2</sub>O and <material=1>stuff";
+            // <sub> used to be here and is not any more: the parser learned it,
+            // so naming it would be the report sending somebody to rewrite text
+            // that works. <rotate> and <material> are still genuinely printed.
+            go.AddComponent<Text>().text =
+                "H<sub>2</sub>O <rotate=8>turned</rotate> and <material=1>stuff";
 
             var report = ComponentMigration.ScanInPlace(Roots(go), "(test)");
 
@@ -250,8 +254,10 @@ namespace OneText.Tests
             {
                 if (finding.Rule != "unsupported-tag") continue;
                 Assert.AreEqual(DoctorSeverity.Warning, finding.Severity);
-                StringAssert.Contains("sub", finding.Message);
+                StringAssert.Contains("rotate", finding.Message);
                 StringAssert.Contains("material", finding.Message);
+                StringAssert.DoesNotContain("sub", finding.Message,
+                    "a tag OneText now obeys is still being reported as lost");
             }
         }
 
@@ -671,6 +677,137 @@ namespace OneText.Tests
                 var button = AssetDatabase.LoadAssetAtPath<GameObject>(host).GetComponent<Button>();
                 Assert.IsInstanceOf<OneTextLabel>(button.targetGraphic,
                     "the second run undid what the first one mended");
+            }
+            finally { DropFolder(); }
+        }
+
+        // ----------------------------------------------- converting a corner
+
+        // The tests above hand every file in the chain to the same run, which is
+        // what the module used to require of anybody who wanted their references
+        // to survive. These hand it one file and leave the referrer out, which is
+        // what a person actually does when they migrate a project a corner at a
+        // time — and which used to be the shape that quietly emptied fields.
+
+        [Test]
+        public void APrefabLeftOutOfTheRun_IsStillPointedAtWhatReplacedItsTarget()
+        {
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string host = Host(leaf);
+                AssetDatabase.Refresh();
+
+                // Only the leaf. The host is not selected, not scanned, and not
+                // converted — it is simply a file in the project that happens to
+                // name a component inside the one being converted.
+                var report = ComponentMigration.Apply(Only(leaf));
+
+                var button = AssetDatabase.LoadAssetAtPath<GameObject>(host).GetComponent<Button>();
+                Assert.IsFalse(button.targetGraphic == null,
+                    "the field reads None: converting one prefab emptied a field in another that " +
+                    "was never part of the run, which is the whole reason partial migrations were " +
+                    "not worth offering");
+                Assert.IsInstanceOf<OneTextLabel>(button.targetGraphic,
+                    "the field holds something other than the component that replaced its target");
+                Assert.AreEqual("Label", button.targetGraphic.gameObject.name,
+                    "the field was pointed at the wrong object");
+                Assert.Greater(report.Relinked, 0, "nothing was counted as re-linked");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void ARunOverOneContainer_SaysNothingAboutHavingBeenNarrow_WhenItMendedEverything()
+        {
+            // The warning that used to end every narrow run — "convert the whole
+            // project and every one of those is found" — was true and is not any
+            // more. A warning that fires when nothing is wrong is how the real
+            // ones stop being read.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                Host(leaf);
+                AssetDatabase.Refresh();
+
+                var report = ComponentMigration.Apply(Only(leaf));
+
+                foreach (var finding in report.Findings)
+                {
+                    if (finding.Rule != ContainerReferences.Rule) continue;
+                    Assert.AreNotEqual(DoctorSeverity.Error, finding.Severity,
+                        "a reference was left broken: " + finding.Message);
+                    Assert.AreNotEqual(DoctorSeverity.Warning, finding.Severity,
+                        "the run mended every reference into it and then warned that it had not: " +
+                        finding.Message);
+                }
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void APrefabLeftOutOfTheRun_ThatPointsAtNothingWhichChanged_IsNotWritten()
+        {
+            // The mend pass is bounded by what actually converted. A project's
+            // other four hundred prefabs must not turn up in the diff of a run
+            // that touched one, or "convert a corner" costs the same review as
+            // converting everything.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string other = Leaf("Other");
+                AssetDatabase.Refresh();
+
+                var before = System.IO.File.GetLastWriteTimeUtc(System.IO.Path.GetFullPath(other));
+                ComponentMigration.Apply(Only(leaf));
+
+                Assert.IsNull(
+                    AssetDatabase.LoadAssetAtPath<GameObject>(other)
+                        .GetComponentInChildren<OneTextLabel>(true),
+                    "a prefab that was not selected was converted anyway");
+                Assert.AreEqual(before,
+                    System.IO.File.GetLastWriteTimeUtc(System.IO.Path.GetFullPath(other)),
+                    "a prefab that pointed at nothing this run changed was written anyway");
+            }
+            finally { DropFolder(); }
+        }
+
+        [Test]
+        public void SelectingOnlyTheHost_ConvertsTheLeafItIsBuiltOutOf_AndNotTwice()
+        {
+            // Picking the outer prefab and not the inner one is the obvious thing
+            // to do and used to be the wrong one: the label lives in the leaf's
+            // file, converting it from inside the host writes an override, and
+            // the day the leaf is converted for itself the object carries both
+            // components. The run widens the selection instead.
+            MakeFolder();
+            try
+            {
+                string leaf = Leaf("Leaf");
+                string host = Host(leaf);
+                AssetDatabase.Refresh();
+
+                var first = ComponentMigration.Apply(Only(host));
+                Assert.Greater(CountOf(first, "nested-selection"), 0,
+                    "the leaf was pulled into the run without the report saying so");
+
+                Assert.IsNotNull(
+                    AssetDatabase.LoadAssetAtPath<GameObject>(leaf)
+                        .GetComponentInChildren<OneTextLabel>(true),
+                    "the label was converted somewhere other than the file it lives in");
+
+                var second = ComponentMigration.Apply(Only(leaf));
+                Assert.AreEqual(0, second.Converted, "the second run had something left to swap");
+
+                var root = AssetDatabase.LoadAssetAtPath<GameObject>(host);
+                Assert.AreEqual(1, root.GetComponentsInChildren<OneTextLabel>(true).Length,
+                    "the host ended up holding the label twice");
+                Assert.IsInstanceOf<OneTextLabel>(root.GetComponent<Button>().targetGraphic,
+                    "the field that named the label was left holding " +
+                    (root.GetComponent<Button>().targetGraphic == null ? "None" : "the wrong thing"));
             }
             finally { DropFolder(); }
         }

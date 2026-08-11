@@ -16,6 +16,7 @@ namespace OneText.Tests
     {
         private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
         private const string VariableFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
+        private const string ArabicFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
 
         private static FontData LoadFont(string packagePath) =>
             FontData.Load(File.ReadAllBytes(Path.GetFullPath(packagePath)));
@@ -461,6 +462,112 @@ namespace OneText.Tests
                     "a line was wrapped as fitting and then measured wider than the box");
         }
 
+        /// <summary>
+        /// Lays out with a whole-label letter spacing, the way a label whose
+        /// base style sets one asks for it: through the settings, not through
+        /// a span, because plain text has no spans to put it in.
+        /// </summary>
+        private static TextLayoutResult LayoutSpaced(FontStack fonts, RichTextResult markup, float ems)
+        {
+            using var engine = new TextLayoutEngine();
+            var settings = TextLayoutSettings.Default(fonts, 32f);
+            settings.Spans = markup.HasMarkup ? markup.Spans : null;
+            settings.LetterSpacingEm = ems;
+            settings.HasLetterSpacing = true;
+            var result = new TextLayoutResult();
+            engine.Layout(markup.Text, settings, result);
+            return result;
+        }
+
+        [Test]
+        public void LetterSpacing_FromTheLabel_ReachesTextWithNoMarkupInIt()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            // The path this used to miss entirely. Plain text carries no
+            // spans, so a spacing folded into a parsed style reached nothing:
+            // the label with a style asset set to widen it drew at the face's
+            // own spacing and said nothing about why.
+            var plain = Layout(fonts, Parse("Hamburgefonstiv"));
+            var spaced = LayoutSpaced(fonts, Parse("Hamburgefonstiv"), 0.1f);
+
+            Assert.Greater(spaced.Width, plain.Width + 1f,
+                "a whole-label letter spacing never reached text with no markup in it");
+
+            // And again through itemization rather than the plain-text fast
+            // path, which is a different place the item is built.
+            var styledPlain = Layout(fonts, Parse("Hamburge<b>fonstiv</b>"));
+            var styledSpaced = LayoutSpaced(fonts, Parse("Hamburge<b>fonstiv</b>"), 0.1f);
+            Assert.Greater(styledSpaced.Width, styledPlain.Width + 1f,
+                "a whole-label letter spacing did not reach a run that markup had split");
+        }
+
+        [Test]
+        public void LetterSpacing_FromMarkup_WinsEvenWhenItAsksForZero()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            float plain = Layout(fonts, Parse("AAAA")).Width;
+            float spaced = LayoutSpaced(fonts, Parse("AAAA"), 0.2f).Width;
+            float pulledBack = LayoutSpaced(fonts, Parse("<cspace=0>AAAA</cspace>"), 0.2f).Width;
+
+            Assert.Greater(spaced, plain + 1f, "the label's spacing did not apply");
+            Assert.AreEqual(plain, pulledBack, 0.5f,
+                "<cspace=0> must be an instruction to draw at the face's own spacing, not an " +
+                "absence of one: read as 'said nothing', the label's spacing is handed straight " +
+                "back and there is no way to ask for zero");
+        }
+
+        [Test]
+        public void LetterSpacing_FromTheFace_DoesNotSpreadToTheFallback()
+        {
+            using var latin = LoadFont(LatinFontPath);
+            using var arabic = LoadFont(ArabicFontPath);
+
+            // Three behs: the Latin face at the head of the stack has no glyph
+            // for them, so every one of them is drawn by the fallback.
+            const string text = "ببب";
+
+            using var plain = new FontStack();
+            plain.Add(latin, null);
+            plain.Add(arabic, null);
+
+            using var latinWidened = new FontStack();
+            latinWidened.Add(latin, null, 0.2f);
+            latinWidened.Add(arabic, null);
+
+            using var arabicWidened = new FontStack();
+            arabicWidened.Add(latin, null);
+            arabicWidened.Add(arabic, null, 0.2f);
+
+            float baseline = Layout(plain, Parse(text)).Width;
+            Assert.Greater(baseline, 0f);
+
+            // This is the whole reason the correction lives on the face rather
+            // than on the label: a label-wide value is applied to every face on
+            // the line, so a Latin font's correction lands on the CJK or Arabic
+            // fallback that drew the middle of the sentence.
+            Assert.AreEqual(baseline, Layout(latinWidened, Parse(text)).Width, 0.5f,
+                "a correction meant for one face widened text a different face drew");
+            Assert.Greater(Layout(arabicWidened, Parse(text)).Width, baseline + 1f,
+                "the face that actually drew the text did not get its own correction");
+        }
+
+        [Test]
+        public void LetterSpacing_FromTheFace_CoversTheFamilysStyledFaces()
+        {
+            using var variable = LoadFont(VariableFontPath);
+            using var fonts = new FontStack();
+            fonts.Add(variable, null, 0.05f);
+
+            Assert.IsTrue(fonts.TryGetStyled(variable, FontStack.Face.Bold, out var bold));
+            Assert.AreEqual(0.05f, fonts.LetterSpacingOf(bold), 1e-6f,
+                "an instanced bold is the same design with the same metrics, so <b> must not " +
+                "quietly drop the correction the family was given");
+        }
+
         [Test]
         public void BaselineShift_RaisesTheRunAndTheLine()
         {
@@ -518,6 +625,350 @@ namespace OneText.Tests
             // font has; a character it does not have is the system-fallback
             // tier's question, and it now answers it.
             Assert.AreSame(font, fonts.Resolve('O', bold: true, italic: false));
+        }
+
+        // ------------------------------------------------- where bold comes from
+
+        // Three tiers, in the order the engine tries them: a designed bold from
+        // a second file, an instance off a variable font's wght axis, and — only
+        // when neither exists — a faked weight. The last one is a drawing trick
+        // and the tests are here to hold the line at which it starts: a project
+        // that has a real bold must never get the trick instead.
+
+        [Test]
+        public void ADesignedBold_IsUsedForBoldRuns_AndIsNotSynthetic()
+        {
+            using var regular = LoadFont(LatinFontPath);
+            using var bold = LoadFont("Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf");
+            var fonts = new FontStack();
+            fonts.Add(regular, bold, null, null);
+            using (fonts)
+            {
+                Assert.AreSame(bold, fonts.Resolve('O', bold: true, italic: false),
+                    "a family with a designed bold drew its bold run with the regular");
+                Assert.IsTrue(fonts.HasBold(regular),
+                    "the family has a bold and says it has none, so every bold run in it " +
+                    "would be faked over the top of a font that was right there");
+
+                // Asked through a styled face rather than the regular, which is
+                // what a bold-italic run that found only the italic hands over.
+                Assert.IsTrue(fonts.HasBold(bold),
+                    "asking a family's own bold face whether the family has a bold said no");
+            }
+        }
+
+        [Test]
+        public void AStaticFontWithNoBold_SaysSo()
+        {
+            using var font = LoadFont("Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf");
+            if (font.IsVariable) Assert.Ignore("test font is variable");
+            using var fonts = FontStack.Single(font);
+
+            Assert.IsFalse(fonts.HasBold(font),
+                "a static font with no bold face reported one, so nothing will fake the weight " +
+                "and <b> stays silently invisible — which is the bug this is here for");
+        }
+
+        [Test]
+        public void AVariableFont_HasABoldWithoutASecondFile()
+        {
+            using var font = LoadFont(VariableFontPath);
+            if (!font.IsVariable) Assert.Ignore("test font is not variable");
+            using var fonts = FontStack.Single(font);
+
+            Assert.IsTrue(fonts.HasBold(font),
+                "a variable font's wght axis is a real bold and must be preferred to a faked one");
+        }
+
+        [Test]
+        public void BoldOnAFontWithNoBold_MarksTheRunForFaking()
+        {
+            using var font = LoadFont("Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf");
+            if (font.IsVariable) Assert.Ignore("test font is variable");
+            using var fonts = FontStack.Single(font);
+
+            // 'O' rather than 'A': this font's cmap holds only "OQSI".
+            var result = Layout(fonts, Parse("<b>O</b>"));
+            Assert.Greater(result.Runs.Count, 0, "nothing was laid out");
+            foreach (var run in result.Runs)
+                Assert.IsTrue(run.SyntheticBold,
+                    "a bold run on a font with no bold was not marked for faking, so it draws " +
+                    "at the regular weight and the author cannot see why");
+        }
+
+        [Test]
+        public void BoldOnAVariableFont_IsNotFaked()
+        {
+            using var font = LoadFont(VariableFontPath);
+            if (!font.IsVariable) Assert.Ignore("test font is not variable");
+            using var fonts = FontStack.Single(font);
+
+            var result = Layout(fonts, Parse("<b>A</b>"));
+            foreach (var run in result.Runs)
+                Assert.IsFalse(run.SyntheticBold,
+                    "a real interpolated bold was thickened on top of being bold");
+        }
+
+        [Test]
+        public void TextThatNeverAskedForBold_IsNeverFaked()
+        {
+            using var font = LoadFont("Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf");
+            using var fonts = FontStack.Single(font);
+
+            var result = Layout(fonts, Parse("O"));
+            foreach (var run in result.Runs)
+                Assert.IsFalse(run.SyntheticBold, "plain text was thickened");
+        }
+
+        [Test]
+        public void SyntheticBold_ThickensTheFace_AndKeepsWhatWasAlreadyThere()
+        {
+            var plain = TextDecoration.None.WithSyntheticBold();
+            Assert.IsTrue(plain.HasFace);
+            Assert.AreEqual(TextDecoration.SyntheticBoldDilate, plain.FaceDilate, 0.0001f);
+            Assert.IsFalse(plain.IsNone, "a faked bold that resolves to 'no decoration' draws thin");
+
+            // A label already styled with a thicker face and a span inside it
+            // asking for bold have both said something, and neither is wrong.
+            var thickened = new TextDecoration { Set = TextDecoration.Parts.Face, FaceDilate = 0.1f };
+            Assert.AreEqual(0.1f + TextDecoration.SyntheticBoldDilate,
+                thickened.WithSyntheticBold().FaceDilate, 0.0001f);
+        }
+
+        // ------------------------------------------- the tags TMP text brings
+
+        // Five tags that were printed rather than obeyed until now, chosen
+        // because they are the ones a real TextMesh Pro project actually has in
+        // it. Each is asserted twice: that a well-formed use changes exactly
+        // what it says, and that a malformed one leaves the text alone — the
+        // second being the rule this whole parser is built around.
+
+        [Test]
+        public void Superscript_IsHalfSizeAndLifted_AndClosesBackToWhereItWas()
+        {
+            var result = Parse("x<sup>2</sup>y");
+            Assert.AreEqual("x2y", result.Text, "the tags are still in the text");
+
+            var plain = result.StyleAt(0);
+            var lifted = result.StyleAt(1);
+            var after = result.StyleAt(2);
+
+            Assert.AreEqual(0.5f, lifted.SizeScale, 0.0001f, "superscript is not half size");
+            Assert.Greater(lifted.BaselineShiftEm, 0f, "superscript did not go up");
+            Assert.AreEqual(plain, after, "</sup> did not put the style back");
+        }
+
+        [Test]
+        public void Superscript_IsLiftedByTheSizeItHadBeforeItShrank()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            // The bug this catches, and it is invisible in the parser: a
+            // baseline shift is resolved against the size of the run holding it,
+            // and a superscript run is half size, so an offset written in
+            // unchanged buys half the lift. It reads as a superscript sitting
+            // too low, which is exactly what it is.
+            const float size = 32f;
+            var result = Layout(fonts, Parse("x<sup>2</sup>"), size);
+
+            float lifted = 0f;
+            foreach (var run in result.Runs)
+                if (run.BaselineShift > lifted) lifted = run.BaselineShift;
+
+            Assert.AreEqual(0.35f * size, lifted, 0.01f,
+                "the superscript is not raised by a third of the size it was written at");
+        }
+
+        [Test]
+        public void Superscript_InsideAVoffset_KeepsTheRaiseItInherited()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            const float size = 32f;
+            var plain = Layout(fonts, Parse("<voffset=0.5>x</voffset>"), size);
+            var nested = Layout(fonts, Parse("<voffset=0.5>x<sup>2</sup></voffset>"), size);
+
+            float outer = plain.Runs[0].BaselineShift;
+            float inner = 0f;
+            foreach (var run in nested.Runs)
+                if (run.BaselineShift > inner) inner = run.BaselineShift;
+
+            Assert.AreEqual(outer + 0.35f * size, inner, 0.01f,
+                "the superscript halved the raise it was nested in instead of adding to it");
+        }
+
+        [Test]
+        public void Subscript_IsHalfSizeAndDropped()
+        {
+            var style = Parse("H<sub>2</sub>O").StyleAt(1);
+            Assert.AreEqual(0.5f, style.SizeScale, 0.0001f);
+            Assert.Less(style.BaselineShiftEm, 0f, "subscript did not go down");
+        }
+
+        [Test]
+        public void SuperscriptInsideASize_MultipliesRatherThanReplaces()
+        {
+            // The composition that makes this worth having as two existing
+            // fields rather than a flag: a superscript inside a <size=200%> is
+            // half of that, not half of the label.
+            var style = Parse("<size=200%>x<sup>2</sup></size>").StyleAt(1);
+            Assert.AreEqual(1f, style.SizeScale, 0.0001f,
+                "the superscript threw away the size it was nested in");
+        }
+
+        [Test]
+        public void SuperscriptWithAnArgument_IsNotATag()
+        {
+            Assert.AreEqual("<sup=3>x", Parse("<sup=3>x").Text,
+                "a tag that takes no argument was given one and obeyed it anyway");
+        }
+
+        [Test]
+        public void Alpha_SetsTheAlphaAndLeavesTheHueAlone()
+        {
+            var style = Parse("<alpha=#80>faded").StyleAt(0);
+            Assert.IsTrue(style.HasAlpha);
+            Assert.AreEqual(128, style.AlphaOverride);
+            Assert.IsFalse(style.HasColor, "<alpha> invented a colour nobody wrote");
+
+            // The whole point of the separate field: resolving has to give white
+            // at that alpha, not black. Black is what an unset Color happens to
+            // be, and folding alpha into it is how a fade turns into a blackout.
+            var resolved = style.ResolveColor();
+            Assert.AreEqual(255, resolved.r);
+            Assert.AreEqual(255, resolved.g);
+            Assert.AreEqual(255, resolved.b);
+            Assert.AreEqual(128, resolved.a);
+        }
+
+        [Test]
+        public void Alpha_OverAColour_KeepsTheColour()
+        {
+            var resolved = Parse("<color=#FF0000><alpha=#40>x").StyleAt(0).ResolveColor();
+            Assert.AreEqual(255, resolved.r);
+            Assert.AreEqual(0, resolved.g);
+            Assert.AreEqual(64, resolved.a);
+        }
+
+        [Test]
+        public void Alpha_WithoutHexDigits_IsNotATag()
+        {
+            // TMP writes <alpha=#80> and nothing else, and a parser that also
+            // took 0.5 would read a migrated tag one way and a hand-written one
+            // another.
+            Assert.AreEqual("<alpha=0.5>x", Parse("<alpha=0.5>x").Text);
+            Assert.AreEqual("<alpha=80>x", Parse("<alpha=80>x").Text);
+            Assert.AreEqual("<alpha=#8>x", Parse("<alpha=#8>x").Text);
+        }
+
+        [Test]
+        public void Mspace_SetsTheCellWidth_AndZeroIsNotACell()
+        {
+            var style = Parse("<mspace=0.6em>123").StyleAt(0);
+            Assert.IsTrue(style.HasMonoAdvance);
+            Assert.AreEqual(0.6f, style.MonoAdvanceEm, 0.0001f);
+
+            Assert.AreEqual("<mspace=0>123", Parse("<mspace=0>123").Text,
+                "a cell of zero would draw every glyph on top of the last");
+            Assert.AreEqual("<mspace=-1em>x", Parse("<mspace=-1em>x").Text);
+        }
+
+        [Test]
+        public void Noparse_ShowsItsContentsExactly()
+        {
+            var result = Parse("a<noparse><b>not bold</b></noparse>z");
+            Assert.AreEqual("a<b>not bold</b>z", result.Text);
+            Assert.IsFalse(result.StyleAt(1).Bold, "the tag inside noparse was obeyed");
+            Assert.IsTrue(result.HasMarkup);
+        }
+
+        [Test]
+        public void Noparse_Unterminated_SwallowsTheRest()
+        {
+            // The same house rule as every other unclosed tag: it runs to the
+            // end. Which is also the safe direction — the alternative is markup
+            // in a player's name taking effect after all.
+            Assert.AreEqual("<size=500>huge", Parse("<noparse><size=500>huge").Text);
+        }
+
+        [Test]
+        public void Br_IsALineBreak()
+        {
+            var result = Parse("one<br>two");
+            Assert.AreEqual("one\ntwo", result.Text);
+            Assert.IsTrue(result.HasMarkup);
+            Assert.AreEqual(1, result.Spans.Count, "a line break split the run it was inside");
+        }
+
+        [Test]
+        public void Br_WithAnArgument_IsNotATag()
+        {
+            Assert.AreEqual("<br=2>x", Parse("<br=2>x").Text);
+        }
+
+        [Test]
+        public void Mspace_GivesEveryGlyphTheSameCell()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            // 'i' and 'W' are the widest disagreement a Latin face has to offer,
+            // and the reason anybody reaches for this tag: a score that goes
+            // from 11 to 18 must not move everything beside it.
+            var result = Layout(fonts, Parse("<mspace=0.6em>iWiW</mspace>"), 32f);
+
+            float first = -1f;
+            foreach (var run in result.Runs)
+            {
+                float scale = run.FontSize / run.Font.UnitsPerEm;
+                for (int i = run.GlyphStart; i < run.GlyphStart + run.GlyphCount; i++)
+                {
+                    float advance = result.Glyphs[i].XAdvance * scale;
+                    if (first < 0f) first = advance;
+                    Assert.AreEqual(first, advance, 0.02f,
+                        "a monospaced run drew cells of different widths");
+                }
+            }
+
+            Assert.Greater(first, 0f, "the run had no glyphs to measure");
+            Assert.AreEqual(0.6f * 32f, first, 0.05f,
+                "the cell is not the width the tag asked for");
+        }
+
+        [Test]
+        public void Mspace_CentresTheGlyphInItsCell()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            var plain = Layout(fonts, Parse("i"), 32f);
+            var mono = Layout(fonts, Parse("<mspace=0.6em>i</mspace>"), 32f);
+
+            // A narrow glyph left where it was sits hard against the left of a
+            // wide cell, which is exactly the ragged look the tag is reached for
+            // to fix.
+            Assert.Greater(mono.Glyphs[0].XOffset, plain.Glyphs[0].XOffset,
+                "the glyph was given a wider cell and left at the left edge of it");
+        }
+
+        [Test]
+        public void Mspace_MeasuresTheSameWayItWraps()
+        {
+            using var font = LoadFont(LatinFontPath);
+            using var fonts = FontStack.Single(font);
+
+            // The failure tracking taught this engine once already, arriving by
+            // a second door: the measuring pass and the shaping pass have to
+            // agree about the cell, or a line is accepted as fitting and then
+            // drawn wider than the box that accepted it.
+            const float box = 260f;
+            var result = Layout(fonts,
+                Parse("<mspace=0.55em>the quick brown fox jumps over it</mspace>"), 24f, box);
+            foreach (var line in result.Lines)
+                Assert.LessOrEqual(line.Width, box + 0.5f,
+                    "a monospaced line was wrapped as fitting and then measured wider");
         }
     }
 }

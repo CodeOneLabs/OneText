@@ -56,7 +56,32 @@ namespace OneText.UGUI
             if (s_subscribed) return;
             s_subscribed = true;
             OneTextStyle.Changed += OnChanged;
+#if UNITY_EDITOR
+            // A font asset carries authored data of its own — the language tag
+            // and the spacing correction — and editing either has to reach the
+            // labels drawing with it. Which labels those are is not a question
+            // worth asking: the font stack is rebuilt from assets, so every
+            // registered user rebuilds. This is an inspector edit, not a
+            // frame, and it is editor-only for the same reason the event is.
+            OneFontAsset.Changed += _ => OnAnyFontChanged();
+#endif
         }
+
+#if UNITY_EDITOR
+        private static void OnAnyFontChanged()
+        {
+            for (int i = s_users.Count - 1; i >= 0; i--)
+            {
+                var user = s_users[i];
+                if (user is Object obj && obj == null)
+                {
+                    s_users.RemoveAt(i);
+                    continue;
+                }
+                user.OnStyleChanged();
+            }
+        }
+#endif
 
         private static void OnChanged(OneTextStyle style)
         {

@@ -42,6 +42,19 @@ namespace OneText
             public float FontSize;     // the style's size, resolved against the label's
 
             /// <summary>
+            /// Letter spacing for this run in ems, resolved once against the
+            /// label's and the face's, exactly as <see cref="FontSize"/> is.
+            ///
+            /// Resolved here rather than read out of the style at use because
+            /// the answer depends on the font as well as the style, and
+            /// because both the measuring pass and the emitting pass have to
+            /// arrive at the identical number: a wrapper that measures one
+            /// spacing and a renderer that draws another accepts a line as
+            /// fitting and then draws it wider than the box.
+            /// </summary>
+            public float LetterSpacingEm;
+
+            /// <summary>
             /// Turned ninety degrees clockwise inside a vertical column;
             /// always false horizontally. Orientation joins font, level and
             /// style as a reason to end an item for the same reason they are
@@ -414,6 +427,7 @@ namespace OneText
 
                 float scale = item.FontSize / item.Font.UnitsPerEm;
                 int trackingUnits = TrackingUnits(item);
+                int monoUnits = MonoUnits(item);
                 // The same spacing the shaping pass will apply, applied here
                 // too. Tracking already learned this lesson: a wrapper that
                 // measures one width and a renderer that draws another accepts
@@ -422,8 +436,16 @@ namespace OneText
                 {
                     var glyph = _measured[g];
                     int cluster = Math.Min(Math.Max(glyph.Cluster, item.Start), item.End - 1);
-                    int extra = TrackingFor(glyph, trackingUnits)
-                        + AsianSpacingFor(text, settings, item, glyph);
+                    // Asian spacing is a fraction of the shaper's advance, and a
+                    // monospaced run does not have one to take a fraction of —
+                    // every cell is the width the author named. Skipping it here
+                    // is also what keeps the two passes in step, because both
+                    // then work from the raw advance and nothing has to be
+                    // un-applied to find it again.
+                    int extra = monoUnits > 0
+                        ? MonoFor(glyph, monoUnits) + TrackingFor(glyph, trackingUnits)
+                        : TrackingFor(glyph, trackingUnits)
+                          + AsianSpacingFor(text, settings, item, glyph);
                     _advances[cluster] += (glyph.XAdvance + extra) * scale;
 
                     // Both edges are costed for every character, because which
@@ -573,6 +595,12 @@ namespace OneText
                     End = end,
                     Style = TextStyle.Default,
                     FontSize = settings.FontSize,
+                    // Plain text through the fast path is exactly the label
+                    // that cannot say <cspace> and has no spans to carry a
+                    // style, so it is the one that most needs the label's and
+                    // the font's answer to reach it.
+                    LetterSpacingEm = ResolveLetterSpacing(settings, TextStyle.Default,
+                        settings.Fonts.Primary),
                 });
                 MeasureItems(text, settings);
                 return 0;
@@ -655,6 +683,13 @@ namespace OneText
                             {
                                 Font = current, Level = run.Level, Start = itemStart, End = i,
                                 Style = currentStyle, FontSize = currentSize,
+                                // Resolved per item rather than per cluster
+                                // because it costs a walk of the stack, and
+                                // needs no break condition of its own: it can
+                                // only change when the font or the style
+                                // changes, and both already end an item.
+                                LetterSpacingEm =
+                                    ResolveLetterSpacing(settings, currentStyle, current),
                                 Rotated = currentRotated,
                             });
                             current = font;
@@ -671,7 +706,9 @@ namespace OneText
                     _items.Add(new Item
                     {
                         Font = current, Level = run.Level, Start = itemStart, End = runEnd,
-                        Style = currentStyle, FontSize = currentSize, Rotated = currentRotated,
+                        Style = currentStyle, FontSize = currentSize,
+                        LetterSpacingEm = ResolveLetterSpacing(settings, currentStyle, current),
+                        Rotated = currentRotated,
                     });
             }
 
@@ -934,6 +971,25 @@ namespace OneText
             return settings.Fonts.Resolve(codepoint, style.Bold, style.Italic, presentation,
                 settings.Language);
         }
+
+        /// <summary>
+        /// Whether this run has to have its weight faked: markup asked for bold
+        /// and the family it landed on has no bold to give, designed or
+        /// interpolated.
+        ///
+        /// Asked once per run at shaping time rather than carried through the
+        /// item loop, because it can only change when the font or the style
+        /// changes and both of those already end an item — so the answer is
+        /// constant over a run by construction, and the stack caches it per
+        /// family.
+        ///
+        /// An explicit <c>&lt;font&gt;</c> is exempt. The author named a file;
+        /// second-guessing whether it was the bold one, and thickening it if
+        /// this code decides it was not, is not a service anybody asked for.
+        /// </summary>
+        private static bool NeedsSyntheticBold(in TextLayoutSettings settings, in Item item) =>
+            item.Style.Bold && item.Style.FontOverride < 0 && !item.Style.IsSprite &&
+            settings.Fonts != null && !settings.Fonts.HasBold(item.Font);
 
         /// <summary>
         /// Reads a variation selector following this character.
@@ -1496,6 +1552,7 @@ namespace OneText
                     FontSize = item.FontSize,
                     Style = item.Style,
                     BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
+                SyntheticBold = NeedsSyntheticBold(settings, item),
                     Rotated = item.Rotated,
                 };
             }
@@ -1537,18 +1594,29 @@ namespace OneText
             // takes that fraction of the shaper's advance, so this pass has to
             // take it before letter spacing has inflated the number, or a label
             // with both wraps by one width and draws at another.
-            ApplyAsianSpacing(text, settings, result, item, glyphStart, lineStart, lineEnd);
+            int monoUnits = MonoUnits(item);
+            if (monoUnits <= 0)
+                ApplyAsianSpacing(text, settings, result, item, glyphStart, lineStart, lineEnd);
 
             int trackingUnits = TrackingUnits(item);
-            if (trackingUnits != 0f)
+            if (trackingUnits != 0 || monoUnits > 0)
             {
                 for (int i = glyphStart; i < result.Glyphs.Count; i++)
                 {
                     var glyph = result.Glyphs[i];
-                    int extra = TrackingFor(glyph, trackingUnits);
+                    int mono = MonoFor(glyph, monoUnits);
+                    int extra = mono + TrackingFor(glyph, trackingUnits);
                     if (extra == 0) continue;
+
+                    // The cell is wider than the glyph nearly always, and a
+                    // glyph left where it was sits hard against the left of it.
+                    // Half the difference centres it, which is what a column of
+                    // digits has to do to stop reading as ragged — the whole
+                    // reason anybody reaches for <mspace>. Only the offset
+                    // moves; the advance is the cell, the same in both passes.
                     result.Glyphs[i] = new ShapedGlyph(glyph.GlyphId, glyph.Cluster,
-                        glyph.XAdvance + extra, glyph.YAdvance, glyph.XOffset, glyph.YOffset);
+                        glyph.XAdvance + extra, glyph.YAdvance,
+                        glyph.XOffset + mono / 2, glyph.YOffset);
                 }
             }
 
@@ -1573,6 +1641,7 @@ namespace OneText
                 FontSize = item.FontSize,
                 Style = item.Style,
                 BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
+                SyntheticBold = NeedsSyntheticBold(settings, item),
                 Rotated = item.Rotated,
             };
         }
@@ -1770,9 +1839,47 @@ namespace OneText
 
         /// <summary>Letter spacing for a run, in the font's design units.</summary>
         private static int TrackingUnits(in Item item) =>
-            item.Style.LetterSpacingEm == 0f
+            item.LetterSpacingEm == 0f
                 ? 0
-                : (int)Math.Round(item.Style.LetterSpacingEm * item.Font.UnitsPerEm);
+                : (int)Math.Round(item.LetterSpacingEm * item.Font.UnitsPerEm);
+
+        /// <summary>
+        /// The cell width a monospaced run gives every glyph, in the font's
+        /// design units, or 0 for a run that is not monospaced.
+        /// </summary>
+        private static int MonoUnits(in Item item) =>
+            item.Style.HasMonoAdvance
+                ? (int)Math.Round(item.Style.MonoAdvanceEm * item.Font.UnitsPerEm)
+                : 0;
+
+        /// <summary>
+        /// What has to be added to a glyph's own advance to make it the cell.
+        ///
+        /// Zero-advance glyphs are left alone for the same reason tracking
+        /// leaves them alone: they are marks sitting on the glyph before them,
+        /// and giving a combining accent a cell of its own would push it a
+        /// square to the right of the letter it belongs to.
+        /// </summary>
+        private static int MonoFor(in ShapedGlyph glyph, int monoUnits) =>
+            monoUnits <= 0 || glyph.XAdvance == 0 ? 0 : monoUnits - glyph.XAdvance;
+
+        /// <summary>
+        /// The letter spacing a run is drawn with, in ems: the tightest scope
+        /// that has an opinion wins.
+        ///
+        /// Markup and styles say so through a flag rather than through a
+        /// non-zero value, so <c>&lt;cspace=0&gt;</c> can turn off a
+        /// correction the label or the font asked for. The face is asked last
+        /// and per face, which is what keeps a correction meant for one family
+        /// off the fallback that draws the rest of the line.
+        /// </summary>
+        private static float ResolveLetterSpacing(in TextLayoutSettings settings,
+            in TextStyle style, FontData font)
+        {
+            if (style.HasLetterSpacing) return style.LetterSpacingEm;
+            if (settings.HasLetterSpacing) return settings.LetterSpacingEm;
+            return settings.Fonts?.LetterSpacingOf(font) ?? 0f;
+        }
 
         /// <summary>
         /// How much spacing a glyph gets. Zero-advance glyphs are marks sitting

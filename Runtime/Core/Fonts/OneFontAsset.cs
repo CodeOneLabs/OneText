@@ -115,6 +115,67 @@ namespace OneText
             "font gets Japanese shapes for 直 even when a Chinese font sits above it in the chain.")]
         [SerializeField] private string _language;
 
+        [Tooltip("Spacing correction for this face, in ems, for a face whose own metrics are " +
+            "too tight or too loose: 0.02 opens it up, -0.01 pulls it in. It applies wherever " +
+            "the font is used and nothing more specific has an opinion, so a face that ships " +
+            "tight is fixed once here instead of on every label.")]
+        [SerializeField] private float _letterSpacingEm;
+
+        [Tooltip("The designed bold of this family, as its own asset, for a font that is not " +
+            "variable. A variable font needs nothing here: <b> moves its wght axis and gets a " +
+            "real interpolated bold. A static font has no axis to move, so without this <b> has " +
+            "nothing to reach for and the weight is faked by thickening the face — which closes " +
+            "up counters, and closes them up soonest on Hangul and Han.")]
+        [SerializeField] private OneFontAsset _bold;
+
+        /// <summary>
+        /// The designed bold that goes with this face, or null.
+        ///
+        /// Only meaningful for a static font. A variable one instances its own
+        /// bold off the <c>wght</c> axis, which is a real face by every measure
+        /// that matters and costs no second file, so filling this in for one
+        /// would be adding a font nobody needs — the stack prefers an explicit
+        /// face over an instanced one, so it would win, and it would win by
+        /// being a worse answer.
+        ///
+        /// Italic has no counterpart here on purpose. A slant is a transform a
+        /// static face survives being given, and the stack already instances one
+        /// from <c>slnt</c> or <c>ital</c> where a font offers it; weight is the
+        /// one a shader cannot honestly fake, which is why it is the one with a
+        /// slot.
+        /// </summary>
+        public OneFontAsset Bold
+        {
+            get => _bold;
+            set => _bold = value;
+        }
+
+        /// <summary>
+        /// The bold face to hand a font stack for this family, or null when
+        /// there is none to hand it.
+        ///
+        /// Null for a variable font even when <see cref="Bold"/> is filled in:
+        /// a variable font instances its own bold off the <c>wght</c> axis, and
+        /// a stack prefers an explicit face over an instanced one — so a bold
+        /// assigned here would win, and would win by being the worse of the two
+        /// answers. Null also for a bold that is the same file as the regular,
+        /// which is what a mis-assignment looks like from here.
+        /// </summary>
+        public FontData BoldFace
+        {
+            get
+            {
+                // Only ever one level. The bold of a bold is not a thing, and
+                // an asset pointed at itself is a mis-assignment rather than a
+                // cycle to be walked.
+                if (_bold == null || _bold == this) return null;
+                var regular = Font;
+                if (regular == null || regular.IsVariable) return null;
+                var bold = _bold.Font;
+                return bold != null && bold.IsValid && bold != regular ? bold : null;
+            }
+        }
+
         private FontData _font;
         private Dictionary<string, FontData> _variants;
 
@@ -140,6 +201,38 @@ namespace OneText
         /// quietly wrong in a way no test and no screenshot review catches.
         /// </summary>
         public string Language { get => _language; set => _language = value; }
+
+        /// <summary>
+        /// Letter spacing this face is drawn with, in ems, when neither markup
+        /// nor a style asset nor the label says otherwise.
+        ///
+        /// Some faces ship with tracking that reads too tight, and the fix
+        /// belongs to the face rather than to the labels: a correction set on
+        /// a label — or on a style asset, which is the same scope — is applied
+        /// to every face on the line, so a Latin font's correction lands on
+        /// the CJK fallback that drew the middle of the sentence. This travels
+        /// with the font instead, through the entry a
+        /// <see cref="FontStack"/> holds, and it is the loosest opinion there
+        /// is: <c>&lt;cspace&gt;</c>, a named style and the label's base style
+        /// all win over it, including when what they ask for is 0.
+        /// </summary>
+        public float LetterSpacingEm { get => _letterSpacingEm; set => _letterSpacingEm = value; }
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// Raised when a font asset is edited in the inspector, so labels
+        /// already on screen rebuild instead of waiting for a domain reload.
+        ///
+        /// Editor-only, because at runtime nobody edits the asset: the fields
+        /// on it are authored data, unlike a style asset's, which is a theming
+        /// API and raises its change event in both. A knob that appears to do
+        /// nothing until the editor happens to reload is the failure this
+        /// whole field exists to fix, so it is worth the one subscription.
+        /// </summary>
+        public static event System.Action<OneFontAsset> Changed;
+
+        private void OnValidate() => Changed?.Invoke(this);
+#endif
 
         /// <summary>
         /// True while this asset stands for a font whose file nobody has

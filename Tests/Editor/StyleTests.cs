@@ -232,6 +232,81 @@ namespace OneText.Tests
                 "editing the style did not update the label");
         }
 
+        [Test]
+        public void LabelFollowsItsStyle_ForLetterSpacing()
+        {
+            var label = NewLabel("Hamburgefonstiv");
+            float plain = label.preferredWidth;
+            Assert.Greater(plain, 0f);
+
+            var style = NewStyle("wide");
+            style.SetLetterSpacing(0.2f);
+            label.Style = style;
+
+            // The field was on the asset, the inspector drew it, and the
+            // compiler error on characterSpacing sent people to it. Nothing
+            // downstream of the label ever asked for it, so the answer to "why
+            // is my text still tight" was that the documented way of doing it
+            // did nothing at all.
+            Assert.Greater(label.preferredWidth, plain + 1f,
+                "the label did not take its letter spacing from the style it was given");
+
+            style.SetLetterSpacing(0f);
+            Assert.AreEqual(plain, label.preferredWidth, 0.5f,
+                "a style setting spacing to zero must mean zero, not 'no opinion'");
+        }
+
+        [Test]
+        public void LabelFollowsItsFont_ForLetterSpacing_AndTheStyleStillWins()
+        {
+            var font = ScriptableObject.CreateInstance<OneFontAsset>();
+            font.name = "Tight";
+            font.Initialize(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)), "Tight", LatinFontPath);
+            _created.Add(font);
+
+            // Through the asset rather than through SetFont bytes: the bytes
+            // override wins the stack outright, and it is the asset that
+            // carries the correction.
+            var label = NewLabel("Hamburgefonstiv", font);
+            float plain = label.preferredWidth;
+            Assert.Greater(plain, 0f);
+
+            // A correction set once on the face, reaching a label nobody
+            // styled: this is the case a style asset cannot cover, because
+            // nothing makes the next label anybody creates reference it.
+            font.LetterSpacingEm = 0.2f;
+            label.Font = font;
+            float widened = label.preferredWidth;
+            Assert.Greater(widened, plain + 1f,
+                "the face's own spacing correction never reached the label drawing with it");
+
+            // And it is the loosest opinion there is: anything more specific
+            // overrides it, including back to nothing.
+            var style = NewStyle("as-drawn");
+            style.SetLetterSpacing(0f);
+            label.Style = style;
+            Assert.AreEqual(plain, label.preferredWidth, 0.5f,
+                "a style asking for the face's own spacing lost to the face's correction");
+        }
+
+        private OneTextLabel NewLabel(string text, OneFontAsset font = null)
+        {
+            var canvas = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
+            _created.Add(canvas);
+            var labelObject = new GameObject("Label",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(OneTextLabel));
+            _created.Add(labelObject);
+            labelObject.transform.SetParent(canvas.transform, false);
+
+            var label = labelObject.GetComponent<OneTextLabel>();
+            label.rectTransform.sizeDelta = new Vector2(600f, 200f);
+            if (font != null) label.Font = font;
+            else label.SetFont(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)));
+            label.Text = text;
+            label.FontSize = 16f;
+            return label;
+        }
+
         private sealed class Probe : StyleInvalidation.IStyleUser
         {
             private readonly OneTextStyle _style;
