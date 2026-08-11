@@ -5,6 +5,7 @@ using OneText.UGUI;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 
 namespace OneText.Tests.Play
 {
@@ -54,6 +55,31 @@ namespace OneText.Tests.Play
         {
             foreach (char c in text)
                 field.ProcessKeyEvent(Key(KeyCode.None, c));
+        }
+
+        /// <summary>
+        /// A press on the label at <paramref name="index"/>, in the screen
+        /// coordinates and with the camera the EventSystem would have handed
+        /// the field.
+        ///
+        /// The raycast module is filled in because <c>pressEventCamera</c> is
+        /// derived from it, and the field hit-tests the press with that camera;
+        /// left null, a canvas rendering through one is read as though it were
+        /// an overlay and the point lands somewhere else entirely.
+        /// </summary>
+        private PointerEventData PressAt(OneTextLabel label, int index)
+        {
+            var raycaster = _harness.Canvas.GetComponent<GraphicRaycaster>();
+            if (raycaster == null) raycaster = _harness.Canvas.gameObject.AddComponent<GraphicRaycaster>();
+
+            var local = label.GetCaretRect(index, 2f).center;
+            var world = label.transform.TransformPoint(new Vector3(local.x, local.y, 0f));
+            var screen = RectTransformUtility.WorldToScreenPoint(_harness.Camera, world);
+            return new PointerEventData(_events)
+            {
+                position = screen,
+                pointerPressRaycast = new RaycastResult { module = raycaster },
+            };
         }
 
         [UnityTest]
@@ -157,6 +183,67 @@ namespace OneText.Tests.Play
 
             Assert.AreEqual("new", field.text);
             Assert.AreEqual("new", label.Text);
+            PlayHarness.ExpectNoErrors();
+        }
+
+        [UnityTest]
+        public IEnumerator Focus_Taken_Through_The_EventSystem_Selects_The_Value()
+        {
+            var field = _harness.InputField("old value", out var label);
+            yield return PlayHarness.Frame();
+
+            // The path a Tab press takes: the EventSystem selects the object
+            // and the field hears about it through OnSelect, rather than
+            // through anything calling ActivateInputField.
+            _events.SetSelectedGameObject(field.gameObject);
+            yield return PlayHarness.Frame();
+
+            Assert.IsTrue(field.isFocused);
+            Assert.AreEqual(0, field.selectionAnchorPosition);
+            Assert.AreEqual("old value".Length, field.caretPosition,
+                "arriving in a field selects what is in it");
+
+            TypeText(field, "new");
+            yield return PlayHarness.Frame();
+
+            Assert.AreEqual("new", field.text, "typing did not replace the value it had selected");
+            Assert.AreEqual("new", label.Text);
+            PlayHarness.ExpectNoErrors();
+        }
+
+        [UnityTest]
+        public IEnumerator The_Click_That_Focuses_A_Field_Places_The_Caret_Where_It_Landed()
+        {
+            // This one needs a live EventSystem to mean anything, which is why
+            // it is here and not in EditMode. Focus does not arrive after
+            // OnPointerDown, it arrives inside it: Selectable.OnPointerDown
+            // selects the object through the EventSystem, and selection runs
+            // OnSelect and Focus synchronously. So the select-all that focus
+            // performs has already happened by the time the click gets to say
+            // where it landed, and a field that tries to sort that out
+            // afterwards highlights the whole value for a frame or keeps it
+            // highlighted for good. With no EventSystem in the scene the base
+            // call does nothing and none of this can be observed.
+            var field = _harness.InputField("hello world", out var label);
+            yield return PlayHarness.Frame();
+            Assert.IsFalse(field.isFocused);
+
+            field.OnPointerDown(PressAt(label, 5));
+            yield return PlayHarness.Frame();
+
+            Assert.IsTrue(field.isFocused);
+            Assert.IsFalse(field.editingModel.HasSelection,
+                "clicking into the field highlighted the whole value");
+            Assert.AreEqual(5, field.caretPosition, "the caret is not where the click was");
+
+            // And the click after it behaves the same way, because there was
+            // never anything special about the first one.
+            field.OnPointerDown(PressAt(label, 2));
+            yield return PlayHarness.Frame();
+
+            Assert.IsFalse(field.editingModel.HasSelection);
+            Assert.AreEqual(2, field.caretPosition);
+
             PlayHarness.ExpectNoErrors();
         }
 

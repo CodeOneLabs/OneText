@@ -27,14 +27,26 @@ namespace OneText
         private string _displayText = string.Empty;
         private bool _displayDirty = true;
 
+        // What the platform has handed over as characters since the live
+        // composition last changed its text. See NoteHandedOver, which is where
+        // the reason lives.
+        private string _handedOver = string.Empty;
+
         /// <summary>Refuses every edit, including composition.</summary>
         public bool ReadOnly { get; set; }
 
         /// <summary>Maximum length of the committed text; 0 means unlimited.</summary>
         public int CharacterLimit { get; set; }
 
-        /// <summary>Arbitrates who inserts a composition once the IME lets go.</summary>
-        public ImeCommitArbiter Arbiter { get; } = new ImeCommitArbiter();
+        /// <summary>
+        /// Arbitrates who inserts a composition once the IME lets go.
+        ///
+        /// Every field's, not this one's: there is one input method and one
+        /// composition, and a syllable abandoned in one field is offered back
+        /// to whichever field polls next. <see cref="ImeCommitArbiter.Shared"/>
+        /// carries the argument.
+        /// </summary>
+        public ImeCommitArbiter Arbiter => ImeCommitArbiter.Shared;
 
         /// <summary>The field's value. Never includes an unfinished composition.</summary>
         public string Text
@@ -43,10 +55,27 @@ namespace OneText
             set
             {
                 value ??= string.Empty;
+                // An assignment takes the value away from the input method,
+                // and the two halves of what the arbiter is holding go
+                // opposite ways. Text the platform never sent must not turn up
+                // inside the new value, so that debt is cancelled; text it may
+                // still send must be swallowed for exactly the same reason, so
+                // that guard stays up. Cancelling both is how a listener that
+                // trims or uppercases the value on onEndEdit — assigning one
+                // line after the commit that armed the guard — used to hand the
+                // duplicate straight back.
+                if (_composition.Active) Arbiter.SuppressEchoOf(_composition.Text);
+                else if (Arbiter.IsAwaitingPlatform) Arbiter.Cancel();
                 _composition = ImeComposition.None;
-                Arbiter.Cancel();
                 _text = ApplyLimit(value);
-                _caret = _anchor = Clamp(_caret);
+                // Each end clamped on its own rather than both collapsed onto
+                // the caret. A script that refills a field and expects the
+                // range it selected to still be selected gets that here, the
+                // way TMP_InputField.SetText gives it: only an end that now
+                // points past the string moves, and a selection that still
+                // fits is none of the assignment's business.
+                _caret = Clamp(_caret);
+                _anchor = Clamp(_anchor);
                 _displayDirty = true;
             }
         }
@@ -216,6 +245,13 @@ namespace OneText
                 return false;
             }
 
+            // A composition this field already finished with, still being
+            // reported by a platform that was never told. Adopting it would
+            // draw the syllable we just committed a second time and commit it
+            // again behind that — which is the bug report about the last
+            // Korean character being entered twice when input resumes.
+            if (!_composition.Active && Arbiter.ShouldSwallowComposition(composing)) return false;
+
             bool textChanged = false;
             if (!_composition.Active)
             {
@@ -232,6 +268,14 @@ namespace OneText
                 Arbiter.AwaitPlatformCommit(previous);
                 return textChanged;
             }
+
+            // A composition that says something new is a composition nothing
+            // has been handed over for yet.
+            // Ordinal on purpose, unlike the comparisons that ask whether two
+            // strings are the same text: this one asks whether the platform's
+            // report changed, and a report that changed shape changed.
+            if (!string.Equals(_composition.Text, composing, StringComparison.Ordinal))
+                _handedOver = string.Empty;
 
             _composition.Text = composing;
             _composition.Caret = caretInComposition < 0
@@ -267,8 +311,19 @@ namespace OneText
         public void CancelComposition()
         {
             bool wasActive = _composition.Active;
+            string abandoned = _composition.Text;
             EndComposition();
-            Arbiter.Cancel();
+
+            // Nobody owes us this text, and we owe nobody it either — but the
+            // platform may not have heard that it is over, and there is nothing
+            // in IImeInput that can tell it. So both channels are guarded: an
+            // IME that goes on reporting the composition the user escaped has
+            // it refused rather than drawn back, and one that finishes it
+            // anyway has the characters swallowed rather than typed into a
+            // field the user had abandoned.
+            if (!string.IsNullOrEmpty(abandoned)) Arbiter.SuppressEchoOf(abandoned);
+            else if (Arbiter.IsAwaitingPlatform) Arbiter.Cancel();
+
             if (wasActive) _displayDirty = true;
         }
 
@@ -303,7 +358,50 @@ namespace OneText
             changed = false;
             if (Arbiter.ShouldSwallow(character)) return false;
             changed = Insert(character.ToString());
+            if (changed) NoteHandedOver(character);
             return true;
+        }
+
+        /// <summary>
+        /// Records a character the platform handed over while it was still
+        /// composing, and ends the composition once those characters add up to
+        /// exactly what it says.
+        ///
+        /// The two channels do not have to move on the same frame. An IME can
+        /// deliver the finished syllable as a character while the composition
+        /// it is reporting still reads the same, and on the Input Manager
+        /// backend that report is the platform's own live state, so it goes on
+        /// saying so until the platform itself changes its mind. Left alone,
+        /// the field draws the syllable it has just been handed a second time
+        /// under the caret, and then commits it a second time as well — as a
+        /// composition when focus leaves, or as the commit "the platform never
+        /// sent" once the report finally empties and the grace window closes.
+        /// That is the character appearing from nowhere, and it needs no click
+        /// and no focus change to happen: only the two channels being one frame
+        /// apart.
+        ///
+        /// A composition cannot still be owed once its text has been paid, so
+        /// this ends it on the spot and registers it as a replay, which is the
+        /// same thing a self-commit does and for the same reason: the platform
+        /// was not told, and will go on reporting it.
+        /// </summary>
+        private void NoteHandedOver(char character)
+        {
+            if (!_composition.Active) return;
+
+            _handedOver += character;
+
+            // The same text, not the same code units, and through the arbiter's
+            // comparison so that this agrees with the two the arbiter makes
+            // itself. A platform that composes 한 as U+D55C and hands it over
+            // as U+1112 U+1161 U+11AB has still paid for it, and an equality
+            // that said otherwise would leave the composition owed, drawn a
+            // second time under the caret, and committed again behind it.
+            if (!ImeCommitArbiter.SameText(_handedOver, _composition.Text)) return;
+
+            string spent = _composition.Text;
+            EndComposition();
+            Arbiter.IgnoreReplayOf(spent);
         }
 
         // ------------------------------------------------------------- external
@@ -352,6 +450,18 @@ namespace OneText
 
             _text = _text.Insert(_caret, value);
             SetCaret(_caret + value.Length, false);
+
+            // The composition is anchored to the caret, so an insert that moves
+            // the caret has to take it along. Everything that inserts while an
+            // IME is still composing hits this: the syllable a Hangul IME
+            // commits on the character channel arrives a poll after the
+            // composition has already flipped to the next syllable, and the
+            // grace window can close on a commit the platform never sent while
+            // the user is composing again. Leave Start where it was and it
+            // points before the text just inserted, so DisplayText splices the
+            // new composition in front of the syllable that finished and the
+            // field draws "ㄱ한" — the same two characters, reversed.
+            if (_composition.Active) _composition.Start = _caret;
             return true;
         }
 
@@ -359,6 +469,7 @@ namespace OneText
         {
             if (_composition.Active) _displayDirty = true;
             _composition = ImeComposition.None;
+            _handedOver = string.Empty;
         }
 
         private string ApplyLimit(string value) =>

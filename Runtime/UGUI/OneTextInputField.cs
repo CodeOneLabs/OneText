@@ -24,7 +24,7 @@ namespace OneText.UGUI
     ///
     /// The field owns three children: the text label, an optional placeholder
     /// label, and the caret/selection graphic. Use
-    /// <c>GameObject &gt; UI &gt; OneText Input Field</c> to create one wired up.
+    /// <c>GameObject &gt; UI &gt; OneText &gt; Input Field</c> to create one wired up.
     /// </summary>
     [AddComponentMenu("OneText/OneText Input Field")]
     public sealed class OneTextInputField : Selectable,
@@ -34,6 +34,21 @@ namespace OneText.UGUI
         [SerializeField] private OneTextLabel _textComponent;
         [SerializeField] private OneTextLabel _placeholder;
         [SerializeField] private OneTextCaret _caret;
+
+        // The masked box the text has to stay inside. A field had none: the
+        // label was parented straight to the background, so a value longer than
+        // the field drew out of the left edge and kept going across whatever was
+        // beside it. Unity's InputField and TextMesh Pro's both interpose this
+        // layer — Unity calls it the Text Area, TMP exposes it under this name —
+        // and it is the layer that was missing, not the scrolling, which
+        // ScrollCaretIntoView has always done.
+        //
+        // Optional, and it has to stay optional: every field already in a
+        // project's scenes was authored without one, and a component that
+        // rearranged somebody's hierarchy on load to add it would be a worse
+        // thing than a field that does not clip. Null means the old behaviour,
+        // exactly, and the inspector says so.
+        [SerializeField] private RectTransform _textViewport;
 
         [TextArea]
         [SerializeField] private string _text = string.Empty;
@@ -53,7 +68,27 @@ namespace OneText.UGUI
 
         [SerializeField] private Color _caretColor = Color.white;
         [SerializeField] private float _caretWidth = 2f;
-        [SerializeField] private float _caretBlinkRate = 1.7f;
+        // Blinks per second, and TextMesh Pro's number rather than the 1.7 this
+        // field shipped with. Both compute the period as 1/rate and show the
+        // caret for half of it, so the old default was not a different look, it
+        // was the same look at twice the speed.
+        [SerializeField] private float _caretBlinkRate = 0.85f;
+
+        // The three colours the caret graphic draws with, kept here rather than
+        // on it. The caret GameObject is built at runtime by EnsureCaretGraphic
+        // and carries HideFlags.DontSave, so at author time there is no
+        // instance to select and no reference to reach one through: a colour
+        // that only exists on that object is a colour nobody can change, from
+        // the inspector or from code. These are pushed onto it every time the
+        // geometry is rebuilt.
+        [SerializeField] private Color _selectionColor = new Color32(168, 206, 255, 192);
+        [SerializeField] private Color _compositionColor = new Color(1f, 1f, 1f, 0.7f);
+        [SerializeField] private Color _clauseColor = new Color(0.24f, 0.50f, 0.87f, 0.35f);
+
+        [Tooltip("Tabbing into the field, or focusing it from a script, selects " +
+                 "the whole value so that typing replaces it. Clicking always " +
+                 "places the caret where it landed.")]
+        [SerializeField] private bool _onFocusSelectAll = true;
 
         [SerializeField] private UnityEvent<string> _onValueChanged = new UnityEvent<string>();
         [SerializeField] private UnityEvent<string> _onSubmit = new UnityEvent<string>();
@@ -75,6 +110,9 @@ namespace OneText.UGUI
         private IImeInput _ime;
         private MobileTextInput _mobile;
         private bool _focused;
+        // True only inside OnPointerDown, so that Focus — which that call
+        // reaches synchronously through OnSelect — can tell a click from a Tab.
+        private bool _pointerIsFocusing;
         private float _blinkStart;
         private float _desiredCaretX = float.NaN;
         private bool _visualsDirty = true;
@@ -174,6 +212,17 @@ namespace OneText.UGUI
         }
 
         public OneTextLabel textComponent => _textComponent;
+
+        /// <summary>
+        /// The masked box the text is kept inside, named as TextMesh Pro names
+        /// it. Null on a field that was authored without one, which scrolls the
+        /// same as it always did and clips nothing.
+        /// </summary>
+        public RectTransform textViewport
+        {
+            get => _textViewport;
+            set { _textViewport = value; _visualsDirty = true; }
+        }
 
         public UnityEvent<string> onValueChanged => _onValueChanged;
 
@@ -291,7 +340,22 @@ namespace OneText.UGUI
             // session's value already answered, so the next end of it is
             // reportable again.
             _endEditReported = false;
-            if (!wasFocused) StartInputMethod();
+            if (wasFocused) return;
+
+            StartInputMethod();
+            // Arriving in a field selects what is in it, so that the first
+            // thing typed replaces the old value instead of being appended to
+            // it — but only when the user arrived without saying where. Tab
+            // and ActivateInputField name no position, so selecting the value
+            // is the useful answer; a click names one, and a click that
+            // highlighted the whole value would throw it away on the next
+            // keystroke of an edit the user was resuming.
+            //
+            // TextMesh Pro selects on a click too, its own default, and this is
+            // a deliberate divergence from it rather than a copy: the field the
+            // report came from is one people click into to change three
+            // characters of what is already there.
+            if (_onFocusSelectAll && !_pointerIsFocusing) SelectAll();
         }
 
         /// <summary>
@@ -376,19 +440,44 @@ namespace OneText.UGUI
 
         public override void OnPointerDown(PointerEventData eventData)
         {
-            base.OnPointerDown(eventData);
-            if (!IsActive() || !IsInteractable()) return;
+            // Raised for the whole of this call, and lowered in the finally so
+            // that it cannot survive one. Focus does not arrive after this
+            // method, it arrives inside it: Selectable.OnPointerDown selects the
+            // object through the EventSystem, and selection runs OnSelect and
+            // Focus synchronously, before the line below it. A field cannot ask
+            // afterwards where its focus came from, so it is told beforehand.
+            _pointerIsFocusing = true;
+            try
+            {
+                base.OnPointerDown(eventData);
+                if (!IsActive() || !IsInteractable()) return;
 
-            // Clicking somewhere else in the same field ends the composition
-            // where it stands; the caret is about to move away from it.
-            if (_model.IsComposing && _model.CommitComposition()) Changed();
+                // While an input method is composing, the mouse belongs to it as
+                // much as the keyboard does. This used to commit the composition
+                // so the caret could move away from it, and that commit is the
+                // worst kind of divergence: the platform is not told, goes on
+                // holding the syllable, and offers it back as a new composition
+                // a frame later. Leaving the caret where the IME put it until
+                // the syllable is finished costs one click; getting it wrong
+                // costs a character the user never typed.
+                if (_model.IsComposing) return;
 
-            ActivateInputField();
-            SetCaret(IndexAt(eventData), extendSelection: false);
+                ActivateInputField();
+                SetCaret(IndexAt(eventData), extendSelection: false);
+            }
+            finally
+            {
+                _pointerIsFocusing = false;
+            }
         }
 
         public void OnPointerClick(PointerEventData eventData)
         {
+            // Same rule as OnPointerDown: a selection made under a live
+            // composition would be deleted by the commit that composition is
+            // heading for.
+            if (_model.IsComposing) return;
+
             if (eventData.clickCount == 2)
             {
                 string value = _model.Text;
@@ -402,9 +491,18 @@ namespace OneText.UGUI
             }
         }
 
-        public void OnBeginDrag(PointerEventData eventData) => SetCaret(IndexAt(eventData), extendSelection: true);
+        // And the same rule again: the caret belongs to the input method until
+        // the syllable is finished, so a drag over a live composition does
+        // nothing rather than dragging the text out from under it.
+        public void OnBeginDrag(PointerEventData eventData)
+        {
+            if (!_model.IsComposing) SetCaret(IndexAt(eventData), extendSelection: true);
+        }
 
-        public void OnDrag(PointerEventData eventData) => SetCaret(IndexAt(eventData), extendSelection: true);
+        public void OnDrag(PointerEventData eventData)
+        {
+            if (!_model.IsComposing) SetCaret(IndexAt(eventData), extendSelection: true);
+        }
 
         public void OnSubmit(BaseEventData eventData)
         {
@@ -482,9 +580,24 @@ namespace OneText.UGUI
                                                       clauseLength != current.ClauseLength));
             if (differs)
             {
+                bool wasComposing = _model.IsComposing;
                 if (_model.SetComposition(composing, caret, clauseStart, clauseLength)) Changed();
-                _visualsDirty = true;
+                // Only when something is or was on screen. A composition the
+                // model refuses as a replay of one the field already committed
+                // leaves the display exactly as it was, and marking it dirty
+                // would redraw the field every frame for as long as the
+                // platform kept reporting it.
+                if (wasComposing || _model.IsComposing) _visualsDirty = true;
             }
+
+            // Nothing is reported here when both sides are idle, and that is
+            // deliberate. "The backend has no composition" is not news that the
+            // platform released one: InputSystemImeInput caches what the
+            // platform pushes and empties that cache when the session ends, so
+            // the updates just after focus returns say the same thing whether
+            // the platform let go or is still holding a syllable it has not
+            // pushed again yet. The arbiter retires a refusal on evidence
+            // instead — a different composition, or a character.
 
             if (_model.IsComposing) _ime.SetCursorScreenPosition(CaretScreenPosition());
         }
@@ -519,17 +632,48 @@ namespace OneText.UGUI
 
             if (_model.IsComposing)
             {
-                // While an IME composes, the keyboard belongs to it. Backspace
-                // shortens the composition, the arrows walk the candidate list,
-                // Enter accepts a candidate. And every one of those also
-                // arrives here. Acting on them edits the committed text behind
-                // the composition, or submits a form the user was only
-                // confirming a syllable in.
+                // Escape abandons the composition and keeps the field, which is
+                // what an OS text field does with it.
                 if (keyEvent.keyCode == KeyCode.Escape)
                 {
                     _model.CancelComposition();
                     _visualsDirty = true;
+                    return;
                 }
+
+                // The rest of the keyboard belongs to the IME while it
+                // composes. Backspace shortens the composition, the arrows walk
+                // the candidate list, Enter accepts a candidate, and every one
+                // of those arrives here as well as there; acting on them edits
+                // the committed text behind the composition, or submits a form
+                // the user was only confirming a syllable in.
+                //
+                // What does not belong to the IME is the commit, and dropping
+                // that along with the rest is why typing Korean into this field
+                // produced nothing at all. A Hangul IME hands the finished
+                // syllable back as an ordinary character event — GCS_RESULTSTR
+                // turned into a WM_CHAR on Windows, insertText: on macOS —
+                // while the keys that drive the composition never carry a
+                // character, because the IME consumes them before the platform
+                // ever translates them. So a printable character arriving
+                // mid-composition is committed text and nothing else, on every
+                // desktop Unity ships; everything that is not one stops here.
+                // char.IsControl is the whole list on its own: Return, Tab and
+                // the rest of what the IME uses are C0 controls, and naming
+                // them again beside it would only read as though they were not.
+                char composed = keyEvent.character;
+                bool modified = (keyEvent.modifiers &
+                                 (EventModifiers.Control | EventModifiers.Command)) != 0;
+                if (modified || composed == 0 || char.IsControl(composed)) return;
+
+                // Through the arbiter, like any other character, and without
+                // arming it: at a syllable boundary it is idle, so the
+                // character inserts exactly once. Arming it to expect a commit
+                // here would mean Tick inserting a second copy during a
+                // Japanese conversion, which replaces the whole composition
+                // (へんかん becomes 変換) and sends no character at all.
+                if (_model.AcceptCharacter(composed, out bool committed) && committed) Changed();
+                else _visualsDirty = true;
                 return;
             }
 
@@ -678,6 +822,74 @@ namespace OneText.UGUI
 
         // -------------------------------------------------------------- visuals
 
+        /// <summary>
+        /// Makes sure something is cutting the text off at the edge of the
+        /// field, whether or not anybody authored a viewport.
+        ///
+        /// A field with no <see cref="textViewport"/> clipped nothing at all,
+        /// and that is nearly every field in existence: they were authored
+        /// before the viewport was, or they arrived by having this component
+        /// swapped onto somebody else's object. A long value ran out of the left
+        /// edge while it was being typed, because the caret-follow scroll pushes
+        /// it that way, and out of the right edge as soon as focus left, because
+        /// the scroll goes back to zero and the value draws from its start.
+        /// Reported from a real project against a screenshot, and the answer
+        /// cannot be "author a viewport": nobody is going to open every scene.
+        ///
+        /// So the field makes one. The mask goes on the field's own object,
+        /// which is the only thing here that is already above both labels, and
+        /// it is marked DontSave for the same reason the caret graphic is —
+        /// this belongs to the running field, not to anybody's saved scene, and
+        /// nothing about their data changes.
+        ///
+        /// What this costs, said plainly. It clips at the field's own edge
+        /// rather than at the inset an authored Text Area would give, so the
+        /// text stops a padding-width later than TextMesh Pro would stop it. It
+        /// clips every graphic under the field, not only the two labels, so a
+        /// decoration somebody deliberately hung over the edge of a field is cut
+        /// now. And it is a whole RectMask2D per field. All three are worth it
+        /// against text drawing across the screen, and all three go away the
+        /// moment a real viewport is authored — which the inspector has a button
+        /// for.
+        /// </summary>
+        private void EnsureClipping()
+        {
+            // Authored. Their hierarchy, their arrangement; the inspector says
+            // so if the thing they pointed at has no mask on it.
+            if (_textViewport != null) return;
+
+            // Already done, or already theirs. Either way the answer is the
+            // same and this runs on every visual update, so it is worth one
+            // GetComponent to stop before the walk.
+            if (gameObject.GetComponent<RectMask2D>() != null) return;
+
+            // Starting above the label rather than at it, because uGUI ignores a
+            // RectMask2D that sits on the very graphic it would be clipping —
+            // MaskUtilities skips the clippable's own object — so a mask there
+            // would look like clipping and do nothing.
+            for (var at = _textComponent.transform.parent; at != null; at = at.parent)
+            {
+                // Anything already cutting between the label and the field is a
+                // shape somebody meant: an authored Text Area, the one a
+                // converted TextMesh Pro field brings across with it, a mask a
+                // project put there itself. Leave all of it alone.
+                if (at.GetComponent<RectMask2D>() != null || at.GetComponent<Mask>() != null) return;
+                if (at != transform) continue;
+
+                if (gameObject.GetComponent<RectMask2D>() == null)
+                    gameObject.AddComponent<RectMask2D>().hideFlags = HideFlags.DontSave;
+                return;
+            }
+
+            // The walk reached the top of the scene without passing this field,
+            // so the label is not underneath it — somebody pointed the reference
+            // at a label living somewhere else entirely. There is nothing here
+            // that contains it, and reaching up into whatever does own it to put
+            // a mask on that would be editing a part of the scene this field has
+            // no business touching. It stays unclipped, exactly as it is today,
+            // and the inspector is where that gets said.
+        }
+
         private void EnsureCaretGraphic()
         {
             if (_caret != null || _textComponent == null) return;
@@ -704,6 +916,7 @@ namespace OneText.UGUI
             if (_textComponent == null) return;
 
             EnsureCaretGraphic();
+            EnsureClipping();
 
             // Whatever the user types is text, not markup: a name with an angle
             // bracket in it must not turn half the field bold.
@@ -724,6 +937,37 @@ namespace OneText.UGUI
             UpdateCaretGeometry();
         }
 
+        /// <summary>
+        /// The box the caret has to stay inside, in the label's own space.
+        ///
+        /// The viewport when there is one, because that is the edge the mask
+        /// cuts at and therefore the edge past which the caret stops being
+        /// visible — and once a viewport exists the label underneath it is free
+        /// to be bigger than the box, which is the whole point of having one.
+        /// Without a viewport it is the label's own rect, which is what this
+        /// measured against before and is what every field authored before the
+        /// viewport existed still needs it to be.
+        ///
+        /// Converted through world space rather than read off either rect
+        /// directly: the two are different transforms, and a label that is
+        /// larger than its viewport or offset inside it would otherwise be
+        /// compared against a box in somebody else's coordinates. When the label
+        /// is stretched to the viewport, which is how the menu entry builds one,
+        /// the conversion lands exactly on the label's own rect and nothing
+        /// about the old behaviour changes.
+        /// </summary>
+        private Rect CaretBox()
+        {
+            var label = _textComponent.rectTransform;
+            if (_textViewport == null || _textViewport == label) return label.rect;
+
+            var box = _textViewport.rect;
+            var min = label.InverseTransformPoint(_textViewport.TransformPoint(box.min));
+            var max = label.InverseTransformPoint(_textViewport.TransformPoint(box.max));
+            return Rect.MinMaxRect(Mathf.Min(min.x, max.x), Mathf.Min(min.y, max.y),
+                Mathf.Max(min.x, max.x), Mathf.Max(min.y, max.y));
+        }
+
         /// <summary>Nudges the text label's scroll offset until the caret is inside the box.</summary>
         private void ScrollCaretIntoView()
         {
@@ -733,7 +977,7 @@ namespace OneText.UGUI
                 return;
             }
 
-            var box = _textComponent.rectTransform.rect;
+            var box = CaretBox();
             var offset = _textComponent.ScrollOffset;
             for (int pass = 0; pass < 2; pass++)
             {
@@ -763,6 +1007,9 @@ namespace OneText.UGUI
             if (_caret == null || _textComponent == null) return;
 
             _caret.color = _caretColor;
+            _caret.SelectionColor = _selectionColor;
+            _caret.CompositionColor = _compositionColor;
+            _caret.ClauseColor = _clauseColor;
             if (!_focused)
             {
                 _caret.SetGeometry(default, false, null);
@@ -881,6 +1128,63 @@ namespace OneText.UGUI
         /// enabled and disabled as the value comes and goes.
         /// </summary>
         public OneTextLabel placeholder => _placeholder;
+
+        /// <summary>
+        /// Colour of the highlight drawn behind selected text.
+        ///
+        /// The colour belongs to the caret graphic, which draws it, but it is
+        /// held here because that graphic is built at runtime and saved
+        /// nowhere: on a field authored in a scene there is no instance of it
+        /// for an inspector or a script to reach. TextMesh Pro spells the
+        /// member exactly this way.
+        /// </summary>
+        public Color selectionColor
+        {
+            get => _selectionColor;
+            set { _selectionColor = value; _visualsDirty = true; }
+        }
+
+        /// <summary>
+        /// Colour of the underline drawn beneath text an input method is still
+        /// composing. Named to sit beside <see cref="selectionColor"/> and not
+        /// after anything: TextMesh Pro draws no composition, so there is no
+        /// member here to be parity with.
+        /// </summary>
+        public Color compositionColor
+        {
+            get => _compositionColor;
+            set { _compositionColor = value; _visualsDirty = true; }
+        }
+
+        /// <summary>
+        /// Colour of the block behind the clause a Japanese input method is
+        /// converting. Ours as well, for the same reason as
+        /// <see cref="compositionColor"/>.
+        /// </summary>
+        public Color clauseColor
+        {
+            get => _clauseColor;
+            set { _clauseColor = value; _visualsDirty = true; }
+        }
+
+        /// <summary>
+        /// Whether focus arriving without a position selects the whole value,
+        /// so that the first thing typed replaces it. On by default, as in
+        /// TextMesh Pro.
+        ///
+        /// "Without a position" is where this parts company with TextMesh Pro,
+        /// which selects on a mouse click as well. Tab and
+        /// <see cref="ActivateInputField"/> say nothing about where in the value
+        /// the user wants to be, and selecting it is the useful answer. A click
+        /// says exactly where, every time and including the first, because a
+        /// click that highlighted the whole value would throw it away on the
+        /// next keystroke of an edit somebody was resuming.
+        /// </summary>
+        public bool onFocusSelectAll
+        {
+            get => _onFocusSelectAll;
+            set => _onFocusSelectAll = value;
+        }
 
         /// <summary>The caret end of the selection; the end that moves as you drag or shift-arrow.</summary>
         public int selectionFocusPosition
