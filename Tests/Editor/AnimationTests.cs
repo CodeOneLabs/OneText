@@ -200,6 +200,37 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void EditingTheSerializedText_RebuildsTheSpans()
+        {
+            // The inspector never goes through the Text property: it writes the
+            // serialized field and applies, and OnValidate is the only thing
+            // the label hears about it. So every cache the property setter
+            // drops has to be dropped there too, and the animator's was not —
+            // which made typing an effect tag into the text box, or clicking
+            // one of the effect toggles above it, produce text that parses,
+            // lays out and never moves, for the rest of the editor session.
+            // Play mode hid it: a label deserialized into a fresh session
+            // builds its animator from nothing anyway.
+            var label = NewLabel("plain, no tags at all");
+            Assert.AreEqual(0, label.EffectSpanCount, "a plain string has no spans");
+
+            var serialized = new UnityEditor.SerializedObject(label);
+            serialized.FindProperty("_text").stringValue = "calm <wave>moving</wave>";
+            serialized.ApplyModifiedProperties();
+
+            Assert.AreEqual(1, label.EffectSpanCount,
+                "the text gained an effect tag and the animator kept the old spans");
+
+            // And the other way: an effect deleted from the text must stop
+            // animating, not linger because the animator was never asked again.
+            serialized.FindProperty("_text").stringValue = "calm again";
+            serialized.ApplyModifiedProperties();
+
+            Assert.AreEqual(0, label.EffectSpanCount,
+                "the tag was deleted and the animator kept animating it");
+        }
+
+        [Test]
         public void Animation_IsAPureFunctionOfTime()
         {
             // Two labels showing the same text must animate identically, and

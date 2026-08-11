@@ -942,6 +942,15 @@ namespace OneText.UGUI
         {
             base.OnValidate();
             _parsedFrom = null;
+            // Any of them may also have been the text, and the spans the
+            // animator is holding were built from the last one. Nothing else
+            // drops them: only InvalidateText does, and the inspector does not
+            // go through the property that calls it. Without this line an
+            // effect tag typed into the text box — or clicked on in the
+            // toggles above it — parses, lays out, and never moves for the
+            // rest of the editor session, on a label that animates correctly
+            // the moment play mode deserializes it fresh.
+            _animatorBuilt = false;
             // The inspector writes serialized fields directly, never through
             // the properties that invalidate, so any of them may just have
             // been the font or the fallback list. Rebuilding the stack here is
@@ -1025,6 +1034,26 @@ namespace OneText.UGUI
                 _animator.Add(new TextEffectSpan(effect, parameters,
                     _layout.GraphemeAt(start),
                     _layout.GraphemeAt(Mathf.Max(start, end - 1))));
+            }
+        }
+
+        /// <summary>
+        /// Effect spans the animator holds for the text as it stands: what the
+        /// tags in the string actually became.
+        ///
+        /// Not the same question as how many effect tags the string contains,
+        /// which anything holding the string can count for itself. The gap
+        /// between the two is where a silent failure lives — a tag whose name
+        /// no longer resolves to an effect, or an animator that was never
+        /// rebuilt after the text changed — and from outside the label there is
+        /// no way to see it: the text looks right and nothing moves.
+        /// </summary>
+        public int EffectSpanCount
+        {
+            get
+            {
+                EnsureAnimator();
+                return _animator.Spans.Count;
             }
         }
 
