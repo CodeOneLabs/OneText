@@ -1631,11 +1631,99 @@ namespace OneText.UGUI
 
         public void OnPointerClick(PointerEventData eventData)
         {
-            if (_links.Count == 0 && !RichTextParser.MightHaveMarkup(_text)) return;
+            // The cheap way to answer "no links here": no parse has happened
+            // yet and the raw text has no '<' in it, so there is nothing a
+            // link could have been written as. Over-broad — <b>bold</b> fails
+            // it and takes the slow path for nothing — but harmless now that
+            // both paths end in the same place.
+            if (_links.Count == 0 && !RichTextParser.MightHaveMarkup(_text))
+            {
+                BubbleUnhandledClick(eventData);
+                return;
+            }
+
             RectTransformUtility.ScreenPointToLocalPointInRectangle(
                 rectTransform, eventData.position, eventData.pressEventCamera, out var local);
             if (TryGetLinkAtLocalPoint(local, out var link))
+            {
                 _linkClicked.Invoke(link.Id);
+                return;
+            }
+
+            // A click that landed on the label but missed every link span is
+            // not this label's click, the way a click on the padding of an <a>
+            // is not the anchor's. Let it go up.
+            BubbleUnhandledClick(eventData);
+        }
+
+        /// <summary>
+        /// Components on this GameObject that would also have received this
+        /// click. Static because a click is a per-frame event on a hot input
+        /// path and a fresh list per click is a fresh list per click; the list
+        /// never escapes the method that fills it.
+        /// </summary>
+        private static readonly List<IPointerClickHandler> s_clickHandlerScratch =
+            new List<IPointerClickHandler>();
+
+        /// <summary>
+        /// Hands a click this label did nothing with to whoever is above it.
+        ///
+        /// The bug this exists for: Button &gt; Label is *the* uGUI hierarchy,
+        /// and a label under a Button used to eat the Button's clicks.
+        /// <c>StandaloneInputModule</c> resolves the click target with
+        /// <c>ExecuteEvents.GetEventHandler&lt;IPointerClickHandler&gt;</c>,
+        /// which walks up from the raycast hit and stops at the first object
+        /// carrying the interface. This label carries it, so the walk stopped
+        /// here and the Button's onClick never ran — while its pointerDown and
+        /// pointerUp still arrived, so the button flashed pressed and did
+        /// nothing, which is the most confusing shape that failure could take.
+        /// TextMeshProUGUI implements no pointer interface at all, so labels
+        /// migrated from TMP arrive with raycastTarget on and every Button
+        /// under them dead, dropdown rows included: the row's item label sits
+        /// over the row's Toggle.
+        ///
+        /// Re-dispatching upward is not a new routing, it is TMP's routing by
+        /// a different road — the ancestors that GetEventHandler would have
+        /// found are exactly the ancestors ExecuteHierarchy now walks, and it
+        /// stops at the first one that handles the event just as GetEventHandler
+        /// would have. A raycast filter was the other candidate and was
+        /// rejected: a TMP label with raycastTarget on genuinely does block
+        /// what is behind it, does register hover, and is the drag surface a
+        /// ScrollRect full of bare text scrolls by.
+        /// </summary>
+        private void BubbleUnhandledClick(PointerEventData eventData)
+        {
+            var parent = transform.parent;
+            if (parent == null) return;
+
+            // The one way this could deliver twice. ExecuteEvents.Execute runs
+            // every IPointerClickHandler on the target GameObject, so a Button
+            // sharing this label's object already had its click before we were
+            // called; sending it up from there would be a second, wrong
+            // delivery to the same hierarchy. Every other case is safe because
+            // the ancestor never got the event at all.
+            //
+            // Disabled components are skipped for the same reason they are
+            // skipped by ExecuteEvents itself: a Button that was off did not
+            // receive the click, so it is not a reason to withhold it from the
+            // hierarchy above.
+            GetComponents<IPointerClickHandler>(s_clickHandlerScratch);
+            bool sharedWithAnother = false;
+            foreach (var handler in s_clickHandlerScratch)
+            {
+                if (ReferenceEquals(handler, this)) continue;
+                if (handler is Behaviour behaviour && !behaviour.isActiveAndEnabled) continue;
+                sharedWithAnother = true;
+                break;
+            }
+            // Cleared rather than left full: this list is static, and a click
+            // is the last thing that should be keeping a destroyed component
+            // reachable until the next one.
+            s_clickHandlerScratch.Clear();
+            if (sharedWithAnother) return;
+
+            ExecuteEvents.ExecuteHierarchy(parent.gameObject, eventData,
+                ExecuteEvents.pointerClickHandler);
         }
 
         // -------------------------------------------------------------- rendering
