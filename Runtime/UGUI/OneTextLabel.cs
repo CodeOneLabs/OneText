@@ -624,11 +624,48 @@ namespace OneText.UGUI
         {
             _variations.Clear();
             if (variations != null) _variations.AddRange(variations);
-            // The instance is picked up from the asset's variant cache, so two
-            // labels at the same weight still share one set of atlas entries.
-            ReleaseFonts();
+            // On the asset route the instance is picked up from the asset's
+            // variant cache, so two labels at the same weight still share one
+            // set of atlas entries, and dropping the stack is how it gets
+            // picked up. On the bytes route there is no such cache and the
+            // stack owns its face outright — so it is re-varied where it
+            // stands rather than destroyed and reparsed. Both matter: a
+            // six-megabyte face reparsed per frame of a slider drag is the
+            // obvious one, and the other is that a destroyed face frees a
+            // native handle for the next one to be allocated on top of.
+            if (!RevaryOwnedFace()) ReleaseFonts();
             SetVerticesDirty();
             SetLayoutDirty();
+        }
+
+        /// <summary>
+        /// Moves the axes of the face this label loaded for itself, if that is
+        /// what it has. Returns false when the stack has to be rebuilt instead
+        /// — no stack yet, no bytes override, or a stack whose primary came
+        /// from somewhere shared and is therefore not ours to bend.
+        /// </summary>
+        private bool RevaryOwnedFace()
+        {
+            // Clearing the axes altogether is a rebuild on purpose: a label
+            // with no variations belongs back in the shared cache, and keeping
+            // the private face would cost it a second parse of a file another
+            // label already has open.
+            if (_variations.Count == 0) return false;
+            if (_fonts == null || _ownedFonts.Count != 1) return false;
+            var owned = _ownedFonts[0];
+            if (owned == null || !owned.IsValid || _fonts.Primary != owned) return false;
+
+            owned.SetVariations(_variations.ToArray());
+            // Bold and italic were instanced by laying a weight or a slant over
+            // the coordinate this face used to have, and that coordinate has
+            // just moved.
+            _fonts.DropStyledInstances(owned);
+            // The atlas keys tiles by face and generation, and SetVariations
+            // bumped the generation, so the new coordinate bakes its own tiles.
+            // Everything the old coordinate left behind is ordinary cache: the
+            // LRU reclaims it when the space is wanted.
+            _layoutGeneration++;
+            return true;
         }
 
         /// <summary>The font asset this label renders with.</summary>

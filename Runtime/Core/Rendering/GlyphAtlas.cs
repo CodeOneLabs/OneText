@@ -269,7 +269,27 @@ namespace OneText
 
         private readonly struct Key : IEquatable<Key>
         {
-            private readonly IntPtr _font;
+            /// <summary>
+            /// <see cref="FontData.CacheId"/>, and specifically not the native
+            /// handle.
+            ///
+            /// The handle is the real identity of a face while it lives, and it
+            /// stops being an identity the moment the face is destroyed: the
+            /// allocator hands the same address to the next
+            /// <c>hb_font_create</c>, and a key built on it then matches tiles
+            /// baked for a font that no longer exists. That is not theoretical.
+            /// A label doing <c>SetVariations</c> per frame of a slider drag
+            /// destroys one face and creates the next, lands on the same
+            /// address every time after the first, and — since a face that is
+            /// varied once always reads <c>Generation</c> 1 — collides on every
+            /// field of the key. The weight the user asked for shaped
+            /// correctly, so the advances moved and the tiles did not: text
+            /// that changes width without changing weight, and glyphs drawn at
+            /// the ink box of whichever weight got there first. The counter is
+            /// monotonic for the process, so it cannot alias.
+            /// </summary>
+            private readonly int _font;
+
             private readonly long _id; // glyph id, or a cluster hash (top bit set)
             private readonly int _ppem;
             private readonly int _generation; // variable-font instance
@@ -288,7 +308,7 @@ namespace OneText
 
             public Key(FontData font, long id, int ppem, bool precise)
             {
-                _font = font.Font;
+                _font = font.CacheId;
                 _id = id;
                 _ppem = ppem;
                 _generation = font.Generation;

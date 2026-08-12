@@ -258,6 +258,30 @@ namespace OneText
         }
 
         /// <summary>
+        /// Throws away the bold and italic faces instanced from
+        /// <paramref name="regular"/>'s axes, so the next request builds them
+        /// from where its axes are now.
+        ///
+        /// For a caller that moved a face's axes underneath the stack — a
+        /// variable-font slider on a label that owns its face outright. The
+        /// instanced faces were built by laying bold or slant over whatever the
+        /// regular's coordinate was at the time, and left alone they would go
+        /// on drawing a <c>&lt;b&gt;</c> span at the weight the label had two
+        /// drags ago.
+        /// </summary>
+        public void DropStyledInstances(FontData regular)
+        {
+            var entry = FindEntry(regular);
+            if (entry == null) return;
+            for (int i = 0; i < entry.Instanced.Length; i++)
+            {
+                entry.Instanced[i]?.Dispose();
+                entry.Instanced[i] = null;
+                entry.Attempted[i] = false;
+            }
+        }
+
+        /// <summary>
         /// The first font covering <paramref name="codepoint"/>; failing that,
         /// a font the operating system has for it; failing that,
         /// <see cref="Primary"/>, so the caller still gets notdef boxes rather
