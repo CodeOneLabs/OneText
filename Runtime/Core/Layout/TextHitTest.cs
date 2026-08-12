@@ -247,8 +247,13 @@ namespace OneText
 
         private static float GetCaretX(TextLayoutResult layout, TextLine line, int index)
         {
+            // Nothing on this line to measure against, so the caret goes where
+            // the line's start edge ended up: at its alignment offset, or at
+            // the far end of it when the paragraph runs right to left. This is
+            // a blank line in the middle of a text, and it is also the whole of
+            // an empty field, which is the one every user sees.
             if (line.RunCount == 0)
-                return line.IsRightToLeft ? line.Width : 0f;
+                return line.InlineOffset + (line.IsRightToLeft ? line.Width : 0f);
 
             for (int r = line.RunStart; r < line.RunStart + line.RunCount; r++)
             {

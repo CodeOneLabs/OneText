@@ -304,7 +304,11 @@ namespace OneText.Editor
         private static void EnsureEventSystem()
         {
             if (Object.FindAnyObjectByType<EventSystem>() != null) return;
-            var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+            var go = new GameObject("EventSystem", typeof(EventSystem));
+            // Not typeof(StandaloneInputModule) in the line above: which module
+            // works depends on the project's input backend, and the wrong one
+            // throws on every frame. See OneTextEventSystemFactory.
+            OneTextEventSystemFactory.AddInputModule(go);
             Undo.RegisterCreatedObjectUndo(go, "Create EventSystem");
         }
 

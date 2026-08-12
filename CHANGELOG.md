@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0] - 2026-08-11
+## [0.3.0] - 2026-08-12
 
 ### Added
 
@@ -506,6 +506,79 @@
   every click in the window. They ask the search index for a count now.
 
 ### Fixed
+
+- **Korean, Japanese and Chinese compose in a project that uses the Input
+  System.** They did not. Typing 안녕하세요 into a field there produced
+  ㅇㅏㄴㄴㅕㅇㅎㅏㅅㅔㅇㅛ: every jamo arriving on its own, already committed,
+  never assembled into a syllable. Reported by people whose projects had
+  Active Input Handling set to "Input System Package (New)", and it was not
+  confined to them — a project set to "Both" took the same path the moment the
+  package was installed.
+
+  The composition and the characters were coming from two different stacks.
+  OneText reads keystrokes out of the IMGUI event queue with `Event.PopEvent`,
+  and it was reading composition from the Input System's keyboard device. On
+  macOS that device's IME switch does not compose into the IMGUI queue: a
+  recording of a full typing session has zero `onIMECompositionChange` events
+  and every jamo arriving finished on both character channels. Nothing
+  downstream of a committed character can put a syllable back together.
+
+  The backend that pairs with the character queue was compiled out, behind
+  `#if ENABLE_LEGACY_INPUT_MANAGER`, on the stated grounds that every property
+  it uses throws when the Input Manager is off. That was measured and it is
+  false: with Active Input Handling set to the Input System, `mousePosition`
+  and `GetKey` throw as documented, while `imeCompositionMode` (get and set),
+  `compositionString`, `compositionCursorPos` and `imeIsSelected` all answer.
+  The input-method members are exempt from that guard — uGUI's own `BaseInput`
+  reads three of them with no `#if` around it, which is why every TextMesh Pro
+  field in the same project composed Korean perfectly well.
+
+  So the guard is gone, and the name with it: `LegacyImeInput` is
+  `ImguiImeInput`, because what it is is the input method belonging to the
+  stack the characters come from, and believing otherwise is the whole of this
+  bug. The Input System backend is kept and now registers only where the
+  built-in one cannot run, which is nowhere yet found; the exemption is a
+  measurement rather than a guarantee, and two tests assert it so that a
+  version where it stops holding says so.
+
+  Three things found beside it. A field that had been focused once and was
+  then disabled ran `End()` with no matching `Begin()`, switching a
+  process-wide input method off underneath whichever field was composing at
+  that moment. The Input System backend was one instance per field fighting
+  over one device, and did not follow `Keyboard.current` when the Input System
+  replaced it — after which composition silently never arrived again. And a
+  project with no usable backend was told nothing at all: the field typed
+  ASCII perfectly and dropped every composition, with not a word in the
+  console. It now says so once, and names the reason.
+
+- **`GameObject > UI > OneText > …` stops building an EventSystem that throws
+  on every frame.** The entries created one carrying a `StandaloneInputModule`,
+  which reads `UnityEngine.Input`, which throws in a project using the Input
+  System. Nothing clickable, no field focusable, and a console full of
+  exceptions from a component the author never added. The module is chosen for
+  the backend now — the same answer uGUI's own menu reaches through a factory
+  that is not in every editor version this package supports. The demo scene
+  builder was doing it too.
+
+- **An empty field shows a caret.** Clicking into a field with nothing in it
+  drew nothing, so it looked like the field had not taken focus. Unity's own
+  field draws a bar there and so does TextMesh Pro's.
+
+  The engine already believed it should: its empty-text path says "an empty
+  label still occupies one line box" and then published the extent of that box
+  without laying out the line, so there was no line for a caret to be measured
+  against and the hit test answered a rectangle of height zero at the origin.
+  The line is real now, with the metrics of the blank line between two
+  paragraphs — one helper rather than two copies, which is what turned the
+  discrepancy up.
+
+  Alignment came with it. A line with no runs had nowhere to record where
+  alignment had put it, so a centred empty field would have kept its caret at
+  the left edge; the line carries that offset now, which fixes the same
+  problem on every blank line in a multiline field. `OneTextTextInfo` still
+  reports `lineCount` 0 for an empty label, deliberately, because that is what
+  `TMP_TextInfo` reports and that type exists to give TextMesh Pro's answers
+  under TextMesh Pro's names.
 
 - **A style asset's Letter Spacing never reached the label.** The field was on
   the asset, the inspector drew it, and the compile error on TMP's

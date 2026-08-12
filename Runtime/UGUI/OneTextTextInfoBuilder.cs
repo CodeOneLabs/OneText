@@ -183,6 +183,20 @@ namespace OneText.UGUI
 
         private static void BuildLines(TextLayoutResult layout, OneTextLabel label, OneTextTextInfo info)
         {
+            // No text, no lines — TextMesh Pro's answer, and this type exists to
+            // give TextMesh Pro's answers under TextMesh Pro's names. The engine
+            // does lay out one line box for an empty label, because a caret has
+            // to stand somewhere and a blank line still occupies its height, but
+            // reporting that here would hand a converted project a lineCount of
+            // 1 where TMP_TextInfo gave it 0, and code that trusts the count
+            // reads a line with no characters in it.
+            if (layout.Lines.Count == 1 && layout.Lines[0].TextLength == 0 &&
+                layout.Glyphs.Count == 0)
+            {
+                info.EnsureLines(0);
+                return;
+            }
+
             info.EnsureLines(layout.Lines.Count);
             for (int i = 0; i < layout.Lines.Count; i++)
             {
