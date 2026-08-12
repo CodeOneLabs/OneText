@@ -87,10 +87,10 @@ namespace OneText.Samples
             // the corner of the 4 — and a reader scanning the whole word sees
             // two words that look alike and moves on.
             var where = DemoUi.Label("where", host,
-                "<color=#8B949E>Compare the apex of the <b>A</b>, the inner vertices of the " +
+                "<color=" + DemoUi.DimHex + ">Compare the apex of the <b>A</b>, the inner vertices of the " +
                 "<b>W</b> and the corner of the <b>4</b>. Both are baked at " +
                 BakeSize.ToString("0") + " px and magnified; only the encoding differs." +
-                "</color>", 13f, DemoUi.Dim, Fonts);
+                "</color>", DemoUi.Caption, DemoUi.Dim, Fonts);
             var whereRect = (RectTransform)where.transform;
             whereRect.anchorMin = new Vector2(0f, 0.42f);
             whereRect.anchorMax = new Vector2(1f, 0.42f);
@@ -100,7 +100,7 @@ namespace OneText.Samples
             where.Wrap = TextWrap.NoWrap;
 
             var zoomLabel = DemoUi.Label("zoom", controls,
-                "magnification", 13f, DemoUi.Dim, Fonts);
+                "magnification", DemoUi.Caption, DemoUi.Dim, Fonts);
             var zoomRect = (RectTransform)zoomLabel.transform;
             zoomRect.anchorMin = new Vector2(0f, 0.5f);
             zoomRect.anchorMax = new Vector2(0f, 0.5f);
@@ -139,30 +139,30 @@ namespace OneText.Samples
                 var imageRect = DemoUi.GraphicRect("image", cell);
                 imageRect.anchorMin = new Vector2(0f, 0f);
                 imageRect.anchorMax = new Vector2(1f, 1f);
-                imageRect.offsetMin = new Vector2(0f, 18f);
+                imageRect.offsetMin = new Vector2(0f, 22f);
                 imageRect.offsetMax = Vector2.zero;
                 var raw = imageRect.gameObject.AddComponent<RawImage>();
                 raw.raycastTarget = false;
                 raw.texture = Texture2D.whiteTexture;
                 _channels[i] = raw;
 
-                var tag = DemoUi.Label("tag", cell, names[i], 12f, DemoUi.Dim, Fonts);
+                var tag = DemoUi.Label("tag", cell, names[i], DemoUi.Caption, DemoUi.Dim, Fonts);
                 var tagRect = (RectTransform)tag.transform;
                 tagRect.anchorMin = new Vector2(0f, 0f);
                 tagRect.anchorMax = new Vector2(1f, 0f);
                 tagRect.pivot = new Vector2(0f, 0f);
                 tagRect.anchoredPosition = Vector2.zero;
-                tagRect.sizeDelta = new Vector2(0f, 16f);
+                tagRect.sizeDelta = new Vector2(0f, 20f);
                 tag.Alignment = TextAlignment.Center;
             }
 
-            _caption = DemoUi.Label("caption", fieldBody, string.Empty, 12f, DemoUi.Warn, Fonts);
+            _caption = DemoUi.Label("caption", fieldBody, string.Empty, DemoUi.Caption, DemoUi.Warn, Fonts);
             var captionRect = (RectTransform)_caption.transform;
             captionRect.anchorMin = new Vector2(0f, 0f);
             captionRect.anchorMax = new Vector2(1f, 0f);
             captionRect.pivot = new Vector2(0f, 0f);
             captionRect.anchoredPosition = new Vector2(10f, 2f);
-            captionRect.sizeDelta = new Vector2(-20f, 20f);
+            captionRect.sizeDelta = new Vector2(-20f, 24f);
             _caption.Wrap = TextWrap.NoWrap;
 
             OnZoom(_zoom);

@@ -44,7 +44,7 @@ namespace OneText.Samples
             body.anchorMin = Vector2.zero;
             body.anchorMax = Vector2.one;
             body.offsetMin = new Vector2(8f, 8f);
-            body.offsetMax = new Vector2(-8f, -84f);
+            body.offsetMax = new Vector2(-8f, -104f);
 
             Add(new ShapingPage(), body, header);
             Add(new AtlasPage(), body, header);
@@ -88,38 +88,38 @@ namespace OneText.Samples
             header.anchorMin = new Vector2(0f, 1f);
             header.anchorMax = new Vector2(1f, 1f);
             header.pivot = new Vector2(0.5f, 1f);
-            header.sizeDelta = new Vector2(0f, 84f);
+            header.sizeDelta = new Vector2(0f, 104f);
 
             var title = DemoUi.Label("title", header,
-                "OneText <color=#8B949E>· what a text engine actually has to do</color>",
-                20f, DemoUi.Ink, _fonts);
+                "OneText <color=" + DemoUi.DimHex +
+                ">· what a text engine actually has to do</color>", 22f, DemoUi.Ink, _fonts);
             var titleRect = (RectTransform)title.transform;
             titleRect.anchorMin = new Vector2(0f, 1f);
             titleRect.anchorMax = new Vector2(1f, 1f);
             titleRect.pivot = new Vector2(0f, 1f);
             titleRect.anchoredPosition = new Vector2(16f, -8f);
-            titleRect.sizeDelta = new Vector2(-32f, 26f);
+            titleRect.sizeDelta = new Vector2(-32f, 28f);
             title.Wrap = TextWrap.NoWrap;
 
             var tabs = DemoUi.Rect("tabs", header);
             tabs.anchorMin = new Vector2(0f, 1f);
             tabs.anchorMax = new Vector2(1f, 1f);
             tabs.pivot = new Vector2(0f, 1f);
-            tabs.anchoredPosition = new Vector2(16f, -36f);
-            tabs.sizeDelta = new Vector2(-32f, 26f);
+            tabs.anchoredPosition = new Vector2(16f, -40f);
+            tabs.sizeDelta = new Vector2(-32f, 28f);
             var row = tabs.gameObject.AddComponent<HorizontalLayoutGroup>();
             row.childControlWidth = false;
             row.childControlHeight = true;
             row.childForceExpandWidth = false;
             row.spacing = 4f;
 
-            _claim = DemoUi.Label("claim", header, string.Empty, 13f, DemoUi.Dim, _fonts);
+            _claim = DemoUi.Label("claim", header, string.Empty, DemoUi.Claim, DemoUi.Dim, _fonts);
             var claimRect = (RectTransform)_claim.transform;
             claimRect.anchorMin = new Vector2(0f, 1f);
             claimRect.anchorMax = new Vector2(1f, 1f);
             claimRect.pivot = new Vector2(0f, 1f);
-            claimRect.anchoredPosition = new Vector2(16f, -64f);
-            claimRect.sizeDelta = new Vector2(-32f, 18f);
+            claimRect.anchoredPosition = new Vector2(16f, -72f);
+            claimRect.sizeDelta = new Vector2(-32f, 26f);
             _claim.Wrap = TextWrap.NoWrap;
 
             return tabs;

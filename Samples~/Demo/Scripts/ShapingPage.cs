@@ -125,7 +125,7 @@ namespace OneText.Samples
             _shaped.VerticalAlignment = VerticalAlignment.Middle;
             _shaped.Wrap = TextWrap.NoWrap;
 
-            _note = DemoUi.Label("note", host, string.Empty, 13f, DemoUi.Dim, Fonts);
+            _note = DemoUi.Label("note", host, string.Empty, DemoUi.Caption, DemoUi.Dim, Fonts);
             var noteRect = (RectTransform)_note.transform;
             noteRect.anchorMin = new Vector2(0f, 0f);
             noteRect.anchorMax = new Vector2(1f, 0f);
@@ -141,7 +141,7 @@ namespace OneText.Samples
             tableRect.offsetMin = new Vector2(0f, 48f);
             tableRect.offsetMax = new Vector2(0f, 0f);
 
-            _table = DemoUi.Label("rows", tablePanel, string.Empty, 13f, DemoUi.Ink, Fonts);
+            _table = DemoUi.Label("rows", tablePanel, string.Empty, DemoUi.Caption, DemoUi.Ink, Fonts);
             DemoUi.Fill((RectTransform)_table.transform, 10f);
             _table.Wrap = TextWrap.NoWrap;
 
@@ -248,7 +248,7 @@ namespace OneText.Samples
             }
 
             _scratch.Append("</mspace>\n")
-                .Append("<color=#8B949E>")
+                .Append("<color=" + DemoUi.DimHex + ">")
                 .Append(text.Length).Append(" characters in memory → ")
                 .Append(glyphs.Count).Append(" glyphs on screen")
                 .Append("</color>");

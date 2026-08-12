@@ -30,6 +30,21 @@ rather than boxes. Unmodified except for the `.bytes` suffix. Their licence is
 The same faces are also used, uncommitted, as test fixtures; see
 `Tests/Fonts~/OFL.txt`.
 
+## Noto Sans CJK JP and Noto Color Emoji (subsets)
+
+`Samples~/Demo/Fonts/NotoSansJP-DemoSubset.otf.bytes` and
+`NotoColorEmoji-DemoSubset.ttf.bytes` are **modified** copies: subsets cut to
+the seventeen ideographs and six emoji the demo's own specimen strings use, at
+twelve and eighty kilobytes rather than sixteen and ten megabytes. Nothing else
+is changed — outlines, bitmaps, metrics and layout features are the originals'.
+`Tools/make_demo_font_subsets.py` reproduces both from the full faces.
+
+Noto Sans CJK JP is © 2014-2021 Adobe; Noto Color Emoji is © 2022 Google Inc.
+Both are under the SIL Open Font License 1.1, neither declares a Reserved Font
+Name, and the OFL therefore permits a modified copy to keep the family name —
+which these do, so that what they were cut from stays legible. Their licence is
+the same `Samples~/Demo/Fonts/Noto-OFL.txt` and must not be separated from them.
+
 ## HarfBuzz
 
 OpenType text shaping engine, including `harfbuzz-subset`. Licensed under the

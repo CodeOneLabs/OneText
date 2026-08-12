@@ -87,9 +87,18 @@ namespace OneText.Samples.Editor
         // Primary first; the rest are the fallback chain, in order. Pretendard
         // carries Latin, Hangul, kana and the punctuation the vertical page
         // needs, and the four Noto faces carry the scripts the shaping page
-        // argues with. No CJK ideograph face: the smallest one is sixteen
-        // megabytes, which is not a thing to ship so that one specimen can be
-        // in Japanese.
+        // argues with.
+        //
+        // The last two are subsets, and that is the whole reason they can be
+        // here. A CJK ideograph face is sixteen megabytes and Noto Color Emoji
+        // is ten, which is not a thing to ship so that three specimens can be
+        // in Japanese, Chinese and emoji — but the demo does not need a CJK
+        // face, it needs seventeen ideographs and six emoji, and those are
+        // twelve and eighty kilobytes. Shipping boxes instead was the worse
+        // trade: a text engine whose demo cannot draw 日本語 is arguing against
+        // itself. `Tools/make_demo_font_subsets.py` regenerates both, and the
+        // set it cuts is read out of these sources, so a new specimen string
+        // means re-running it rather than editing a list.
         private static readonly string[] BundledFaces =
         {
             "PretendardVariable",
@@ -97,6 +106,8 @@ namespace OneText.Samples.Editor
             "NotoSansThai-Regular",
             "NotoSansDevanagari-Regular",
             "NotoSansHebrew-Regular",
+            "NotoSansJP-DemoSubset",
+            "NotoColorEmoji-DemoSubset",
         };
 
         private static void AssignBundledFont(GameObject host)

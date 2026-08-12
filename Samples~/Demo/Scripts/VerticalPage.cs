@@ -77,7 +77,7 @@ namespace OneText.Samples
 
             var notes = DemoUi.Label("notes", host,
                 "<b>What changed, character by character</b>\n" +
-                "<color=#8B949E>" +
+                "<color=" + DemoUi.DimHex + ">" +
                 "세로쓰기, 본문, 말  — Hangul and kana stay upright.\n" +
                 "Unity  — a Latin run rotates as one run, so the word still reads as a word.\n" +
                 "「 」  — corner brackets are swapped for the vertical glyphs the font ships " +
@@ -87,7 +87,7 @@ namespace OneText.Samples
                 "Lines stack right to left, and the line box advances across the column " +
                 "rather than down the page." +
                 "</color>",
-                13f, DemoUi.Ink, Fonts);
+                DemoUi.Caption, DemoUi.Ink, Fonts);
             var notesRect = (RectTransform)notes.transform;
             notesRect.anchorMin = new Vector2(0f, 0f);
             notesRect.anchorMax = new Vector2(1f, 0f);

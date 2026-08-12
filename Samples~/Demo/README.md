@@ -17,6 +17,13 @@ There is no prefab and nothing to lay out by hand. `OneTextDemo` builds its
 canvas in `Awake`, so what the demo claims lives in code you can diff rather
 than in a scene file nobody can read.
 
+**Tools → OneText → Samples → Build Web Demo** is the same thing as a WebGL
+player, with the settings the package's own `page~/demo/` was built with —
+Brotli *and* its decompression fallback, because the page is served from
+GitHub Pages and a static host cannot set `Content-Encoding`. Copy the
+resulting `Build/` over `page~/demo/Build/`; the `index.html` beside it is
+hand-written and stays.
+
 ## Fonts
 
 Leave the fonts empty and the demo runs on `SystemFonts`, which finds
@@ -38,6 +45,15 @@ Devanagari, Thai, Hebrew, Hangul, kana, Han and colour emoji. The Noto families
 cover all of it and are OFL-licensed. Rows with no coverage draw tofu, which is
 honest — and the stats panel says which of the three font routes it took, so
 "the demo drew boxes" and "the demo had no fonts" do not look the same.
+
+Seven faces ship with the sample, and the last two are subsets: the Han row and
+the emoji row need a sixteen-megabyte CJK face and a ten-megabyte colour emoji
+face to cover them, and they are here as twelve and eighty kilobytes cut to the
+characters the specimens actually contain.
+`Tools/make_demo_font_subsets.py` reads that set out of these sources rather
+than a list, so a new specimen string is re-run rather than remembered — and a
+specimen nobody cut for shows up as the tofu it is instead of quietly resolving
+through a system font that no build will have.
 
 ## Reading the numbers
 

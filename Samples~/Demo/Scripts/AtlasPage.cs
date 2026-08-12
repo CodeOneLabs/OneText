@@ -103,13 +103,13 @@ namespace OneText.Samples
             raw.raycastTarget = false;
             _sheetRect = imageRect;
 
-            _caption = DemoUi.Label("caption", sheetBody, string.Empty, 12f, DemoUi.Dim, Fonts);
+            _caption = DemoUi.Label("caption", sheetBody, string.Empty, DemoUi.Caption, DemoUi.Dim, Fonts);
             var captionRect = (RectTransform)_caption.transform;
             captionRect.anchorMin = new Vector2(0f, 0f);
             captionRect.anchorMax = new Vector2(1f, 0f);
             captionRect.pivot = new Vector2(0f, 0f);
-            captionRect.anchoredPosition = new Vector2(10f, 34f);
-            captionRect.sizeDelta = new Vector2(-20f, 20f);
+            captionRect.anchoredPosition = new Vector2(10f, 38f);
+            captionRect.sizeDelta = new Vector2(-20f, 24f);
             _caption.Wrap = TextWrap.NoWrap;
 
             var sheetButtons = DemoUi.Rect("buttons", sheetBody);
@@ -179,24 +179,24 @@ namespace OneText.Samples
             // Two labels, not one: the table is monospaced and must not wrap,
             // and the sentence under it must. One label cannot be both, and the
             // version that tried had its last words cut off at the panel edge.
-            _stats = DemoUi.Label("rows", statsBody, string.Empty, 13f, DemoUi.Ink, Fonts);
+            _stats = DemoUi.Label("rows", statsBody, string.Empty, DemoUi.Caption, DemoUi.Ink, Fonts);
             var statsTextRect = (RectTransform)_stats.transform;
             statsTextRect.anchorMin = new Vector2(0f, 0f);
             statsTextRect.anchorMax = new Vector2(1f, 1f);
-            statsTextRect.offsetMin = new Vector2(10f, 62f);
+            statsTextRect.offsetMin = new Vector2(10f, 74f);
             statsTextRect.offsetMax = new Vector2(-10f, -10f);
             _stats.Wrap = TextWrap.NoWrap;
 
             _note = DemoUi.Label("note", statsBody,
                 "Turn on every script above. The tile count climbs and the shelves fill, " +
                 "and the two rows that decide the draw call — texture arrays and materials — " +
-                "do not move.", 13f, DemoUi.Dim, Fonts);
+                "do not move.", DemoUi.Caption, DemoUi.Dim, Fonts);
             var noteRect = (RectTransform)_note.transform;
             noteRect.anchorMin = new Vector2(0f, 0f);
             noteRect.anchorMax = new Vector2(1f, 0f);
             noteRect.pivot = new Vector2(0f, 0f);
             noteRect.anchoredPosition = new Vector2(10f, 8f);
-            noteRect.sizeDelta = new Vector2(-20f, 48f);
+            noteRect.sizeDelta = new Vector2(-20f, 60f);
 
             _on[0] = true;
             Rebuild();
@@ -218,7 +218,7 @@ namespace OneText.Samples
                 _scratch.Append(Scripts[i].Text);
             }
             if (_scratch.Length == 0)
-                _scratch.Append("<color=#8B949E>nothing selected — the sheet keeps what it " +
+                _scratch.Append("<color=" + DemoUi.DimHex + ">nothing selected — the sheet keeps what it " +
                                 "already rasterised until something evicts it</color>");
             _specimen.Text = _scratch.ToString();
         }
@@ -257,10 +257,10 @@ namespace OneText.Samples
                 + (SharedGlyphAtlas.ColorAtlasExists ? 1 : 0);
 
             _scratch.Append("<mspace=0.62em>");
-            Row("texture arrays", sheets + "  <color=#8B949E>(sdf" +
+            Row("texture arrays", sheets + "  <color=" + DemoUi.DimHex + ">(sdf" +
                 (SharedGlyphAtlas.PreciseAtlasExists ? ", msdf" : "") +
                 (SharedGlyphAtlas.ColorAtlasExists ? ", colour" : "") + ")</color>");
-            Row("materials", "1  <color=#8B949E>shared by every label</color>");
+            Row("materials", "1  <color=" + DemoUi.DimHex + ">shared by every label</color>");
             Row("slice size", settings.TextureSize + " × " + settings.TextureSize);
             Row("slices", settings.LayerCount.ToString());
             Row("glyph tiles", stats.TileCount.ToString());

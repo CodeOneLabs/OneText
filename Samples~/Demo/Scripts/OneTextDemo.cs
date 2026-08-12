@@ -215,7 +215,7 @@ namespace OneText.Samples
             header.sizeDelta = new Vector2(0f, 46f);
 
             var title = Track(DemoUi.Label("title", header,
-                "OneText <color=#8B949E>· every language, shaped correctly</color>",
+                "OneText <color=" + DemoUi.DimHex + ">· every language, shaped correctly</color>",
                 20f, DemoUi.Ink, _fonts));
             var titleRect = DemoUi.Fill((RectTransform)title.transform);
             titleRect.offsetMin = new Vector2(16f, 0f);
@@ -258,7 +258,7 @@ namespace OneText.Samples
 
             DemoUi.Rule(list);
             Track(DemoUi.Label("entrance-head", list,
-                "<color=#8B949E>these settle and stop — press Replay</color>", 12f,
+                "<color=" + DemoUi.DimHex + ">these settle and stop — press Replay</color>", 12f,
                 DemoUi.Dim, _fonts));
 
             foreach (var (tag, note) in EntranceEffects)
@@ -331,12 +331,12 @@ namespace OneText.Samples
             DemoUi.Fill((RectTransform)body.parent, 0f);
 
             _stressCaption = Track(DemoUi.Label("caption", body,
-                "empty — press + " + _stressStep, 12f, DemoUi.Dim, _fonts));
+                "empty — press + " + _stressStep, DemoUi.Caption, DemoUi.Dim, _fonts));
             var captionRect = (RectTransform)_stressCaption.transform;
             captionRect.anchorMin = new Vector2(0f, 1f);
             captionRect.anchorMax = new Vector2(1f, 1f);
             captionRect.pivot = new Vector2(0.5f, 1f);
-            captionRect.sizeDelta = new Vector2(-20f, 18f);
+            captionRect.sizeDelta = new Vector2(-20f, 22f);
             captionRect.anchoredPosition = new Vector2(0f, -4f);
 
             _stressField = DemoUi.Rect("field", body);
@@ -483,7 +483,7 @@ namespace OneText.Samples
                 "measured · unity's counters, then ours", _fonts);
             DemoUi.Fill((RectTransform)body.parent, 0f);
 
-            var text = Track(DemoUi.Label("text", body, "measuring…", 13f, DemoUi.Dim, _fonts));
+            var text = Track(DemoUi.Label("text", body, "measuring…", DemoUi.Caption, DemoUi.Dim, _fonts));
             var rect = DemoUi.Fill((RectTransform)text.transform, 10f);
             rect.offsetMax = new Vector2(-10f, -6f);
 
@@ -503,7 +503,7 @@ namespace OneText.Samples
             captionRect.anchorMin = new Vector2(0f, 0f);
             captionRect.anchorMax = new Vector2(1f, 0f);
             captionRect.pivot = new Vector2(0.5f, 0f);
-            captionRect.sizeDelta = new Vector2(-20f, 18f);
+            captionRect.sizeDelta = new Vector2(-20f, 22f);
             captionRect.anchoredPosition = new Vector2(0f, 6f);
 
             // Square, and centred: an atlas is square and stretching it to a
@@ -537,11 +537,11 @@ namespace OneText.Samples
             group.childAlignment = TextAnchor.UpperLeft;
 
             DemoUi.Button("replay", row, _fonts, Replay);
-            DemoUi.Button("precise ⇄", row, _fonts, TogglePrecise);
+            DemoUi.Button("precise ↔", row, _fonts, TogglePrecise);
             DemoUi.Button("+ " + _stressStep, row, _fonts, () => AddStress(_stressStep));
             DemoUi.Button("clear", row, _fonts, ClearStress);
-            DemoUi.Button("atlas ⇄", row, _fonts, () => _atlas.NextAtlas());
-            DemoUi.Button("layer ▸", row, _fonts, () => _atlas.NextLayer(1));
+            DemoUi.Button("atlas ↔", row, _fonts, () => _atlas.NextAtlas());
+            DemoUi.Button("layer ▶", row, _fonts, () => _atlas.NextLayer(1));
 
             var rasterise = DemoUi.Button("+" + _rasteriseStep + " glyphs", row, _fonts, Rasterise);
             rasterise.gameObject.name = "rasterise";

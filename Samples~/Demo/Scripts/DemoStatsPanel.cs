@@ -117,7 +117,7 @@ namespace OneText.Samples
         {
             _builder.Clear();
 
-            _builder.Append("<color=#8B949E>frame</color>\n");
+            _builder.Append("<color=" + DemoUi.DimHex + ">frame</color>\n");
             KeyValue("fps", _fps.ToString("0"));
             KeyValue("batches", Count(_batches));
             KeyValue("setpass", Count(_setPass));
@@ -126,12 +126,12 @@ namespace OneText.Samples
             KeyValue("vertices", Count(_vertices));
             AppendBatchBudget();
 
-            _builder.Append("\n<color=#8B949E>memory</color>\n");
+            _builder.Append("\n<color=" + DemoUi.DimHex + ">memory</color>\n");
             KeyValue("total reserved", Bytes(_totalMemory));
             KeyValue("gc reserved", Bytes(_gcMemory));
             KeyValue("textures", Bytes(_textureMemory));
 
-            _builder.Append("\n<color=#8B949E>labels</color>\n");
+            _builder.Append("\n<color=" + DemoUi.DimHex + ">labels</color>\n");
             KeyValue("onetext labels", Counted.Count.ToString());
             int animating = 0, characters = 0;
             for (int i = 0; i < Counted.Count; i++)
@@ -145,7 +145,7 @@ namespace OneText.Samples
             KeyValue("characters", characters.ToString());
             KeyValue("fonts", _fonts != null ? _fonts.Describe() : "-");
 
-            _builder.Append("\n<color=#8B949E>atlas · onetext's own count</color>\n");
+            _builder.Append("\n<color=" + DemoUi.DimHex + ">atlas · onetext's own count</color>\n");
             AppendAtlases();
 
             if (!_batches.Valid)
@@ -190,7 +190,7 @@ namespace OneText.Samples
         private void AppendBatchBudget()
         {
             if (!_batches.Valid) return;
-            _builder.Append("  <color=#8B949E>text alone is 1 batch, measured.\n")
+            _builder.Append("  <color=" + DemoUi.DimHex + ">text alone is 1 batch, measured.\n")
                 .Append("  the rest is ").Append(_clipGroups).Append(" scroll mask")
                 .Append(_clipGroups == 1 ? "" : "s")
                 .Append(", ui images, atlas view —\n")

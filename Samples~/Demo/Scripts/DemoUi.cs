@@ -20,13 +20,49 @@ namespace OneText.Samples
     internal static class DemoUi
     {
         internal static readonly Color Ink = new Color32(0xE6, 0xED, 0xF3, 0xFF);
-        internal static readonly Color Dim = new Color32(0x8B, 0x94, 0x9E, 0xFF);
+
+        /// <summary>
+        /// Secondary text. Lighter than the site's own #8B949E, because this is
+        /// not the site: the demo is letterboxed into a 16:9 frame inside a
+        /// page, so its canvas units land on screen at roughly seven-eighths
+        /// their nominal size, and a grey chosen against a full-width column of
+        /// CSS pixels arrives here a step darker than it was drawn.
+        /// <see cref="DimHex"/> is the same colour for the markup strings that
+        /// need it inline, and the two must not drift apart.
+        /// </summary>
+        internal const string DimHex = "#ADB7C2";
+
+        internal static readonly Color Dim = new Color32(0xAD, 0xB7, 0xC2, 0xFF);
         internal static readonly Color Accent = new Color32(0x58, 0xA6, 0xFF, 0xFF);
         internal static readonly Color Warn = new Color32(0xD2, 0x99, 0x22, 0xFF);
         internal static readonly Color Bad = new Color32(0xF8, 0x51, 0x49, 0xFF);
         internal static readonly Color Panel = new Color32(0x0D, 0x11, 0x17, 0xE8);
         internal static readonly Color PanelHead = new Color32(0x16, 0x1B, 0x22, 0xFF);
         internal static readonly Color Line = new Color32(0x30, 0x36, 0x3D, 0xFF);
+
+        /// <summary>
+        /// The demo's type sizes, in canvas units at the 1600×900 reference.
+        ///
+        /// Named because they were not, and a demo whose smallest text is
+        /// eleven units in one file and thirteen in the next has no smallest
+        /// size, it has a spread. The floor matters more than the spread: the
+        /// atlas's densest bucket is 24 ppem, so anything asking for less is
+        /// baked at 24 and *minified* to fit, and minifying a distance field is
+        /// where its edges start to shimmer. Fifteen units on a canvas that
+        /// scales to seven-eighths lands at about thirteen pixels — still under
+        /// the bucket, but close enough that the field is being read near the
+        /// density it was drawn at rather than half of it.
+        /// </summary>
+        internal const float Caption = 15f;
+
+        /// <inheritdoc cref="Caption"/>
+        internal const float Body = 16f;
+
+        /// <inheritdoc cref="Caption"/>
+        internal const float PanelTitle = 15f;
+
+        /// <inheritdoc cref="Caption"/>
+        internal const float Claim = 18f;
 
         internal static RectTransform Rect(string name, Transform parent)
         {
@@ -110,7 +146,7 @@ namespace OneText.Samples
             row.gameObject.AddComponent<ContentSizeFitter>().verticalFit =
                 ContentSizeFitter.FitMode.PreferredSize;
 
-            captionLabel = Label("caption", row, caption, 13f, Dim, fonts);
+            captionLabel = Label("caption", row, caption, Caption, Dim, fonts);
             return Label("specimen", row, text, size, Ink, fonts);
         }
 
@@ -127,7 +163,7 @@ namespace OneText.Samples
         /// several panels still sets its own anchors afterwards and wins.
         /// </summary>
         internal static RectTransform PanelWithTitle(string name, Transform parent,
-            string title, OneTextDemoFonts fonts, float titleHeight = 26f)
+            string title, OneTextDemoFonts fonts, float titleHeight = 30f)
         {
             var panel = Fill(GraphicRect(name, parent));
             var bg = panel.gameObject.AddComponent<Image>();
@@ -144,7 +180,7 @@ namespace OneText.Samples
             headBg.color = PanelHead;
             headBg.raycastTarget = false;
 
-            var titleLabel = Label("text", head, title, 13f, Ink, fonts);
+            var titleLabel = Label("text", head, title, PanelTitle, Ink, fonts);
             Fill((RectTransform)titleLabel.transform, 0f);
             ((RectTransform)titleLabel.transform).offsetMin = new Vector2(10f, 0f);
             ((RectTransform)titleLabel.transform).offsetMax = new Vector2(-10f, 0f);
@@ -228,15 +264,15 @@ namespace OneText.Samples
             button.colors = colors;
             button.onClick.AddListener(() => onClick());
 
-            var text = Label("text", rect, label, 13f, Ink, fonts);
+            var text = Label("text", rect, label, Caption, Ink, fonts);
             Fill((RectTransform)text.transform, 0f);
             text.Alignment = TextAlignment.Center;
             text.VerticalAlignment = VerticalAlignment.Middle;
             text.Wrap = TextWrap.NoWrap;
 
             var element = rect.gameObject.AddComponent<LayoutElement>();
-            element.minHeight = 24f;
-            element.preferredHeight = 24f;
+            element.minHeight = 28f;
+            element.preferredHeight = 28f;
             if (width > 0f) element.preferredWidth = width;
             return button;
         }

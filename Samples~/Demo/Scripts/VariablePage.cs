@@ -123,7 +123,7 @@ namespace OneText.Samples
             explainPanel.offsetMin = Vector2.zero;
             explainPanel.offsetMax = Vector2.zero;
 
-            _explain = DemoUi.Label("text", explainBody, string.Empty, 13f, DemoUi.Ink, Fonts);
+            _explain = DemoUi.Label("text", explainBody, string.Empty, DemoUi.Caption, DemoUi.Ink, Fonts);
             DemoUi.Fill((RectTransform)_explain.transform, 10f);
 
             BuildAxes();
@@ -142,11 +142,11 @@ namespace OneText.Samples
                     "Assign a variable font — one with an <b>fvar</b> table, such as a " +
                     "Noto Sans variable build — to the demo's font stack and this page " +
                     "grows one slider per axis the file declares.",
-                    14f, DemoUi.Ink, Fonts);
+                    DemoUi.Body, DemoUi.Ink, Fonts);
                 DemoUi.Label("flat", _ladderColumn,
-                    Sample + "   <size=12><color=#8B949E>the only instance this file has" +
+                    Sample + "   <size=14><color=" + DemoUi.DimHex + ">the only instance this file has" +
                     "</color></size>", 26f, DemoUi.Ink, Fonts).Wrap = TextWrap.NoWrap;
-                _explain.Text = "<color=#8B949E>Nothing to compare: a static face is one " +
+                _explain.Text = "<color=" + DemoUi.DimHex + ">Nothing to compare: a static face is one " +
                                 "instance per file by definition.</color>";
                 return;
             }
@@ -174,10 +174,10 @@ namespace OneText.Samples
                 ContentSizeFitter.FitMode.PreferredSize;
 
             var readout = DemoUi.Label("label", row,
-                Describe(axis, axis.Default), 13f, DemoUi.Ink, Fonts);
+                Describe(axis, axis.Default), DemoUi.Caption, DemoUi.Ink, Fonts);
             readout.Wrap = TextWrap.NoWrap;
             var readoutElement = readout.gameObject.AddComponent<LayoutElement>();
-            readoutElement.preferredHeight = 18f;
+            readoutElement.preferredHeight = 22f;
             _readouts.Add(readout);
 
             var slider = DemoUi.Slider(row, axis.Minimum, axis.Maximum, axis.Default,
@@ -188,7 +188,7 @@ namespace OneText.Samples
 
         private static string Describe(FontAxis axis, float value) =>
             "<b>" + axis.Tag + "</b>  " + value.ToString("0.#") +
-            "   <color=#8B949E>" + axis.Minimum.ToString("0.#") + " … " +
+            "   <color=" + DemoUi.DimHex + ">" + axis.Minimum.ToString("0.#") + " … " +
             axis.Maximum.ToString("0.#") + "</color>";
 
         private void OnAxis(int index, float value)
@@ -281,7 +281,7 @@ namespace OneText.Samples
                 for (int a = 0; a < _values.Count; a++) instance[a] = _values[a];
                 instance[0] = new FontVariation(axis.Tag, value);
 
-                _rungLabels[i].Text = Sample + "   <size=12><color=#8B949E>" +
+                _rungLabels[i].Text = Sample + "   <size=14><color=" + DemoUi.DimHex + ">" +
                                       axis.Tag + " " + value.ToString("0") + "</color></size>";
                 _rungLabels[i].SetVariations(instance);
             }
@@ -306,7 +306,7 @@ namespace OneText.Samples
             // instance, and the count multiplies with every axis.
             long instances = 1;
             for (int i = 0; i < _axes.Length; i++) instances *= 9;
-            _scratch.Append("<color=#8B949E>A static family covering the same ground at nine " +
+            _scratch.Append("<color=" + DemoUi.DimHex + ">A static family covering the same ground at nine " +
                             "steps per axis would be <b>").Append(instances)
                 .Append("</b> separate files — and would still have nothing between the " +
                         "steps. Here the steps do not exist: there is one file and a " +
