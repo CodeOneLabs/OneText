@@ -1,4 +1,5 @@
 using System.IO;
+using OneText.Editor;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -57,7 +58,11 @@ namespace OneText.Samples.Editor
             camera.cullingMask = 0;
             cameraGo.tag = "MainCamera";
 
-            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+            // The module is chosen rather than named: StandaloneInputModule
+            // throws on every frame in a project using the Input System, and a
+            // demo scene that does that is a demo of nothing working.
+            OneTextEventSystemFactory.AddInputModule(
+                new GameObject("EventSystem", typeof(EventSystem)));
 
             var host = new GameObject("OneText Demo", root);
             AssignBundledFont(host);

@@ -108,6 +108,9 @@ namespace OneText.UGUI
         private readonly List<Rect> _rectScratch = new List<Rect>();
         private readonly Event _processingEvent = new Event();
         private IImeInput _ime;
+        // Whether this field is the one that switched the input method on. See
+        // StopInputMethod, which is reached by fields that never began.
+        private bool _imeBegun;
         private MobileTextInput _mobile;
         private bool _focused;
         // True only inside OnPointerDown, so that Focus — which that call
@@ -429,12 +432,26 @@ namespace OneText.UGUI
             }
 
             _ime ??= ImeInput.Create();
-            _ime?.Begin();
+            if (_ime == null || _imeBegun) return;
+            _ime.Begin();
+            _imeBegun = true;
         }
 
         private void StopInputMethod()
         {
-            _ime?.End();
+            // Only if this field turned it on. An input method is one switch
+            // for the whole process — Input.imeCompositionMode is, and so is
+            // the Input System's — and EndEditing is reached by more than the
+            // end of an editing session: OnDisable calls it, and so does
+            // clearing inputMethodEnabled, on fields that have not been focused
+            // for ten minutes. A field that never began must not end, or hiding
+            // a panel switches the input method off underneath whichever field
+            // is composing at that moment, mid-syllable.
+            if (_imeBegun)
+            {
+                _ime?.End();
+                _imeBegun = false;
+            }
             if (_mobile != null) { _mobile.Close(); _mobile = null; }
         }
 

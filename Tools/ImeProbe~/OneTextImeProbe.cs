@@ -17,6 +17,12 @@
 //  So this prints what the two channels actually say, frame by frame, and the
 //  next change gets made against a recording instead of a guess.
 //
+//  It runs under every Active Input Handling setting, including "Input System
+//  Package (New)". The three members it reads — imeCompositionMode,
+//  compositionString, imeIsSelected — are exempt from the guard that makes the
+//  rest of UnityEngine.Input throw there, and they are the channel OneText
+//  itself composes through, so this is the probe to reach for first.
+//
 //  HOW TO USE IT
 //
 //   1. Copy this file into your project's Assets folder — anywhere inside it.
@@ -96,8 +102,6 @@ public sealed class OneTextImeProbe : MonoBehaviour
              "it. Change it if this key is bound to something in your game.")]
     public KeyCode markKey = KeyCode.F9;
 
-#if ENABLE_LEGACY_INPUT_MANAGER
-
     private string _composition = string.Empty;
     private int _compositionChangedFrame = -1;
     private int _compositionSinceFrame;
@@ -132,7 +136,7 @@ public sealed class OneTextImeProbe : MonoBehaviour
 
     private void OnDisable()
     {
-        // Auto rather than Off, for the reason LegacyImeInput gives: Off would
+        // Auto rather than Off, for the reason ImguiImeInput gives: Off would
         // leave the input method disabled for everything else in the editor.
         if (enableImeMyself) Input.imeCompositionMode = IMECompositionMode.Auto;
     }
@@ -278,16 +282,4 @@ public sealed class OneTextImeProbe : MonoBehaviour
 
     private static string Quote(string value) => value.Length == 0 ? "\"\"" : $"\"{value}\"";
 
-#else
-
-    private void OnEnable() =>
-        Debug.LogWarning(
-            "[IME] This probe reads Input.compositionString, and this project has " +
-            "Active Input Handling set to \"Input System Package (New)\", where that " +
-            "property throws instead of answering. Set Project Settings > Player > " +
-            "Active Input Handling to \"Both\" for the length of this test — it changes " +
-            "nothing else about how the project runs — or say so and a probe for the " +
-            "other backend can be written instead.");
-
-#endif
 }

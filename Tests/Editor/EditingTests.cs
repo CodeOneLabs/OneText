@@ -507,6 +507,57 @@ namespace OneText.Tests
             Assert.IsFalse(arbiter.ShouldSwallow('a'), "and the guard does not resume");
         }
 
+        // -------------------------------------------------- choosing a backend
+
+        /// <summary>
+        /// The measurement the whole backend choice now rests on, kept as a
+        /// test so that a Unity version or a platform where it stops being true
+        /// says so here rather than in somebody's bug report.
+        ///
+        /// <c>UnityEngine.Input</c>'s input-method members answer under every
+        /// Active Input Handling setting, including "Input System Package
+        /// (New)", where its device members throw. Believing otherwise — the
+        /// <c>#if ENABLE_LEGACY_INPUT_MANAGER</c> that used to be around
+        /// <c>ImguiImeInput</c> — is what left every project using the Input
+        /// System composing through a channel that reports nothing on macOS,
+        /// and typing 안녕하세요 into one of those produced
+        /// ㅇㅏㄴㄴㅕㅇㅎㅏㅅㅔㅇㅛ: every jamo committed on its own, because
+        /// the platform was never asked to compose.
+        /// </summary>
+        [Test]
+        public void The_Platform_Input_Method_Answers_Whatever_The_Input_Backend_Is()
+        {
+            Assert.IsTrue(ImeInput.PlatformImeAnswers(),
+                "UnityEngine.Input's input-method members did not answer in the configuration " +
+                "these tests run in. If that is a real change and not a bug, the Input System " +
+                "backend is the fallback and this is where the decision to lean on it gets " +
+                "made — but nothing about the current arrangement is safe until somebody " +
+                "looks.");
+        }
+
+        /// <summary>
+        /// And that a field actually gets it. Registration wins over the
+        /// built-in backend, which is what lets these tests drive composition
+        /// by hand, so the assertion has to be made with nothing registered.
+        /// </summary>
+        [Test]
+        public void A_Field_With_Nothing_Registered_Gets_The_Built_In_Input_Method()
+        {
+            ImeInput.Unregister();
+            try
+            {
+                Assert.IsInstanceOf<ImguiImeInput>(ImeInput.Create(),
+                    "a field would compose through something else, or through nothing: " +
+                    ImeInput.Describe());
+            }
+            finally
+            {
+                // The fixture registered the fake in SetUp and the next test
+                // expects it there.
+                ImeInput.Register(() => _ime);
+            }
+        }
+
         // ---------------------------------------------------------- the field
 
         /// <summary>An input method we can type into, in place of the platform's.</summary>
@@ -524,7 +575,7 @@ namespace OneText.Tests
             /// when the field ends the session, because they answer the same
             /// question differently and the difference is load-bearing.
             ///
-            /// On, it is <c>LegacyImeInput</c>: a poll of the platform, which
+            /// On, it is <c>ImguiImeInput</c>: a poll of the platform, which
             /// goes on reporting a composition the platform never dropped —
             /// nothing in <see cref="IImeInput"/> can ask it to. Off (the
             /// default, and what every test that does not care about this
