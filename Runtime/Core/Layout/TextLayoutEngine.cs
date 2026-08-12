@@ -165,8 +165,18 @@ namespace OneText
             if (n == 0)
             {
                 // An empty label still occupies one line box: one column's
-                // width of it, when the columns run down.
-                Publish(settings, result, 0f, EmptyBlockExtent(primary, settings));
+                // width of it, when the columns run down. It is a whole line
+                // and not just an extent, which this used to publish on its
+                // own — no line, and therefore nothing for a caret to be
+                // measured against. TextHitTest answered a zero-height
+                // rectangle at the origin, so clicking into an empty field
+                // drew no caret at all and the field looked like it had not
+                // taken focus. Every other empty line in the engine is a real
+                // line (a blank line between two paragraphs is one, with
+                // exactly these metrics); this one is now too.
+                result.Lines.Add(EmptyLine(primary, settings, 0f));
+                Publish(settings, result, 0f, result.Lines[0].Height);
+                Align(settings, result);
                 return;
             }
 
@@ -1213,13 +1223,7 @@ namespace OneText
                 gap = Math.Max(gap, run.Font.LineGap * scale);
             }
             if (_lineRuns.Count == 0)
-            {
-                var font = settings.Fonts.Primary;
-                float scale = settings.FontSize / font.UnitsPerEm;
-                ascent = vertical ? settings.FontSize * 0.5f : font.Ascender * scale;
-                descent = vertical ? settings.FontSize * 0.5f : -font.Descender * scale;
-                gap = vertical ? 0f : font.LineGap * scale;
-            }
+                EmptyLineMetrics(settings.Fonts.Primary, settings, out ascent, out descent, out gap);
 
             // A line carrying ruby is taller by exactly the annotation: the
             // ruby's own line box, stacked on top of the ascent of the run it
@@ -2054,6 +2058,14 @@ namespace OneText
                     TextAlignment.Justified => line.IsParagraphEnd && line.IsRightToLeft ? slack : 0f,
                     _ => 0f,
                 };
+
+                // Recorded on the line whether or not it moves anything, so
+                // that a line with no runs — a blank one, or the only line of
+                // an empty label — still knows where alignment put it. That is
+                // the only place a caret can be measured from when there is no
+                // run to measure against.
+                line.InlineOffset = offset;
+                result.Lines[l] = line;
                 if (offset == 0f) continue;
 
                 for (int r = line.RunStart; r < line.RunStart + line.RunCount; r++)
@@ -2080,22 +2092,58 @@ namespace OneText
             return alignment;
         }
 
-        private static float LineHeight(FontData font, in TextLayoutSettings settings)
+        // LineHeight lived here and had one caller, EmptyBlockExtent, which
+        // measured an empty label's line without laying one out. Both are gone:
+        // the empty label has a real line now, and its height comes off that
+        // line like every other height in this file.
+
+        /// <summary>
+        /// The line box of a line with nothing on it, which the label's own
+        /// font decides because no run is there to: a line's height across the
+        /// page, a column's em square down it.
+        ///
+        /// One place rather than two. A blank line between two paragraphs and
+        /// a label with no text at all are the same line box, and they were
+        /// computed separately until the second one turned out not to be
+        /// computing a line at all.
+        /// </summary>
+        private static void EmptyLineMetrics(FontData font, in TextLayoutSettings settings,
+            out float ascent, out float descent, out float gap)
         {
+            bool vertical = IsVertical(settings);
             float scale = settings.FontSize / font.UnitsPerEm;
-            float spacing = settings.LineSpacing > 0f ? settings.LineSpacing : 1f;
-            return (font.Ascender - font.Descender + font.LineGap) * scale * spacing;
+            ascent = vertical ? settings.FontSize * 0.5f : font.Ascender * scale;
+            descent = vertical ? settings.FontSize * 0.5f : -font.Descender * scale;
+            gap = vertical ? 0f : font.LineGap * scale;
         }
 
         /// <summary>
-        /// What one empty line box takes on the block axis: a line's height
-        /// across the page, a column's em-square width down it.
+        /// The one line of a label with no text, at <paramref name="cursorY"/>
+        /// on the block axis. Its baseline is placed the way every other line's
+        /// is, so that a caret in an empty field stands exactly where the first
+        /// character will.
         /// </summary>
-        private static float EmptyBlockExtent(FontData font, in TextLayoutSettings settings)
+        private static TextLine EmptyLine(FontData font, in TextLayoutSettings settings, float cursorY)
         {
-            if (!IsVertical(settings)) return LineHeight(font, settings);
+            EmptyLineMetrics(font, settings, out float ascent, out float descent, out float gap);
             float spacing = settings.LineSpacing > 0f ? settings.LineSpacing : 1f;
-            return settings.FontSize * spacing;
+            float height = (ascent + descent + gap) * spacing;
+            return new TextLine
+            {
+                RunStart = 0,
+                RunCount = 0,
+                TextStart = 0,
+                TextLength = 0,
+                Width = 0f,
+                Baseline = cursorY + (height - (ascent + descent)) * 0.5f + ascent,
+                Ascent = ascent,
+                Descent = descent,
+                Height = height,
+                ParagraphLevel = settings.BaseDirection == BidiAlgorithm.AutoDirection
+                    ? (byte)0
+                    : settings.BaseDirection,
+                IsParagraphEnd = true,
+            };
         }
 
         private static bool IsMandatoryBreakChar(string text, int index)

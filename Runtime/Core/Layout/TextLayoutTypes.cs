@@ -362,6 +362,19 @@ namespace OneText
         /// </summary>
         public float Ascent, Descent, Height;
 
+        /// <summary>
+        /// What alignment moved this line by along the inline axis, in render
+        /// units.
+        ///
+        /// Redundant for a line that has runs, because alignment is applied by
+        /// moving those runs and every reader takes the position off them. It
+        /// is here for the line that has none: a blank line, or the single line
+        /// of an empty label, still has a place a caret goes, and centred text
+        /// puts that place in the middle of the box rather than at its edge.
+        /// Nothing but a caret has ever needed to ask.
+        /// </summary>
+        public float InlineOffset;
+
         /// <summary>Embedding level of the paragraph this line belongs to.</summary>
         public byte ParagraphLevel;
 

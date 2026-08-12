@@ -1137,6 +1137,56 @@ namespace OneText.Tests
             Destroy(field);
         }
 
+        /// <summary>
+        /// Clicking into an empty field has to show a caret, which is the one
+        /// state where there is no text to measure one against. Unity's field
+        /// and TextMesh Pro's both draw a full line-height bar there; ours drew
+        /// nothing, so an empty field looked like it had not taken focus.
+        /// </summary>
+        [Test]
+        public void An_Empty_Field_Still_Draws_A_Caret()
+        {
+            var field = CreateField(out var label);
+            field.ActivateInputField();
+            field.UpdateVisuals();
+
+            var caret = label.GetCaretRect(0, 2f);
+            Assert.Greater(caret.height, 0f,
+                $"nothing is drawn for the caret of an empty field, so clicking into one looks " +
+                $"like nothing happened. (preferredHeight of the empty label is " +
+                $"{label.preferredHeight}, which says whether the layout made a line to " +
+                $"measure or none at all.)");
+            Assert.Greater(caret.width, 0f, "a caret with no width is not drawn either");
+
+            Destroy(field);
+        }
+
+        /// <summary>
+        /// And that the bar is where the text would have started, rather than
+        /// at the origin of a rect nobody laid out: a centred empty field puts
+        /// its caret in the middle, the way both of the others do.
+        /// </summary>
+        [Test]
+        public void The_Empty_Caret_Sits_Where_The_First_Character_Would()
+        {
+            var field = CreateField(out var label);
+            field.ActivateInputField();
+            field.UpdateVisuals();
+            var empty = label.GetCaretRect(0, 2f);
+
+            field.text = "x";
+            field.UpdateVisuals();
+            var typed = label.GetCaretRect(0, 2f);
+
+            Assert.AreEqual(typed.x, empty.x, 0.01f,
+                "the caret moves when the first character arrives, so it was not where that " +
+                "character was going to be");
+            Assert.AreEqual(typed.height, empty.height, 0.5f,
+                "the empty caret is a different height from the one beside a character");
+
+            Destroy(field);
+        }
+
         [Test]
         public void A_Read_Only_Field_Never_Starts_An_Input_Method()
         {
