@@ -26,10 +26,21 @@ namespace OneText.Samples.Editor
     ///       -executeMethod OneText.Samples.Editor.DemoWebBuild.Run
     ///
     /// with <c>ONETEXT_WEB_OUT</c> set to the output directory. Copy the
-    /// resulting <c>Build/</c> over <c>page~/demo/Build/</c> and leave
-    /// <c>page~/demo/index.html</c> alone: that page is hand-written — the
-    /// site's palette, a 16:9 frame, a note for visitors on a phone — and the
-    /// HTML this emits is thrown away.
+    /// resulting <c>Build/</c> over <c>page~/demo/Build/</c>. The HTML this
+    /// emits is thrown away — <c>page~/demo/index.html</c> is hand-written,
+    /// with the site's palette, a 16:9 frame and a note for visitors on a
+    /// phone — but one line of it is not optional: <b>bump the <c>build</c>
+    /// tag there</b>, which every <c>Build/</c> URL is versioned by.
+    ///
+    /// Skipping it does not produce a stale demo, it produces a broken one,
+    /// and only for people who have been to the page before. The loader keeps
+    /// the data file in IndexedDB under its URL and revalidates it only when
+    /// the browser cache says it is stale, which under the ten-minute
+    /// max-age GitHub Pages sends it is not; the wasm is fetched no-store and
+    /// is always new. The new code then starts against the previous build's
+    /// data and recurses until the stack gives out, before the first frame,
+    /// with a wasm trace that names nothing. Nobody who tests in a fresh
+    /// browser will ever see it.
     /// </summary>
     public static class DemoWebBuild
     {

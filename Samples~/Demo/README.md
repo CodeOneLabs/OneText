@@ -22,7 +22,11 @@ player, with the settings the package's own `page~/demo/` was built with —
 Brotli *and* its decompression fallback, because the page is served from
 GitHub Pages and a static host cannot set `Content-Encoding`. Copy the
 resulting `Build/` over `page~/demo/Build/`; the `index.html` beside it is
-hand-written and stays.
+hand-written and stays — except for the `build` tag near the top, which every
+`Build/` URL is versioned by and which has to move with the files. A returning
+visitor otherwise runs the new wasm against the data file the loader cached
+under the old URL, which does not degrade, it blows the stack before the first
+frame.
 
 ## Fonts
 

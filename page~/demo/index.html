@@ -78,14 +78,27 @@
     warn.textContent = message;
   }
 
+  // Bump this on every rebuild of Build/. It is not decoration.
+  //
+  // The loader keeps the data file in IndexedDB keyed by its URL, and asks the
+  // server about it again only when the browser's own cache says it is stale —
+  // which GitHub Pages, serving `cache-control: max-age=600`, does not for ten
+  // minutes. The wasm is fetched `no-store` and is always the new one. So a
+  // visitor who has been here before starts the new code against the previous
+  // build's data, and that pairing does not fail politely: it recurses until
+  // the stack gives out, before the first frame, with a wasm trace that names
+  // nothing. A new URL cannot collide with an old entry, and moving
+  // productVersion with it makes the loader drop what it was holding.
+  var build = "20260812";
+
   var config = {
-    dataUrl: "Build/demo.data.unityweb",
-    frameworkUrl: "Build/demo.framework.js.unityweb",
-    codeUrl: "Build/demo.wasm.unityweb",
+    dataUrl: "Build/demo.data.unityweb?b=" + build,
+    frameworkUrl: "Build/demo.framework.js.unityweb?b=" + build,
+    codeUrl: "Build/demo.wasm.unityweb?b=" + build,
     streamingAssetsUrl: "StreamingAssets",
     companyName: "CodeOneLabs",
     productName: "OneText",
-    productVersion: "1.0",
+    productVersion: build,
     showBanner: function (msg) { showWarning(msg); },
   };
 
@@ -97,7 +110,7 @@
   }
 
   var script = document.createElement("script");
-  script.src = "Build/demo.loader.js";
+  script.src = "Build/demo.loader.js?b=" + build;
   script.onload = function () {
     createUnityInstance(canvas, config, function (progress) {
       barfill.style.width = (100 * progress) + "%";
