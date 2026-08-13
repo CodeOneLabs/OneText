@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0] - 2026-08-12
+## [0.3.0] - 2026-08-13
 
 ### Added
 
@@ -506,6 +506,77 @@
   every click in the window. They ask the search index for a count now.
 
 ### Fixed
+
+- **The same Korean syllable typed twice is on screen twice.** Type 아, then 아
+  again, and the second one was in the field and nowhere to be seen: the caret
+  sat there as though nothing had been pressed, and the syllable appeared only
+  when an arrow key or Enter made the platform commit it too. Reported as
+  "it is written but it is not visible", which is exactly what it was.
+
+  It is the syllable boundary, in the one shape where the two channels cannot
+  be told apart by what they carry. A Hangul syllable splits when its last
+  jamo turns out to belong to the next one — 아 plus ㅇ composes 앙, and the ㅏ
+  after it commits 아 and leaves 아 composing — and the field reads the
+  composition before it drains the key queue, so the new syllable is already
+  the live one when the character for the old one arrives. Type two different
+  syllables and the character matches nothing; type the same one twice and it
+  matches the live composition exactly. The field read that as the platform
+  paying for the composition it was showing, ended a composition nobody had
+  paid for, and registered it as one the platform was only repeating — after
+  which every report of it was refused, and the syllable stayed in the input
+  method, invisible, until something else committed it.
+
+  What tells them apart is the composition that was replaced. A syllable
+  splits by giving up its last jamo, so what the platform commits is always
+  the previous composition minus that jamo: 앙 gives up 아. Payment the
+  composition of a moment ago can account for belongs to that one, and the
+  live composition is still owed — while a report that has not changed leaves
+  nothing to account for it, which is the ordinary case of a platform paying
+  late for the syllable it is still reporting, and that goes on being credited
+  as before.
+
+- **Typing resumes in a field that was left mid-composition.** Type 아아아아,
+  leave the field without pressing Enter, click back in and type 아아아아
+  again, and one syllable arrived. Not one per syllable — one, for the whole
+  second session, and it was the one the field committed itself on the way out
+  again. 가나다라 was eaten the same way, which is what said the cause was not
+  any of the guards that compare one syllable against another.
+
+  Read off a recording of macOS rather than reasoned about, and there are two
+  facts in it. Leaving the field is where the platform ends its composition and
+  delivers the syllable, so the field accepts that commit and arms the register
+  that refuses a second delivery of it — the guard for a platform that says the
+  same commit twice across a focus gap. And coming back does not start anything
+  fresh: the input method kept the syllable it was composing, so the first
+  keystroke reopens it (아 plus ㅇ is 앙) and the next one splits it, committing
+  the 아 the field already has. That first refusal is correct. Every one after
+  it was not, and they went on for ever: at a syllable boundary the composition
+  never ends, so nothing the register retires on ever happened, and every
+  commit in the session was the same 아.
+
+  So the register retires when the repeat it was armed for arrives. A repeat is
+  one repeat: the platform is saying one commit a second time, not holding a
+  syllable it will deliver on every keystroke from now on.
+
+  The same recording sharpened the fix above it. A character can pay for the
+  composition that was replaced (the syllable that split off) or for the one
+  still on screen (a platform settling up late for what it is still reporting),
+  and in the log both happen with the same syllable in the same field: the
+  first in the update the report changed, the second nine hundred updates
+  later. So "the composition that was replaced" is worth exactly one update
+  now, and what has been paid against it is counted apart from what has been
+  paid against the live one.
+
+- **The inspector's Size follows auto-size.** With **Auto size** on, the text
+  changed size and the **Size** field did not: it went on showing whatever had
+  been typed into it before, greyed out beside text drawn at some other size.
+  The one control that says how big the text is was the only thing on screen
+  not following it. It now reads the size auto-size chose for the current rect,
+  updates when the rect moves, and shows a mixed value when a multi-selection
+  fitted differently. The authored size is displayed rather than overwritten:
+  it is what the label goes back to when auto-size is switched off, and
+  stamping the fitted size over it would be a scene change made by looking at
+  a label.
 
 - **Korean, Japanese and Chinese compose in a project that uses the Input
   System.** They did not. Typing 안녕하세요 into a field there produced
