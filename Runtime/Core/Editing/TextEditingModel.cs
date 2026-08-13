@@ -32,6 +32,15 @@ namespace OneText
         // the reason lives.
         private string _handedOver = string.Empty;
 
+        // What the composition said before that change, which is what the
+        // characters arriving now are most likely paying for. Also
+        // NoteHandedOver; it is the only thing that tells a syllable being
+        // committed from the identical syllable being started. It is worth
+        // exactly one update — see Tick, which ages it out.
+        private string _replaced = string.Empty;
+        private bool _replacedThisUpdate;
+        private string _paidTheReplaced = string.Empty;
+
         /// <summary>Refuses every edit, including composition.</summary>
         public bool ReadOnly { get; set; }
 
@@ -270,12 +279,18 @@ namespace OneText
             }
 
             // A composition that says something new is a composition nothing
-            // has been handed over for yet.
+            // has been handed over for yet — and the one it replaced is what
+            // anything arriving next is probably paying for.
             // Ordinal on purpose, unlike the comparisons that ask whether two
             // strings are the same text: this one asks whether the platform's
             // report changed, and a report that changed shape changed.
             if (!string.Equals(_composition.Text, composing, StringComparison.Ordinal))
+            {
+                _replaced = _composition.Text;
+                _replacedThisUpdate = true;
+                _paidTheReplaced = string.Empty;
                 _handedOver = string.Empty;
+            }
 
             _composition.Text = composing;
             _composition.Caret = caretInComposition < 0
@@ -333,6 +348,20 @@ namespace OneText
         /// </summary>
         public bool Tick()
         {
+            // The composition a character can still be paying for is the one
+            // the report replaced in this update, and not one it replaced a
+            // thousand updates ago. Both cases exist and they look identical
+            // in the strings alone — a recording of macOS has 아 committed off
+            // 앙 in the same update as the report changing, and the same 아
+            // paid a second later against a report that had said 아 for nine
+            // hundred updates. The first belongs to the composition that was
+            // replaced; the second is the platform settling up for the one it
+            // is still showing. So the register lives for the update it was
+            // written in and the characters that update delivers, and this is
+            // where it ages out. See NoteHandedOver.
+            if (_replacedThisUpdate) _replacedThisUpdate = false;
+            else { _replaced = string.Empty; _paidTheReplaced = string.Empty; }
+
             string owed = Arbiter.Tick();
             return owed != null && InsertAtCaret(owed);
         }
@@ -388,6 +417,48 @@ namespace OneText
         private void NoteHandedOver(char character)
         {
             if (!_composition.Active) return;
+
+            // Whose composition this pays for, which is not always the one on
+            // screen. At a syllable boundary a Hangul IME finishes one syllable
+            // and starts the next in a single keystroke — 아 plus ㅇ composes
+            // 앙, and the ㅏ after it commits 아 and leaves 아 composing — and
+            // the field reads the composition before it drains the key queue,
+            // so the new syllable is already the live one when the character
+            // for the old one arrives. Type the same syllable twice and that
+            // character matches the live composition exactly.
+            //
+            // Crediting it there is the bug report "type 아 twice and the
+            // second one does not appear": the composition ends unpaid and is
+            // registered as a replay, after which every report of it is
+            // refused, and the syllable sits in the platform, invisible, until
+            // an arrow key or Enter makes the platform commit it too.
+            //
+            // The composition that was replaced is what tells them apart. A
+            // syllable splits because its last jamo belongs to the next one, so
+            // what the platform commits is always the previous composition
+            // minus that jamo: 앙 gives up 아. Payment the composition of a
+            // moment ago can account for is that one's, and the live one is
+            // still owed.
+            //
+            // The ordinary case is untouched by that. A platform paying late
+            // for the syllable it is still reporting pays the whole of what the
+            // report says, and what a report grew out of is shorter than what
+            // it says (하 became 한), so that payment is a prefix of nothing and
+            // goes on being credited below.
+            //
+            // Counted apart from what the live composition has been paid, and
+            // not merely skipped, because the two accumulations run at once: a
+            // jamo of the syllable that split off is not a jamo of the one
+            // being composed, and left in the same total it would still be
+            // there at the next payment, which is one syllable later and
+            // against a composition that never changed in between.
+            string toReplaced = _paidTheReplaced + character;
+            if (!string.IsNullOrEmpty(_replaced) &&
+                ImeCommitArbiter.TextStartsWith(_replaced, toReplaced))
+            {
+                _paidTheReplaced = toReplaced;
+                return;
+            }
 
             _handedOver += character;
 
@@ -470,6 +541,9 @@ namespace OneText
             if (_composition.Active) _displayDirty = true;
             _composition = ImeComposition.None;
             _handedOver = string.Empty;
+            _replaced = string.Empty;
+            _replacedThisUpdate = false;
+            _paidTheReplaced = string.Empty;
         }
 
         private string ApplyLimit(string value) =>

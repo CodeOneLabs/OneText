@@ -40,6 +40,11 @@ namespace OneText.Tests
         // quietly turn this into a second copy of a test we already have.
         private const string Hangul_HAN_Jamo = "\u1112\u1161\u11AB";
 
+        // 아 taken apart, for the same reason and read the same way: the
+        // syllable a Hangul IME splits off the one before it, delivered as
+        // the two jamo it is built from.
+        private const string Hangul_A_Jamo = "\u110B\u1161";
+
         // ---------------------------------------------------------- the model
 
         [Test]
@@ -1278,6 +1283,217 @@ namespace OneText.Tests
             Assert.AreEqual("안녕" + Hangul_HAN + "ㄱ", field.displayText);
 
             Destroy(field);
+        }
+
+        [Test]
+        public void The_Same_Syllable_Twice_In_A_Row_Is_Drawn_Twice()
+        {
+            // The bug report: "type 아, then 아 again, and the second one is in
+            // there but nothing shows until I press the right arrow or Enter."
+            //
+            // It is the syllable boundary again, with the one shape that makes
+            // the two channels indistinguishable by content. A Hangul syllable
+            // splits when its last jamo turns out to belong to the next one:
+            // 아 + ㅇ composes 앙, and the ㅏ after it commits 아 and leaves 아
+            // composing. The field polls the composition before it drains the
+            // key queue, so it sees the new 아 first and the committed 아
+            // second — and the character is then a perfect match for the
+            // composition standing under the caret, which is somebody else's.
+            //
+            // Believing it ended a composition nobody had paid for and
+            // registered it as a replay, after which every report of it was
+            // refused: the syllable stayed in the platform, invisible, until
+            // an arrow key or Enter made the platform commit it too.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+
+            foreach (string state in new[] { "ㅇ", "아" })
+            {
+                _ime.Composition = state;
+                field.UpdateEditing();
+            }
+            Assert.AreEqual(string.Empty, field.text, "a composition is not the value yet");
+
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+
+            Assert.AreEqual("아", field.text, "the syllable that finished is the value");
+            Assert.AreEqual("아", field.compositionString,
+                "and the identical one after it was taken for the platform repeating itself");
+            Assert.AreEqual("아아", field.displayText, "so the second one was nowhere on screen");
+
+            // The platform goes on reporting it for as long as the user looks
+            // at it, and none of those polls may take it away again.
+            for (int update = 0; update < 6; update++) field.UpdateEditing();
+            Assert.AreEqual("아아", field.displayText);
+            Assert.IsTrue(field.isComposing);
+
+            // Enter, which is what the reporter had to press: the platform
+            // finishes the syllable and delivers it, once.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            for (int update = 0; update < 4; update++) field.UpdateEditing();
+
+            Assert.AreEqual("아아", field.text);
+            Assert.AreEqual("아아", field.displayText);
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Repeated_Syllable_Left_Composing_Survives_Losing_Focus()
+        {
+            // The same sequence, ended the way a user ends it who does not
+            // press anything: they click away. The composition the field is
+            // holding is the second 아, so the value is both of them — the
+            // half of the report that said the text really was in there.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+
+            foreach (string state in new[] { "ㅇ", "아", "앙", "아" })
+            {
+                _ime.Composition = state;
+                field.UpdateEditing();
+            }
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+
+            field.DeactivateInputField();
+
+            Assert.AreEqual("아아", field.text, "the second syllable was never adopted, so nothing committed it");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void Typing_Resumes_In_A_Field_That_Was_Left_Mid_Composition()
+        {
+            // The report: type 아아아아, leave the field without pressing
+            // Enter, click back in and type 아아아아 again — and only one
+            // syllable arrives. Not the same syllable twice, either: 가나다라
+            // was eaten the same way, which is what said it was not any of the
+            // guards that compare one syllable with another.
+            //
+            // The frames below are a recording of macOS doing it, and the two
+            // facts that matter are both in it. Leaving the field is where the
+            // platform ends its composition and delivers the syllable, so the
+            // field accepts that commit and arms the register that refuses a
+            // second delivery of it. And coming back does not start anything
+            // fresh: the platform reopens the syllable it kept — 아 plus ㅇ is
+            // 앙 — and from then on every commit is a split, announced by no
+            // report ending, and every one of them is 아. The register
+            // swallowed the first, which was right, and then swallowed all of
+            // them, which is the bug: the value never grew, and the only
+            // syllable that ever landed was the one the field committed itself
+            // on the way out.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+
+            // f=4828..5278: ㅇ 아 앙 아 … four syllables, three of them
+            // committed at a split and the fourth still composing.
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            for (int syllable = 0; syllable < 3; syllable++)
+            {
+                _ime.Composition = "앙";
+                field.UpdateEditing();
+                _ime.Composition = "아";
+                field.UpdateEditing();
+                field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            }
+
+            Assert.AreEqual("아아아", field.text, "three committed");
+            Assert.AreEqual("아아아아", field.displayText, "and the fourth composing");
+
+            // f=5557: the click that takes focus away. The platform ends the
+            // composition and delivers the syllable in the same frame, and the
+            // field takes it — which is what arms the register.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            field.DeactivateInputField();
+
+            Assert.AreEqual("아아아아", field.text, "the platform's own commit is the fourth");
+            Assert.AreEqual("아", ImeCommitArbiter.Shared.AcceptedPlatformCommit,
+                "the register the rest of this test is about");
+
+            // f=5838: clicked back in. f=6132: the first keystroke reopens the
+            // syllable the platform kept rather than starting a new one.
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+
+            // f=6158: and the split delivers 아 — the same 아 the field already
+            // has, because that is the syllable the platform reopened. This one
+            // really is the platform saying it again.
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+
+            Assert.AreEqual("아아아아", field.text,
+                "the syllable the platform kept was typed a second time");
+
+            // f=6258..6550: three more, and these are the user's.
+            for (int syllable = 0; syllable < 3; syllable++)
+            {
+                _ime.Composition = "앙";
+                field.UpdateEditing();
+                _ime.Composition = "아";
+                field.UpdateEditing();
+                field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            }
+
+            Assert.AreEqual("아아아아" + "아아아", field.text,
+                "the register went on swallowing after the repeat it was armed for");
+            Assert.AreEqual("아", field.compositionString);
+            Assert.AreEqual("아아아아" + "아아아아", field.displayText,
+                "eight typed, eight on screen");
+
+            // The user stops for a moment and looks at it, which in the
+            // recording is nine hundred frames of the report saying 아.
+            for (int update = 0; update < 3; update++) field.UpdateEditing();
+
+            // f=7434: and then the end of that session, where the composition
+            // really does end — and the platform pays for it on the character
+            // channel a frame before the report goes quiet. That payment is
+            // the composition on screen being settled, not a syllable split off
+            // anything, and exactly one syllable may come of it.
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            _ime.Composition = string.Empty;
+            for (int update = 0; update < 6; update++) field.UpdateEditing();
+
+            Assert.AreEqual("아아아아" + "아아아아", field.text,
+                "the last syllable landed twice, or not at all");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Split_Syllable_Delivered_As_Jamo_Still_Belongs_To_The_One_Before_It()
+        {
+            // And the same, from a platform that hands the committed syllable
+            // back in the shape macOS likes: two characters where the report
+            // said one. Every jamo of it is the previous composition being
+            // paid, not this one.
+            var model = new TextEditingModel();
+            model.SetComposition("아");
+            model.SetComposition("앙");
+            model.SetComposition("아"); // 아 committed, 아 composing
+
+            foreach (char jamo in Hangul_A_Jamo)
+                model.AcceptCharacter(jamo, out _);
+
+            Assert.AreEqual(Hangul_A_Jamo, model.Text, "the jamo are the value");
+            Assert.IsTrue(model.IsComposing, "and the syllable being typed now is still being typed");
+            Assert.AreEqual("아", model.Composition.Text);
+            Assert.AreEqual(Hangul_A_Jamo + "아", model.DisplayText);
         }
 
         [Test]

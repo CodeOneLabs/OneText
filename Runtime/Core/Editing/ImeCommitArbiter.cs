@@ -344,7 +344,9 @@ namespace OneText
         /// Nothing about it is on a clock, for the same reason nothing else
         /// here is any more: a hundred frames passed, and the field spent some
         /// of them not ticking. It retires on evidence instead — the platform
-        /// announcing a fresh commit, or a character that is not this one.
+        /// announcing a fresh commit, a character that is not this one, or the
+        /// repeat itself arriving, which is the evidence that the thing this
+        /// was waiting for has now happened and cannot happen again.
         /// </summary>
         private bool IsThePlatformSayingItAgain(char character)
         {
@@ -355,10 +357,23 @@ namespace OneText
 
             if (string.Equals(repeat, _platformCommitDecomposed, StringComparison.Ordinal))
             {
-                // Said in full. The register stays armed rather than retiring:
-                // a syllable can only reach this field again through a
-                // composition, and a composition ending is what retires it.
-                _repeatSoFar = string.Empty;
+                // Said in full, and once is the whole of it: the platform is
+                // repeating one commit, not holding a syllable it will deliver
+                // for ever. So the register retires here.
+                //
+                // It used to stay armed, on the grounds that only a
+                // composition ending could retire it. A recording of typing
+                // 아아아아 into a field, leaving it and typing 아아아아 again
+                // is what that assumption cost. Resuming does not end a
+                // composition anywhere: the platform reopens the syllable it
+                // kept (아 plus ㅇ is 앙), splits it on the next keystroke, and
+                // goes on splitting — every commit is a character, none of
+                // them is announced by the report emptying, and every one of
+                // them is the same 아. The register swallowed the first, which
+                // was right, and then swallowed the rest for the whole
+                // session: the value never grew, and only what the field
+                // committed itself on the way out ever landed.
+                ForgetPlatformCommit();
                 return true;
             }
 
@@ -552,6 +567,30 @@ namespace OneText
         /// </summary>
         public static bool SameText(string left, string right) =>
             SameText(left, right, right == null ? null : Decomposed(right));
+
+        /// <summary>
+        /// Whether <paramref name="whole"/> begins with <paramref name="part"/>,
+        /// in the same sense of "the same text" as <see cref="SameText"/>.
+        ///
+        /// Decomposed, so that half a syllable counts as the beginning of it:
+        /// a platform that hands 아 back as its two jamo is halfway through
+        /// paying for 앙 after the first one, and composed, neither jamo is a
+        /// prefix of anything. <see cref="TextEditingModel"/> asks this of a
+        /// composition that has just been replaced, which is why it lives here
+        /// with the comparisons it has to agree with.
+        /// </summary>
+        public static bool TextStartsWith(string whole, string part)
+        {
+            if (string.IsNullOrEmpty(part)) return true;
+            if (string.IsNullOrEmpty(whole)) return false;
+            if (whole.StartsWith(part, StringComparison.Ordinal)) return true;
+
+            // The memo holds one entry, so the left side is read out before the
+            // right side overwrites it. Decomposed returns a string, not a view
+            // of the field.
+            string wholeDecomposed = Decomposed(whole);
+            return wholeDecomposed.StartsWith(Decomposed(part), StringComparison.Ordinal);
+        }
 
         private static bool SameText(string left, string right, string rightDecomposed)
         {
