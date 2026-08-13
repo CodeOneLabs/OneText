@@ -102,12 +102,29 @@ namespace OneText.Editor
             if (EditorPrefs.GetBool(PreviewPref, false) && !Application.isPlaying &&
                 targets.Length == 1 && _label != null)
                 StartPreview();
+
+            OneTextEvents.TextChanged += RepaintForFittedSize;
         }
 
         protected override void OnDisable()
         {
+            OneTextEvents.TextChanged -= RepaintForFittedSize;
             StopPreview();
             base.OnDisable();
+        }
+
+        /// <summary>
+        /// Repaints when a label being inspected lays itself out again, which
+        /// is the only announcement that its fitted size has moved. Nothing in
+        /// the serialized object changes when a rect is dragged in the scene
+        /// view, so without this the Size row would show the size auto-size
+        /// chose whenever the inspector last happened to draw.
+        /// </summary>
+        private void RepaintForFittedSize(OneTextLabel label)
+        {
+            if (_autoSize == null || !_autoSize.boolValue) return;
+            foreach (var each in targets)
+                if (ReferenceEquals(each, label)) { Repaint(); return; }
         }
 
         public override void OnInspectorGUI()
@@ -166,8 +183,8 @@ namespace OneText.Editor
             }
             EditorGUILayout.PropertyField(_fallbackFonts, new GUIContent("Extra fallbacks",
                 "Fonts tried, in order, for characters the main font does not cover."), true);
-            using (new EditorGUI.DisabledScope(_autoSize.boolValue))
-                EditorGUILayout.PropertyField(_fontSize, new GUIContent("Size"));
+            if (_autoSize.boolValue) FittedSizeGUI();
+            else EditorGUILayout.PropertyField(_fontSize, new GUIContent("Size"));
             EditorGUILayout.PropertyField(_autoSize, new GUIContent("Auto size",
                 "Pick the largest size between Min and Max at which the whole text fits " +
                 "the rect. Size above is ignored while this is on."));
@@ -210,6 +227,58 @@ namespace OneText.Editor
             CanvasScaleHintGUI();
             if (targets.Length == 1) DrawDecorationTable();
             AppearanceControlsGUI();
+        }
+
+        /// <summary>
+        /// The Size row while auto-size owns the size: the size the text is
+        /// actually drawn at, rather than the serialized one auto-size ignores.
+        ///
+        /// The row was disabled and went on showing the authored number, so a
+        /// label auto-sized down from 36 to 18 read 36 in the inspector — the
+        /// one control that says how big the text is was the only thing on
+        /// screen not following it. Displayed rather than written back: the
+        /// authored size is what the label returns to when auto-size is
+        /// switched off, and a fitted size stamped over it would be a scene
+        /// change made by looking at a label.
+        /// </summary>
+        private void FittedSizeGUI()
+        {
+            float fitted = SizeShownFor(targets, out bool mixed);
+
+            bool wasMixed = EditorGUI.showMixedValue;
+            EditorGUI.showMixedValue = mixed;
+            using (new EditorGUI.DisabledScope(true))
+            {
+                EditorGUILayout.FloatField(new GUIContent("Size",
+                        "The size auto-size chose for the current rect. Switch auto-size " +
+                        "off to set one by hand."),
+                    float.IsNaN(fitted) ? _fontSize.floatValue : fitted);
+            }
+            EditorGUI.showMixedValue = wasMixed;
+        }
+
+        /// <summary>
+        /// The size the Size row shows for <paramref name="labels"/> while
+        /// auto-size owns it, and whether they disagree about it. NaN when
+        /// there is nothing to ask.
+        ///
+        /// Its own method, and reachable, because the alternative way to test
+        /// what an IMGUI row draws is to read the pixels back.
+        /// </summary>
+        public static float SizeShownFor(Object[] labels, out bool mixed)
+        {
+            float fitted = float.NaN;
+            mixed = false;
+            if (labels == null) return fitted;
+
+            foreach (var each in labels)
+            {
+                if (!(each is OneTextLabel label)) continue;
+                float size = label.FittedFontSize;
+                if (float.IsNaN(fitted)) fitted = size;
+                else if (!Mathf.Approximately(fitted, size)) mixed = true;
+            }
+            return fitted;
         }
 
         /// <summary>

@@ -170,5 +170,74 @@ namespace OneText.Tests
                 "fractional sizes churn atlas ppem buckets for nothing");
             Destroy(label);
         }
+
+        // ------------------------------------------------------- the inspector
+
+        [Test]
+        public void The_Size_Row_Shows_The_Size_Auto_Size_Chose()
+        {
+            // The bug report: switch auto-size on, watch the text change size,
+            // and the Size field goes on reading whatever was typed into it.
+            // The row is disabled while auto-size owns the size, and a disabled
+            // row showing a number the label is ignoring is worse than no row —
+            // it is the one control that claims to say how big the text is.
+            var label = CreateLabel(120f, 40f);
+            label.Text = LongText;
+            label.FontSize = 48f;
+            label.AutoSize = true;
+            label.AutoSizeMin = 5f;
+            label.AutoSizeMax = 64f;
+
+            float shown = Editor.OneTextLabelEditor.SizeShownFor(
+                new Object[] { label }, out bool mixed);
+
+            Assert.AreEqual(label.FittedFontSize, shown, "the row and the text disagree about the size");
+            Assert.Less(shown, 48f, "the row showed the authored size the label is ignoring");
+            Assert.IsFalse(mixed);
+            Destroy(label);
+        }
+
+        [Test]
+        public void The_Size_Row_Follows_The_Rect()
+        {
+            var label = CreateLabel(400f, 120f);
+            label.Text = LongText;
+            label.AutoSize = true;
+            label.AutoSizeMin = 4f;
+            label.AutoSizeMax = 64f;
+
+            float roomy = Editor.OneTextLabelEditor.SizeShownFor(new Object[] { label }, out _);
+            label.rectTransform.sizeDelta = new Vector2(150f, 40f);
+            float cramped = Editor.OneTextLabelEditor.SizeShownFor(new Object[] { label }, out _);
+
+            Assert.Less(cramped, roomy, "the row is stale until something else redraws it");
+            Destroy(label);
+        }
+
+        [Test]
+        public void Two_Labels_Fitted_Differently_Are_A_Mixed_Size()
+        {
+            // A multi-selection has one row for however many answers, and a
+            // number picked from whichever label happened to be first is a
+            // number somebody will read as all of them.
+            var roomy = CreateLabel(400f, 120f);
+            var cramped = CreateLabel(150f, 40f);
+            foreach (var label in new[] { roomy, cramped })
+            {
+                label.Text = LongText;
+                label.AutoSize = true;
+                label.AutoSizeMin = 4f;
+                label.AutoSizeMax = 64f;
+            }
+
+            Editor.OneTextLabelEditor.SizeShownFor(new Object[] { roomy, cramped }, out bool mixed);
+            Assert.IsTrue(mixed);
+
+            Editor.OneTextLabelEditor.SizeShownFor(new Object[] { roomy, roomy }, out mixed);
+            Assert.IsFalse(mixed, "two labels that fitted the same size do not disagree");
+
+            Destroy(roomy);
+            Destroy(cramped);
+        }
     }
 }
