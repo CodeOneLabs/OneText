@@ -79,6 +79,18 @@ namespace OneText
         private static readonly string[] Excluded = { "lastresort", "adobeblank" };
 
         private static string[] s_files;
+
+        /// <summary>
+        /// Each file's name without its directory or extension, computed with
+        /// the listing.
+        ///
+        /// The preference walk matches names, and it does so for every file
+        /// against every preferred name — several thousand comparisons for one
+        /// character that missed the project's fonts. Cutting the name out of
+        /// the path each time made a string for every one of them; the name
+        /// does not change after the listing, so it is taken once.
+        /// </summary>
+        private static string[] s_stems;
         private static readonly Dictionary<string, FaceCoverage[]> s_coverage =
             new Dictionary<string, FaceCoverage[]>(StringComparer.Ordinal);
 
@@ -121,7 +133,21 @@ namespace OneText
 
             found.Sort(StringComparer.OrdinalIgnoreCase);
             s_files = found.ToArray();
+            s_stems = new string[s_files.Length];
+            for (int i = 0; i < s_files.Length; i++)
+                s_stems[i] = Path.GetFileNameWithoutExtension(s_files[i]);
             return s_files;
+        }
+
+        /// <summary>
+        /// The file names behind <see cref="Files"/>, index for index: what the
+        /// preference walk compares against, without cutting a string out of a
+        /// path to do it.
+        /// </summary>
+        internal static string[] Stems()
+        {
+            if (s_stems == null) Files();
+            return s_stems;
         }
 
         private static bool IsFontFile(string path)
@@ -219,6 +245,7 @@ namespace OneText
         internal static void Forget()
         {
             s_files = null;
+            s_stems = null;
             s_coverage.Clear();
         }
 

@@ -28,12 +28,48 @@ namespace OneText.Benchmarks
         public static void RasterizeModes() => UnderBurst(RasterizeModesCore);
         public static void AsianLayout() => UnderBurst(AsianLayoutCore);
         public static void WorkloadMatrix() => UnderBurst(WorkloadMatrixCore);
+        public static void SystemFallback() => UnderBurst(SystemFallbackCore);
 
         private static void UnderBurst(Action body)
         {
             var previous = BenchScene.ForceBurst();
             try { body(); }
             finally { BenchScene.RestoreBurst(previous); }
+        }
+
+        /// <summary>
+        /// What the system-font tier costs, and what remembering saves.
+        ///
+        /// Every other scenario registers a CJK face as a project fallback, so
+        /// the tier answers a handful of times and its cost never shows. This
+        /// ships one Latin font and lets the device answer for the Korean,
+        /// which is the setup the tier exists for — and runs it twice, once
+        /// with the per-script memory and once without, so the difference is
+        /// the memory's and nothing else's.
+        /// </summary>
+        private static void SystemFallbackCore()
+        {
+            string outDir = GetArg("-oneOut") ??
+                Path.Combine(Path.GetTempPath(), "onetext-bench");
+            var runs = new List<BenchRun>();
+            var previousFilter = UnityEngine.Debug.unityLogger.filterLogType;
+
+            foreach (bool remember in new[] { true, false, true, false })
+            {
+                SystemFonts.RememberAnswers = remember;
+                UnityEngine.Debug.unityLogger.filterLogType = LogType.Assert;
+                var run = BenchScenarios.ChatStream(new OneTextSubject(
+                    new GlyphAtlasSettings { TextureSize = 1024, LayerCount = 4 },
+                    systemFallbackOnly: true), 600);
+                UnityEngine.Debug.unityLogger.filterLogType = previousFilter;
+                runs.Add(run);
+                Debug.Log($"[fallback] memory {(remember ? "on " : "off")}: " +
+                    $"median {run.Median * 1000:F0} us, p99 {run.P99 * 1000:F0} us, " +
+                    $"max {run.Max * 1000:F0} us | {run.Notes}");
+            }
+
+            SystemFonts.RememberAnswers = true;
+            BenchReport.Write(outDir, "The system-font tier, with and without its memory", runs);
         }
 
         private static void RunAllCore()

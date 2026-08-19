@@ -66,22 +66,37 @@ namespace OneText.Benchmarks
         /// tier off so a like-for-like row exists next to the full-coverage one.
         /// </summary>
         private readonly bool _parity;
+
+        /// <summary>
+        /// Ship one Latin font and let the device answer for everything else.
+        ///
+        /// The setup the system-font tier exists for, and the one the other
+        /// scenarios never exercise: they register a CJK face as a project
+        /// fallback, so the tier is consulted a handful of times and its cost
+        /// never shows. A project that ships Latin and relies on the phone for
+        /// Korean asks it about every character it has not seen.
+        /// </summary>
+        private readonly bool _systemFallbackOnly;
         private bool _previousSystemFonts;
         private readonly List<OneTextLabel> _labels = new List<OneTextLabel>();
         private readonly List<OneFontAsset> _fonts = new List<OneFontAsset>();
         private OneTextSettings _settings;
         private OneTextSettings _previousSettings;
 
-        public OneTextSubject(GlyphAtlasSettings budget, bool prewarm = false, bool parity = false)
+        public OneTextSubject(GlyphAtlasSettings budget, bool prewarm = false, bool parity = false,
+            bool systemFallbackOnly = false)
         {
             _budget = budget.Validated();
             _prewarm = prewarm;
             _parity = parity;
+            _systemFallbackOnly = systemFallbackOnly;
         }
 
         public string Name => $"OneText {_budget.MemoryBytes / (1024 * 1024)}MB" +
             (_prewarm ? " +prewarm" : "") +
-            (_parity ? " (no system fonts)" : "");
+            (_parity ? " (no system fonts)" : "") +
+            (_systemFallbackOnly ? " (system fallback only)" : "") +
+            (_systemFallbackOnly && !SystemFonts.RememberAnswers ? ", no memory" : "");
 
         public void Setup()
         {
@@ -92,6 +107,8 @@ namespace OneText.Benchmarks
 
             _previousSystemFonts = SystemFonts.Enabled;
             if (_parity) SystemFonts.Enabled = false;
+            // A fresh session's worth of probing, so the count means something.
+            if (_systemFallbackOnly) SystemFonts.Forget();
 
             _previousSettings = OneTextSettings.Instance;
             _settings = ScriptableObject.CreateInstance<OneTextSettings>();
@@ -102,7 +119,7 @@ namespace OneText.Benchmarks
             // without its own font being changed.
             var fallbacks = serialized.FindProperty("_fallbackFonts");
             fallbacks.ClearArray();
-            for (int i = 1; i < _fonts.Count; i++)
+            for (int i = 1; _systemFallbackOnly ? false : i < _fonts.Count; i++)
             {
                 fallbacks.InsertArrayElementAtIndex(fallbacks.arraySize);
                 fallbacks.GetArrayElementAtIndex(fallbacks.arraySize - 1).objectReferenceValue = _fonts[i];
@@ -159,7 +176,8 @@ namespace OneText.Benchmarks
             return $"atlas {SharedGlyphAtlas.Atlas.Settings}, {stats.TileCount:n0} tiles, " +
                 $"{stats.UsedFraction:P0} full, {stats.Evictions:n0} evictions, " +
                 $"{stats.Compactions} compactions, {stats.PartialUploads:n0} partial / " +
-                $"{stats.FullUploads:n0} full uploads; " + CoverageOfLastFrame();
+                $"{stats.FullUploads:n0} full uploads; " + CoverageOfLastFrame() +
+                $"; system font files probed: {SystemFonts.FilesProbed:n0}";
         }
 
         /// <summary>

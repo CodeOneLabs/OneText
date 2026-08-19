@@ -68,6 +68,34 @@ namespace OneText
         // ColorGlyphs is: a freed face's address comes straight back.
         private static readonly Dictionary<int, string> s_names = new Dictionary<int, string>();
 
+        /// <summary>
+        /// Which files have answered for a script, most recent first.
+        ///
+        /// The preference list below is a guess made from file names, and it is
+        /// a good one; this is the answer, which is better. The first Hangul
+        /// syllable a session meets costs a walk, and every syllable after it
+        /// asks the face that answered — one call instead of up to several
+        /// hundred. That is the shape of the cost too: unseen characters arrive
+        /// in floods, one script at a time, when a language changes or a screen
+        /// full of new text opens.
+        ///
+        /// Promotion only, never exclusion. A face that has no glyph for this
+        /// character may have one for the next in the same script, and a list
+        /// that dropped it would answer worse for having learned.
+        /// </summary>
+        private static readonly Dictionary<int, List<string>> s_answered =
+            new Dictionary<int, List<string>>();
+
+        /// <summary>How many files a script remembers. Deep enough for a family and its fallbacks.</summary>
+        private const int RememberedPerScript = 8;
+
+        /// <summary>
+        /// Whether probing remembers what answered. On, always, in a running
+        /// game; off is for measuring what the memory is worth, which needs the
+        /// same session to run both ways.
+        /// </summary>
+        public static bool RememberAnswers { get; set; } = true;
+
         private static bool? s_enabled;
 
         /// <summary>
@@ -180,6 +208,8 @@ namespace OneText
                 s_faces.Clear();
                 s_resolved.Clear();
                 s_names.Clear();
+                s_answered.Clear();
+                FilesProbed = 0;
                 SystemFontIndex.Forget();
             }
         }
@@ -203,15 +233,31 @@ namespace OneText
             // "the first file alphabetically" is not an answer anybody would
             // choose. Preference is how 한 comes out of Apple SD Gothic Neo and
             // not out of a Serif face that happens to sort earlier.
+            int script = ScriptOf(codepoint);
             var tried = new HashSet<string>(StringComparer.Ordinal);
-            foreach (string preferred in PreferredThenGeneric(codepoint))
+
+            // What answered for this script already, before any guessing.
+            if (RememberAnswers && s_answered.TryGetValue(script, out var answered))
             {
-                foreach (string path in files)
+                for (int i = 0; i < answered.Count; i++)
                 {
-                    if (!Matches(path, preferred)) continue;
+                    string path = answered[i];
                     if (!tried.Add(path)) continue;
                     var font = TryFile(path, codepoint);
-                    if (font != null) return font;
+                    if (font != null) { Remember(script, path); return font; }
+                }
+            }
+
+            var stems = SystemFontIndex.Stems();
+            foreach (string preferred in PreferredThenGeneric(codepoint))
+            {
+                for (int i = 0; i < files.Length; i++)
+                {
+                    if (!Matches(stems[i], preferred)) continue;
+                    string path = files[i];
+                    if (!tried.Add(path)) continue;
+                    var font = TryFile(path, codepoint);
+                    if (font != null) { Remember(script, path); return font; }
                 }
             }
 
@@ -219,19 +265,79 @@ namespace OneText
             {
                 if (!tried.Add(path)) continue;
                 var font = TryFile(path, codepoint);
-                if (font != null) return font;
+                if (font != null) { Remember(script, path); return font; }
             }
             return null;
         }
 
-        private static bool Matches(string path, string needle)
+        /// <summary>Moves a file to the front of what its script has answered with.</summary>
+        private static void Remember(int script, string path)
         {
-            string name = System.IO.Path.GetFileNameWithoutExtension(path);
-            return name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!RememberAnswers) return;
+            if (!s_answered.TryGetValue(script, out var answered))
+                s_answered[script] = answered = new List<string>(RememberedPerScript);
+
+            int at = answered.IndexOf(path);
+            if (at == 0) return;
+            if (at > 0) answered.RemoveAt(at);
+            answered.Insert(0, path);
+            if (answered.Count > RememberedPerScript) answered.RemoveAt(answered.Count - 1);
         }
+
+        /// <summary>
+        /// Which script a codepoint belongs to, for the memory above.
+        ///
+        /// The same ranges <see cref="Preferred"/> sorts by, and coarse on
+        /// purpose: a face that draws one Hangul syllable draws the rest, so
+        /// all of them share one memory and the flood after a language change
+        /// pays for the first character only. Anything unclassified shares the
+        /// last bucket, which is no worse than having no memory at all.
+        /// </summary>
+        private static int ScriptOf(int codepoint)
+        {
+            if (IsEmoji(codepoint)) return 1;
+            if (codepoint >= 0xAC00 && codepoint <= 0xD7AF ||
+                codepoint >= 0x1100 && codepoint <= 0x11FF ||
+                codepoint >= 0x3130 && codepoint <= 0x318F) return 2;   // Korean
+            if (codepoint >= 0x3040 && codepoint <= 0x30FF ||
+                codepoint >= 0x31F0 && codepoint <= 0x31FF) return 3;   // kana
+            if (codepoint >= 0x4E00 && codepoint <= 0x9FFF ||
+                codepoint >= 0x3400 && codepoint <= 0x4DBF ||
+                codepoint >= 0xF900 && codepoint <= 0xFAFF ||
+                codepoint >= 0x20000 && codepoint <= 0x2FA1F) return 4; // Han
+            if (codepoint >= 0x0600 && codepoint <= 0x06FF ||
+                codepoint >= 0x0750 && codepoint <= 0x077F ||
+                codepoint >= 0xFB50 && codepoint <= 0xFEFF) return 5;   // Arabic
+            if (codepoint >= 0x0590 && codepoint <= 0x05FF) return 6;   // Hebrew
+            if (codepoint >= 0x0E00 && codepoint <= 0x0E7F) return 7;   // Thai
+            if (codepoint >= 0x0900 && codepoint <= 0x097F) return 8;   // Devanagari
+            if (codepoint >= 0x0980 && codepoint <= 0x09FF) return 9;   // Bengali
+            if (codepoint >= 0x0B80 && codepoint <= 0x0BFF) return 10;  // Tamil
+            if (codepoint >= 0x1200 && codepoint <= 0x137F) return 11;  // Ethiopic
+            if (codepoint >= 0x0400 && codepoint <= 0x04FF ||
+                codepoint >= 0x0370 && codepoint <= 0x03FF) return 12;  // Cyrillic and Greek
+            return 0;
+        }
+
+        private static bool Matches(string stem, string needle)
+        {
+            return stem.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
+        /// How many files probing has asked about a character, this session.
+        ///
+        /// The number the per-script memory exists to keep down: without it,
+        /// every unseen character walks the machine's font list again, and on a
+        /// Mac that list is about four hundred files. A test reads this rather
+        /// than a stopwatch, because "asked one file instead of four hundred"
+        /// is the claim, and a millisecond is not evidence for it.
+        /// </summary>
+        public static int FilesProbed { get; private set; }
 
         private static FontData TryFile(string path, int codepoint)
         {
+            FilesProbed++;
             foreach (var face in SystemFontIndex.Coverage(path))
             {
                 if (!face.Covers(codepoint)) continue;

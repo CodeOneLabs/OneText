@@ -24,6 +24,28 @@
 
 ### Fixed
 
+- **The system-font tier remembers what answered.** Finding a face for a
+  character the project's own fonts missed meant walking the machine's font
+  list — about four hundred files on a Mac — and doing it again for the next
+  character, and the one after that. Unseen characters do not arrive one at a
+  time: they arrive in floods, one script at a time, when a language changes or
+  a screen of new text opens. So the file that answered for a script is asked
+  first for the next character in it, promoted on every success and never
+  excluded on failure, since a face that lacks one glyph of a script may have
+  the next.
+
+  The name-matching walk behind it also stopped cutting a string out of a path
+  for every comparison — several thousand of them per character — by taking
+  each file's name once, with the listing.
+
+  Measured on the setup the tier exists for (one Latin font shipped, the device
+  answering for Korean, 600 frames of CJK churn): the median frame falls from
+  871 us to 526, p99 from 2697 to 1371, the worst frame from 3343 to 1642. The
+  two changes are separable and were measured apart: the cached names are worth
+  871 to 619 on their own, the memory 619 to 526 on top. Neither changes what
+  is drawn, and the number of files actually opened is identical — what went
+  away is the searching, not the reading.
+
 - **Rich text stopped allocating a kilobyte a rebuild.** `RichTextParser.Parse`
   built a `StringBuilder`, a list and a string per call, and cut two more
   strings out of the source for every tag it read. It writes into a buffer the
