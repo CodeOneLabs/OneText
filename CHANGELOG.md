@@ -24,6 +24,21 @@
 
 ### Fixed
 
+- **A label with markup on it allocates nothing either.** The last ninety-five
+  bytes a rebuild cost came from one line: the style spans arrive as
+  `IReadOnlyList<TextStyleSpan>`, and a `foreach` over an interface asks it for
+  an enumerator, which boxes the list's own struct one — and that struct
+  carries a whole `TextStyle`, so the box was the size of the remainder. Both
+  span loops index instead. Fifty labels with markup, retexted every frame:
+  4.8 KB a frame to zero.
+
+  Worth recording how it was found, because the first three guesses were all
+  wrong: it is not the number of tags (one tag costs what two do), not the tag
+  kind (`<b>` and `<color>` cost the same), and not the general layout path
+  (Korean text and wrapped Latin, both of which leave the fast path, allocate
+  nothing). A fixed cost that appears with markup and ignores everything about
+  the markup is the signature of one allocation on a path taken once.
+
 - **The system-font tier remembers what answered.** Finding a face for a
   character the project's own fonts missed meant walking the machine's font
   list — about four hundred files on a Mac — and doing it again for the next

@@ -318,8 +318,12 @@ namespace OneText
             var spans = settings.Spans;
             if (spans == null) return;
 
-            foreach (var span in spans)
+            // Indexed rather than foreach: the list arrives as an interface, so
+            // asking it for an enumerator boxes one — a fixed allocation per
+            // layout, for every label with any markup on it at all.
+            for (int sp = 0; sp < spans.Count; sp++)
             {
+                var span = spans[sp];
                 if (!span.Style.NoBreak) continue;
                 // The opportunity AT the span's start is where the line may
                 // break before it, which nobr does not forbid; the ones inside
@@ -759,8 +763,9 @@ namespace OneText
             float scale = RubyPlacement.ResolveScale(settings.RubyScale);
             bool styled = settings.Spans != null && settings.Spans.Count > 0;
 
-            foreach (var span in spans)
+            for (int r = 0; r < spans.Count; r++)
             {
+                var span = spans[r];
                 int s = Math.Max(span.Start, start);
                 int e = Math.Min(span.End, end);
                 if (s >= e || string.IsNullOrEmpty(span.Text)) continue;
