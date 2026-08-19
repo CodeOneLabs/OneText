@@ -1,6 +1,7 @@
 flowchart TD
-    entry["BenchSuite.RunAll / Breakdown / WorkloadMatrix / SystemFallback ..."] --> burst["BenchScene.ForceBurst + WarmBurst"]
-    burst --> run["BenchSuite.Run(subjects, repeats=3)"]
+    entry["BenchSuite.RunAll"] --> burst["UnderBurst: BenchScene.ForceBurst"]
+    burst --> run["BenchSuite.Run(subjects, repeats=3): ForceBurst again + WarmBurst"]
+    others["Breakdown / BreakdownWorldSpace / WorkloadMatrix / SystemFallback: UnderBurst, one scenario directly, no Repeat"] --> scen
     run --> subj["OneTextSubject.Setup: fonts, OneTextSettings, SharedGlyphAtlas.Reconfigure"]
     subj --> scen["BenchScenarios.ChatStream / GlobalUi / WorldSpaceLabels / Churn"]
     scen --> corpus["BenchCorpus (seeded, 60% reuse)"]

@@ -37,7 +37,6 @@ The module column names the source folder under test; the linked README is the m
 | [Runtime/Core/Shaping](../Runtime/Core/Shaping/README.md) | `Editor/ShapingTests.cs` | HarfBuzz loads and reports a version; Latin one-glyph-per-letter with positive advances; Arabic contextual forms, RTL visual order, zero-advance marks; outline extraction returns contours. |
 | | `Editor/EmojiSequenceTests.cs` | Every fully-qualified sequence in `emoji-test.txt` the font covers shapes to one glyph; ZWJ / flag / keycap / skin-tone kinds each merge; sequences survive the label path. Needs `NotoColorEmoji.ttf`. |
 | | `Editor/ThreadSafetyTests.cs` | Concurrent shaping, variations, ink bounds and outline extraction from several threads agree with single-threaded results; thread handles share the face and are released with it. |
-| | `Editor/InkBoundsTests.cs` | The font-table ink box still contains the flattened outline's ink (Latin and Arabic). |
 | [Runtime/Core/Fonts](../Runtime/Core/Fonts/README.md) | `Editor/FontAssetTests.cs` | `OneFontAsset`: compression round trip, one parsed face shared, variant cache per axis combination, packed/unpacked/dropped/repacked states, variant disposal. |
 | | `Editor/FontShareTests.cs` | `SharedFontBytes`: a hundred labels given the same bytes parse once; the last label out frees it; a variated face stays private. |
 | | `Editor/SubsetTests.cs` | `FontSubsetter` / hb-subset: GSUB/GPOS survive (Arabic still joins, marks and kerning intact), `OneTextCharset` and `CharsetRecorder` as inputs. |
@@ -45,17 +44,16 @@ The module column names the source folder under test; the linked README is the m
 | | `Editor/SystemFontMemoryTests.cs` | `SystemFonts` remembers the file that answered for a script, counted in files probed rather than milliseconds. |
 | | `Editor/MissingFontTests.cs` | A project with no font at all: `FontStack.Resolve` still reaches the system tier, `MissingFonts` reports, labels log instead of drawing nothing; `OneFontRecovery`. |
 | | `Editor/VariableSweepTests.cs` | Dragging a `wght` axis: atlas and label font stack rebake for the new coordinate instead of reusing tiles from the old one. |
-| | `Editor/OutlineFormatTests.cs` | The CFF/PostScript outline path on `CffShapes.otf`: counters, overlapping contours, long cubic curves rasterize correctly. Reaches `GlyphRasterizer`. |
+| | `Editor/InkBoundsTests.cs` | `FontData.TryGetInkBounds` (the font-table ink box) still contains the ink of `OutlineExtractor`'s flattened outline (Latin and Arabic). |
 | [Runtime/Core/Layout](../Runtime/Core/Layout/README.md) | `Editor/LayoutTests.cs` | M4: single line metrics, newlines, wrapping, grapheme emergency break, alignment, justification, bidi run reordering, `FontStack` fallback, ellipsis, variable axes, empty text reserves a line. |
 | | `Editor/RichTextTests.cs` | M8 markup: every well-formed tag changes exactly what it says; every malformed tag leaves the text alone (`5 < 6`); decorations, sizes, colours, fonts, links through `RichTextParser`. |
 | | `Editor/EscapeTests.cs` | `EscapeParser`: `\n`-style escapes resolve, anything not well-formed (Windows paths) is untouched; on the label too. |
 | | `Editor/InteractionTests.cs` | M5: `TextHitTest` (clicks clamp, caret x along LTR, RTL carets, selection rects per line, vertical movement keeps the column, grapheme and word steps), `<link>` ranges, input-field text/caret/selection events. |
-| | `Editor/AutoSizeTests.cs` | Auto-size picks the largest size in [min, max] that fits, clamps, tracks the rect, vertical mode, no relayout on repeat asks, half-point grid. |
 | | `Editor/RubyTests.cs` | M15 ruby: `RubyPlacement` per the W3C simple-placement rules, line grows, base and reading never split, ruby glyphs carry the base cluster. Needs `NotoSansCJKjp-Regular.otf`. |
 | | `Editor/DecorationChannelTests.cs` | The vertex-channel packing for `TextDecoration` and the HLSL unpacking written out in C# against the real packer: a contract with `OneText-SDF.shader`. |
-| | `Editor/DecorationTests.cs` | M14 decorations on the label: outline/shadow/glow cost no second material and no extra vertex stream; parser rules; `OneTextStyle` and `<mark>`; CJK vertical decorations (needs the CJK face). |
 | [Runtime/Core/Rendering](../Runtime/Core/Rendering/README.md) | `Editor/SdfTests.cs` | `GlyphRasterizer` full distance range, density matches the requested scale, empty glyph; `GlyphAtlas` caches, distinct slots, separate size buckets. |
 | | `Editor/SdfCullingTests.cs` | Segments the rasterizer culls are provably discardable: same glyphs with `GlyphRasterizer.Cull` on and off compared byte for byte. |
+| | `Editor/OutlineFormatTests.cs` | The CFF/PostScript outline path (`OutlineExtractor`, `GlyphRasterizer`) on `CffShapes.otf`: counters, overlapping contours, long cubic curves rasterize correctly; adaptive flattening error. |
 | | `Editor/MsdfTests.cs` | M14 `precise`: MSDF keeps corners the bilinear sampler loses (reconstructed the way the GPU does), `MsdfEdgeColoring`, tiles cached apart, same material, off by default. |
 | | `Editor/AtlasTests.cs` | M6 atlas under pressure: flatness rebake, settings validation, per-tile eviction, LRU keeps recent glyphs, freed spans reused, compaction moves tiles and keeps pixels, `AtlasPrewarm` budget, `CharsetRecorder`, `OneTextCharset` expansion. |
 | | `Editor/AtlasPressureTests.cs` | One frame asking for more tiles than fit: every glyph comes back afterwards. |
@@ -79,6 +77,8 @@ The module column names the source folder under test; the linked README is the m
 | | `Editor/TextBufferTests.cs` | The no-string setters (`SetText` for int, float with decimals, span and char array) produce exactly what `ToString` would; the same number twice rebuilds nothing; markup still reaches the label. |
 | | `Editor/StyleTests.cs` | M8 `OneTextStyle`: a label holds a reference; editing the asset updates every label (`StyleInvalidation`, `IStyleUser`). |
 | | `Editor/DynamicPpemTests.cs` | `ScreenPpem` measurement (canvas scale, transform scale, ortho/perspective), hysteresis near bucket boundaries, `PpemCap`. |
+| | `Editor/AutoSizeTests.cs` | `OneTextLabel.AutoSize` picks the largest size in [min, max] that fits, clamps, tracks the rect, vertical mode, no relayout on repeat asks, half-point grid. |
+| | `Editor/DecorationTests.cs` | M14 decorations on the label: outline/shadow/glow cost no second material and no extra vertex stream, the vertex bytes they write, underline/strikethrough/`<mark>` bars, `OneTextStyle` and component-level decoration precedence; reaches `RichTextParser` for the tag rules; CJK vertical bars (needs the CJK face). |
 | | `Editor/InputFieldViewportTests.cs` | The field's text viewport: a clipping layer with a mask exists with both labels beneath it, text overflows a box that does not grow, fields authored before it still work. |
 | | `Editor/DropdownCreationTests.cs` | `OneTextDropdown` as the menu creates it, opened with `Show`: row count, labels, value changes, caption, list-versus-blocker sorting. |
 | | `Editor/TmpParityAliasTests.cs` | The lowercase TMP-parity aliases (`text`, `alignment`, `TextAlignmentOptions`, `TextWrappingModes`): writing one name and reading the other agrees both ways. |
