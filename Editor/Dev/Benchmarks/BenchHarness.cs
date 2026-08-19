@@ -52,6 +52,30 @@ namespace OneText.Benchmarks
         public readonly List<FrameSample> Samples = new List<FrameSample>();
         public long TextureBytes;
 
+        /// <summary>
+        /// Characters the last frame wanted, and how many the system could
+        /// actually draw. Reported for every subject, because two frame times
+        /// are only comparable when both frames drew the same text.
+        /// </summary>
+        public int DrawnCharacters, WantedCharacters;
+
+        /// <summary>The share of the text that was drawn, or -1 when nothing asked.</summary>
+        public double Coverage =>
+            WantedCharacters == 0 ? -1 : DrawnCharacters / (double)WantedCharacters;
+
+        /// <summary>
+        /// Median frame time per character actually drawn.
+        ///
+        /// The crude correction for a system that draws less: divide by what it
+        /// drew. It is a floor and not a fair price, because the characters a
+        /// system skips are not the average ones — they are the ones it has no
+        /// glyph for, which are exactly the ones that would have cost it an
+        /// atlas page. Read it as "at least this much", and read the parity row
+        /// instead when one exists.
+        /// </summary>
+        public double MedianPerCharacter =>
+            DrawnCharacters == 0 ? 0 : Median / DrawnCharacters;
+
         public double Median => Percentile(0.5);
         public double P99 => Percentile(0.99);
 
@@ -419,16 +443,31 @@ namespace OneText.Benchmarks
                 "Each cell is the median of 3 repetitions, chosen by p99, so a stray GC pause in one " +
                 "repetition cannot decide the number.");
             markdown.AppendLine();
-            markdown.AppendLine("| Scenario | System | Frames | Median ms | p99 ms | Max ms (frame) | Draw groups | Graphics | Alloc/frame | GC frames | Texture |");
-            markdown.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|");
+            markdown.AppendLine("Coverage is the share of the last frame's characters the system can " +
+                "actually draw, asked of its own fonts without letting them add anything while " +
+                "answering. It is in the table because a frame time is only comparable to another " +
+                "frame time when both frames drew the same text: a system that skips a fifth of the " +
+                "characters posts a better number for doing less work. **us/char is the crude " +
+                "correction and a floor, not a fair price** — the characters a system skips are not " +
+                "the average ones, they are the ones it has no glyph for, which are exactly the ones " +
+                "that would have cost it an atlas page. Where a row says \"no system fonts\", the " +
+                "same engine was run with its last-resort tier off so every system draws the same " +
+                "set; that row, not the arithmetic, is the like-for-like comparison.");
+            markdown.AppendLine();
+            markdown.AppendLine("| Scenario | System | Frames | Median ms | p99 ms | Max ms (frame) | Draw groups | Graphics | Alloc/frame | GC frames | Texture | Coverage | us/char |");
+            markdown.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 
             foreach (var run in runs)
             {
                 markdown.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                    "| {0} | {1} | {2} | {3:F3} | {4:F3} | {5:F3} ({6}) | {7} | {8} | {9} | {10} | {11} |",
+                    "| {0} | {1} | {2} | {3:F3} | {4:F3} | {5:F3} ({6}) | {7} | {8} | {9} | {10} | {11} | {12} | {13} |",
                     run.Scenario, run.Subject, run.Samples.Count, run.Median, run.P99,
                     run.Max, run.MaxFrame, run.MedianDrawGroups, run.MedianGraphics,
-                    Bytes(run.MeanBytes), run.UnreadableFrames, Bytes(run.TextureBytes)));
+                    Bytes(run.MeanBytes), run.UnreadableFrames, Bytes(run.TextureBytes),
+                    run.Coverage < 0 ? "-" : run.Coverage.ToString("P0", CultureInfo.InvariantCulture),
+                    run.DrawnCharacters == 0
+                        ? "-"
+                        : (run.MedianPerCharacter * 1000.0).ToString("F2", CultureInfo.InvariantCulture)));
             }
 
             markdown.AppendLine();

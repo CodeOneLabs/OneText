@@ -42,6 +42,20 @@ namespace OneText.Benchmarks
     }
 
     /// <summary>
+    /// A system that can say how much of the text it actually drew.
+    ///
+    /// Every subject should implement this. A frame time is only comparable to
+    /// another frame time when both frames drew the same characters, and a
+    /// system that silently skips a fifth of the text posts a better number for
+    /// doing less work — which is the single easiest way for a benchmark table
+    /// to be wrong while every cell in it is accurate.
+    /// </summary>
+    public interface ICoverageReporting
+    {
+        void CountCoverage(out int drawn, out int wanted);
+    }
+
+    /// <summary>
     /// A system that can rasterize a known character set before the run.
     /// Both systems get the same charset and the same chance to use it;
     /// prewarming one side only would be the obvious way to rig this.

@@ -60,6 +60,10 @@ namespace OneText.Benchmarks
 
             run.TextureBytes = subject.TextureMemoryBytes;
             run.Notes = subject.Describe();
+            // Asked of every subject, so no row's frame time stands beside
+            // another's without saying whether both drew the same text.
+            if (subject is ICoverageReporting coverage)
+                coverage.CountCoverage(out run.DrawnCharacters, out run.WantedCharacters);
             subject.Teardown();
             return run;
         }
@@ -130,6 +134,10 @@ namespace OneText.Benchmarks
 
             run.TextureBytes = subject.TextureMemoryBytes;
             run.Notes = subject.Describe();
+            // Asked of every subject, so no row's frame time stands beside
+            // another's without saying whether both drew the same text.
+            if (subject is ICoverageReporting coverage)
+                coverage.CountCoverage(out run.DrawnCharacters, out run.WantedCharacters);
             subject.Teardown();
             return run;
         }
@@ -194,6 +202,10 @@ namespace OneText.Benchmarks
 
             run.TextureBytes = subject.TextureMemoryBytes;
             run.Notes = subject.Describe();
+            // Asked of every subject, so no row's frame time stands beside
+            // another's without saying whether both drew the same text.
+            if (subject is ICoverageReporting coverage)
+                coverage.CountCoverage(out run.DrawnCharacters, out run.WantedCharacters);
             subject.Teardown();
             return run;
         }
@@ -249,6 +261,10 @@ namespace OneText.Benchmarks
 
             run.TextureBytes = subject.TextureMemoryBytes;
             run.Notes = subject.Describe();
+            // Asked of every subject, so no row's frame time stands beside
+            // another's without saying whether both drew the same text.
+            if (subject is ICoverageReporting coverage)
+                coverage.CountCoverage(out run.DrawnCharacters, out run.WantedCharacters);
             subject.Teardown();
             return run;
         }

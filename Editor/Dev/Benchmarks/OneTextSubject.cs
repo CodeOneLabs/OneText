@@ -50,22 +50,38 @@ namespace OneText.Benchmarks
     /// shared by every label (so glyphs are rasterized once), the shared atlas
     /// and material, and one upload per frame through the scheduler.
     /// </summary>
-    public sealed class OneTextSubject : ITextSubject, IPrewarmable
+    public sealed class OneTextSubject : ITextSubject, IPrewarmable, ICoverageReporting
     {
         private readonly GlyphAtlasSettings _budget;
         private readonly bool _prewarm;
+
+        /// <summary>
+        /// Draw only what the configured fonts cover, the way an engine with
+        /// no system-font tier does.
+        ///
+        /// Without this the comparison is not one: OneText walks the operating
+        /// system's fonts for a character its own stack missed, so it draws
+        /// text the other systems leave blank, and then its frame time is set
+        /// beside theirs as though both had done the same work. This turns that
+        /// tier off so a like-for-like row exists next to the full-coverage one.
+        /// </summary>
+        private readonly bool _parity;
+        private bool _previousSystemFonts;
+        private readonly List<OneTextLabel> _labels = new List<OneTextLabel>();
         private readonly List<OneFontAsset> _fonts = new List<OneFontAsset>();
         private OneTextSettings _settings;
         private OneTextSettings _previousSettings;
 
-        public OneTextSubject(GlyphAtlasSettings budget, bool prewarm = false)
+        public OneTextSubject(GlyphAtlasSettings budget, bool prewarm = false, bool parity = false)
         {
             _budget = budget.Validated();
             _prewarm = prewarm;
+            _parity = parity;
         }
 
         public string Name => $"OneText {_budget.MemoryBytes / (1024 * 1024)}MB" +
-            (_prewarm ? " +prewarm" : "");
+            (_prewarm ? " +prewarm" : "") +
+            (_parity ? " (no system fonts)" : "");
 
         public void Setup()
         {
@@ -73,6 +89,9 @@ namespace OneText.Benchmarks
             _fonts.Add(Load(BenchFonts.Read(BenchFonts.Arabic), "NotoSansArabic"));
             if (BenchFonts.CjkPath != null)
                 _fonts.Add(Load(File.ReadAllBytes(BenchFonts.CjkPath), "SystemCJK"));
+
+            _previousSystemFonts = SystemFonts.Enabled;
+            if (_parity) SystemFonts.Enabled = false;
 
             _previousSettings = OneTextSettings.Instance;
             _settings = ScriptableObject.CreateInstance<OneTextSettings>();
@@ -118,6 +137,7 @@ namespace OneText.Benchmarks
             rectTransform.pivot = new Vector2(0f, 1f);
             rectTransform.anchoredPosition = new Vector2(rect.x, -rect.y);
             rectTransform.sizeDelta = new Vector2(rect.width, rect.height);
+            _labels.Add(label);
             label.Font = _fonts[Mathf.Min(fontIndex, _fonts.Count - 1)];
             label.FontSize = fontSize;
             label.Wrap = TextWrap.NoWrap;
@@ -139,7 +159,68 @@ namespace OneText.Benchmarks
             return $"atlas {SharedGlyphAtlas.Atlas.Settings}, {stats.TileCount:n0} tiles, " +
                 $"{stats.UsedFraction:P0} full, {stats.Evictions:n0} evictions, " +
                 $"{stats.Compactions} compactions, {stats.PartialUploads:n0} partial / " +
-                $"{stats.FullUploads:n0} full uploads";
+                $"{stats.FullUploads:n0} full uploads; " + CoverageOfLastFrame();
+        }
+
+        /// <summary>
+        /// The share of the last frame's characters this system can actually
+        /// draw, asked of the font stack the way the TextMeshPro subject asks
+        /// its font asset: what the engine would find, without letting it add
+        /// anything while answering.
+        ///
+        /// Reported for every system, because a frame time is only comparable
+        /// to another frame time when both drew the same text.
+        /// </summary>
+        public string CoverageOfLastFrame()
+        {
+            int drawn = 0, wanted = 0;
+            foreach (var label in _labels)
+            {
+                if (label == null) continue;
+                var stack = label.Fonts;
+                if (stack == null) continue;
+                string text = label.DisplayText;
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char c = text[i];
+                    if (char.IsWhiteSpace(c) || char.IsControl(c)) continue;
+                    int codepoint = char.IsHighSurrogate(c) && i + 1 < text.Length
+                        ? char.ConvertToUtf32(c, text[++i])
+                        : c;
+                    wanted++;
+                    var font = stack.Resolve(codepoint);
+                    if (font != null && font.IsValid && font.HasGlyph(codepoint)) drawn++;
+                }
+            }
+            return wanted == 0
+                ? "no text to check"
+                : $"drew {drawn} of {wanted} characters on the last frame " +
+                  $"({drawn / (double)wanted:P0})";
+        }
+
+        /// <summary>Characters wanted and drawn on the last frame, for the report's own column.</summary>
+        public void CountCoverage(out int drawn, out int wanted)
+        {
+            drawn = 0;
+            wanted = 0;
+            foreach (var label in _labels)
+            {
+                if (label == null) continue;
+                var stack = label.Fonts;
+                if (stack == null) continue;
+                string text = label.DisplayText;
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char c = text[i];
+                    if (char.IsWhiteSpace(c) || char.IsControl(c)) continue;
+                    int codepoint = char.IsHighSurrogate(c) && i + 1 < text.Length
+                        ? char.ConvertToUtf32(c, text[++i])
+                        : c;
+                    wanted++;
+                    var font = stack.Resolve(codepoint);
+                    if (font != null && font.IsValid && font.HasGlyph(codepoint)) drawn++;
+                }
+            }
         }
 
         /// <summary>Rasterizes a charset before the run, for the +prewarm variant.</summary>
@@ -154,6 +235,8 @@ namespace OneText.Benchmarks
 
         public void Teardown()
         {
+            _labels.Clear();
+            SystemFonts.Enabled = _previousSystemFonts;
             AtlasFlushScheduler.DeferOutsidePlayMode = false;
             foreach (var asset in _fonts) Object.DestroyImmediate(asset);
             _fonts.Clear();

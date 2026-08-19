@@ -794,6 +794,23 @@ namespace OneText.UGUI
             set { _scrollOffset = value; SetVerticesDirty(); }
         }
 
+        /// <summary>
+        /// The faces this label resolves characters through, in order.
+        ///
+        /// Public so a tool can ask the same question the renderer asks — which
+        /// font would draw this character, and is there one at all. The
+        /// benchmark harness reports coverage with it, because a frame time is
+        /// only comparable to another frame time when both drew the same text.
+        /// </summary>
+        public FontStack Fonts
+        {
+            get
+            {
+                EnsureNativeState();
+                return _fonts;
+            }
+        }
+
         /// <summary>The text actually laid out, with link tags removed.</summary>
         public string DisplayText
         {
