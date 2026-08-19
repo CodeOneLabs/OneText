@@ -32,6 +32,17 @@ namespace OneText
         // the reason lives.
         private string _handedOver = string.Empty;
 
+        // What the composition said before the report last changed it, and
+        // what has been handed over against that. A character arriving in the
+        // update the report changed is far more likely to be paying for the
+        // composition that was just replaced than for the one that replaced
+        // it, and when the two are the same syllable nothing but this tells
+        // them apart. Worth exactly one update: Tick ages it out. See
+        // NoteHandedOver, where the reason lives.
+        private string _replaced = string.Empty;
+        private bool _replacedThisUpdate;
+        private string _paidTheReplaced = string.Empty;
+
         /// <summary>Refuses every edit, including composition.</summary>
         public bool ReadOnly { get; set; }
 
@@ -270,12 +281,18 @@ namespace OneText
             }
 
             // A composition that says something new is a composition nothing
-            // has been handed over for yet.
+            // has been handed over for yet — and the one it replaced is what
+            // a character arriving in this update is most likely paying for.
             // Ordinal on purpose, unlike the comparisons that ask whether two
             // strings are the same text: this one asks whether the platform's
             // report changed, and a report that changed shape changed.
             if (!string.Equals(_composition.Text, composing, StringComparison.Ordinal))
+            {
+                _replaced = _composition.Text ?? string.Empty;
+                _replacedThisUpdate = _replaced.Length != 0;
+                _paidTheReplaced = string.Empty;
                 _handedOver = string.Empty;
+            }
 
             _composition.Text = composing;
             _composition.Caret = caretInComposition < 0
@@ -333,9 +350,79 @@ namespace OneText
         /// </summary>
         public bool Tick()
         {
+            // The composition a character can still be paying for is the one
+            // the report replaced in this update, not one it replaced a
+            // thousand updates ago. The two look identical in the strings
+            // alone: a recording of macOS has 아 committed off 앙 in the same
+            // update as the report changing to the next 아, and the same 아
+            // paid for later against a report that had said 아 all along. The
+            // first belongs to the composition that was replaced; the second
+            // is the platform settling up for the one it is still showing. So
+            // the register lives for the update it was written in and the
+            // characters that update delivers, and ages out here. This runs
+            // after the poll and before the key queue is drained, which is why
+            // the marker set by the poll survives the first Tick and not the
+            // second. See NoteHandedOver.
+            if (_replacedThisUpdate) _replacedThisUpdate = false;
+            else if (_replaced.Length != 0) { _replaced = string.Empty; _paidTheReplaced = string.Empty; }
+
             string owed = Arbiter.Tick();
             return owed != null && InsertAtCaret(owed);
         }
+
+        /// <summary>
+        /// Inserts a commit the platform has announced and not delivered yet,
+        /// so that whatever is about to edit the value edits all of it. True if
+        /// the value changed. See <see cref="ImeCommitArbiter.TakeOwedNow"/>
+        /// for the keystroke this exists for.
+        /// </summary>
+        public bool SettleOwedCommit()
+        {
+            string owed = Arbiter.TakeOwedNow();
+            if (owed == null || !InsertAtCaret(owed)) return false;
+
+            // It is in the value now, so it is text the platform can deliver a
+            // second time — the syllable that comes back after a click away and
+            // a click in again.
+            Arbiter.NotePlatformCommitted(owed);
+            return true;
+        }
+
+        /// <summary>
+        /// Removes the syllable the platform has taken back into the live
+        /// composition, so that it is not drawn twice — once as committed text
+        /// and once inside the composition that now owns it. True when it was
+        /// there to remove.
+        ///
+        /// Refuses unless the text really does end with it at the composition,
+        /// because everything upstream of this is inference about a platform
+        /// that never says what it is doing, and the cost of being wrong here
+        /// is a character the user typed.
+        /// </summary>
+        public bool TakeBackCommitted(string committed)
+        {
+            if (ReadOnly || !_composition.Active || string.IsNullOrEmpty(committed)) return false;
+
+            int start = _composition.Start;
+            if (start < committed.Length) return false;
+            if (string.CompareOrdinal(_text, start - committed.Length, committed, 0, committed.Length) != 0)
+                return false;
+
+            _text = _text.Remove(start - committed.Length, committed.Length);
+            _composition.Start = start - committed.Length;
+            _caret = _composition.Start;
+            _anchor = _caret;
+            _displayDirty = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Throws away a commit the platform announced and has not delivered,
+        /// because the user deleted the composition it belongs to. The
+        /// platform's copy of it is swallowed when it arrives; the committed
+        /// text is not touched. True when there was one to throw away.
+        /// </summary>
+        public bool DiscardOwedCommit() => Arbiter.TakeOwedNow() != null;
 
         /// <summary>
         /// Closes the commit window immediately, inserting anything the
@@ -389,6 +476,52 @@ namespace OneText
         {
             if (!_composition.Active) return;
 
+            // Whose composition this pays for, which is not always the one on
+            // screen. At a syllable boundary a Hangul IME finishes one syllable
+            // and starts the next in a single keystroke — 아 plus ㅇ composes
+            // 앙, and the ㅏ after it commits 아 and leaves 아 composing — and
+            // the field reads the composition before it drains the key queue,
+            // so the new syllable is already the live one when the character
+            // for the old one arrives. Type the same syllable twice and that
+            // character matches the live composition exactly.
+            //
+            // Crediting it to the live one is the recording this was read off:
+            // 아 typed three times, and the third one lost. The composition ends
+            // "paid" and is registered as a replay, so every report of the
+            // second 아 — the one the user is actually typing — is refused and
+            // nothing is drawn; and because it was never adopted, the register
+            // that refuses the platform repeating a commit is never retired by
+            // it, and when the platform finally commits that syllable on its
+            // own, as focus leaves, the character is swallowed as the repeat.
+            // Two 아 in the field, three typed.
+            //
+            // The composition that was replaced is what tells them apart. A
+            // syllable splits because its last jamo belongs to the next one, so
+            // what the platform commits is always the previous composition
+            // minus that jamo: 앙 gives up 아, and 아 is a prefix of 앙 in the
+            // decomposed form every comparison here is made in. Payment the
+            // composition of a moment ago accounts for is that one's, and the
+            // live one is still owed.
+            //
+            // The ordinary case is untouched by that. A platform paying late
+            // for the syllable it is still reporting pays the whole of what the
+            // report says, and what a report grew out of is shorter than what
+            // it says (하 became 한), so that payment is a prefix of nothing and
+            // goes on being credited below. Counted apart from what the live
+            // composition has been paid, and not merely skipped, because the
+            // two can run in one update — the ㅏ that splits 앙 and the click
+            // that commits the rest, in the same frame — and a jamo of the
+            // syllable that split off must not be left in the live one's total.
+            if (_replaced.Length != 0)
+            {
+                string toReplaced = _paidTheReplaced + character;
+                if (ImeCommitArbiter.TextStartsWith(_replaced, toReplaced))
+                {
+                    _paidTheReplaced = toReplaced;
+                    return;
+                }
+            }
+
             _handedOver += character;
 
             // The same text, not the same code units, and through the arbiter's
@@ -397,11 +530,29 @@ namespace OneText
             // as U+1112 U+1161 U+11AB has still paid for it, and an equality
             // that said otherwise would leave the composition owed, drawn a
             // second time under the caret, and committed again behind it.
-            if (!ImeCommitArbiter.SameText(_handedOver, _composition.Text)) return;
+            if (!ImeCommitArbiter.SameText(_handedOver, _composition.Text))
+            {
+                // A total that has stopped being a prefix of the composition can
+                // never add up to it, however much arrives — so a character
+                // that paid for nothing (닭 splitting into 달 and 가 hands 달
+                // over, which is no part of 가) is not left in the total to
+                // spoil the payment that follows it. What the tail of a
+                // mismatch may still be the start of is kept.
+                if (!ImeCommitArbiter.TextStartsWith(_composition.Text, _handedOver))
+                {
+                    string alone = character.ToString();
+                    _handedOver = ImeCommitArbiter.TextStartsWith(_composition.Text, alone) ? alone : string.Empty;
+                }
+                return;
+            }
 
             string spent = _composition.Text;
             EndComposition();
             Arbiter.IgnoreReplayOf(spent);
+            // And it is a commit the platform made, which is a different fact
+            // from the composition it may still be reporting: this is the text
+            // it can deliver a second time.
+            Arbiter.NotePlatformCommitted(spent);
         }
 
         // ------------------------------------------------------------- external
@@ -470,6 +621,9 @@ namespace OneText
             if (_composition.Active) _displayDirty = true;
             _composition = ImeComposition.None;
             _handedOver = string.Empty;
+            _replaced = string.Empty;
+            _replacedThisUpdate = false;
+            _paidTheReplaced = string.Empty;
         }
 
         private string ApplyLimit(string value) =>

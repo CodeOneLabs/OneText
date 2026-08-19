@@ -167,11 +167,65 @@ namespace OneText.Tests
         }
 
         /// <summary>
+        /// The reason the field keeps the view rather than rewinding, read off
+        /// a recording: 23 jamo typed, a click away, a click back at what looked
+        /// like the end — and the caret landed on the twelfth character, because
+        /// the twelfth is what was under that pixel once the field had rewound
+        /// to the start. Everything typed next went into the middle of the
+        /// string.
+        /// </summary>
+        [Test]
+        public void A_Long_Value_Still_Shows_Its_End_After_Focus_Leaves()
+        {
+            var field = MakeBareField();
+            field.text = LongValue;
+
+            field.ActivateInputField();
+            field.caretPosition = LongValue.Length;
+            field.UpdateVisuals();
+
+            float scrolled = field.textComponent.ScrollOffset.x;
+            Assert.Greater(scrolled, 0f,
+                "the field never scrolled to the caret, so this proves nothing");
+
+            field.DeactivateInputField();
+            field.UpdateVisuals();
+
+            Assert.AreEqual(scrolled, field.textComponent.ScrollOffset.x, 0.01f,
+                "the end of the value was on screen when focus left and has to still be there, " +
+                "or clicking back in at the end lands in the middle");
+        }
+
+        /// <summary>
+        /// And the one thing keeping it costs: an offset belongs to the string
+        /// it was measured against, so a shorter value assigned from script has
+        /// to bring the view back rather than draw from past its own end.
+        /// </summary>
+        [Test]
+        public void A_Shorter_Value_Assigned_While_Unfocused_Comes_Back_Into_View()
+        {
+            var field = MakeBareField();
+            field.text = LongValue;
+
+            field.ActivateInputField();
+            field.caretPosition = LongValue.Length;
+            field.UpdateVisuals();
+            Assert.Greater(field.textComponent.ScrollOffset.x, 0f);
+
+            field.DeactivateInputField();
+            field.text = "짧다";
+            field.UpdateVisuals();
+
+            Assert.AreEqual(0f, field.textComponent.ScrollOffset.x, 0.01f,
+                "the field is still holding a window into the value it no longer has");
+        }
+
+        /// <summary>
         /// Both directions the report described, which are one cause seen twice:
         /// while the value is being typed the caret-follow scroll pushes it out
-        /// of the left edge, and the moment focus leaves, the scroll resets to
-        /// zero and the same value runs out of the right instead. The same mask
-        /// is what has to be cutting in both states.
+        /// of the left edge, and it is still out of it after focus leaves,
+        /// because the field keeps the view the user left rather than rewinding
+        /// to the start. The same mask is what has to be cutting in both states.
         /// </summary>
         [Test]
         public void The_Net_Is_There_While_Typing_And_After_Focus_Leaves()
@@ -191,11 +245,11 @@ namespace OneText.Tests
             field.DeactivateInputField();
             field.UpdateVisuals();
 
-            Assert.AreEqual(0f, field.textComponent.ScrollOffset.x, 0.01f,
-                "focus left and the scroll did not go back to the start, so this is not the case " +
-                "where the value runs off the other end");
+            Assert.Greater(field.textComponent.ScrollOffset.x, 0f,
+                "focus left and the field rewound to the start of the value, so a click back in " +
+                "at the end of what was on screen would land in the middle of the string");
             Assert.IsNotNull(MaskUtilities.GetRectMaskForClippable(field.textComponent),
-                "nothing clips the value now drawing from its start and off the right edge");
+                "nothing clips the value still drawing off the left edge");
         }
 
         [Test]

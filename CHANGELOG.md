@@ -22,7 +22,101 @@
   the output changes; what changes is that text can reach the shaper from a
   buffer a game filled itself.
 
+### Changed
+
+- **A field that loses focus keeps the view the user left, rather than
+  rewinding to the start of its value.** Read off a recording: 23 jamo typed
+  into a field narrower than them, a click away, a click back at what looked
+  like the end of the text — and the caret landed on the twelfth character,
+  because the twelfth is what was under that pixel once the field had rewound.
+  Everything typed next went into the middle of the string. The hit test was
+  right; what was on screen was not what the user had left there.
+
+  Rewinding is what uGUI and TextMesh Pro do and it reads better in a column of
+  values, so this is a deliberate trade: the common act — clicking back into a
+  long value to carry on typing at its end — now works in one click, and a field
+  showing a value too long for it may show the middle of it. An offset belongs
+  to the string it was measured against, so a value assigned from script while
+  the field is unfocused pulls the view back rather than drawing from past its
+  own end.
+
 ### Fixed
+
+- **A backspace that ended a Korean composition deleted the syllable in front
+  of it.** Typing 강강 and holding backspace went 강강 → 강가 → 강ㄱ → nothing:
+  the last press took two characters instead of one. Read off a recording, the
+  cause is an ordering the field creates itself. It reads the input method
+  before it drains the key queue — deliberately, so that the frame a commit
+  lands in is a frame that already knows the composition ended — and macOS's
+  Hangul IME does not eat the backspace that would empty a composition. It
+  hands back what is left of the syllable and lets the key through, so both
+  arrive in the same update: the composition ends, the commit for ㄱ is
+  announced but not yet delivered, and the backspace is applied to a value that
+  is one syllable short of what the user is looking at. A key that carries no
+  text of its own now settles that debt before it acts.
+
+  And the two channels do not have to move in that order. The composition can
+  also end in the middle of draining the key queue, on the character the IME
+  hands over — and then the backspace arrives while a composition is still
+  live and is dropped as the IME's, which is the other half of the same report:
+  "backspace gets swallowed once". A backspace pressed while composing is now
+  held rather than dropped, and the question of whose it was is asked once, at
+  the end of the update: composition still live, it was the IME's; composition
+  gone, it was the field's.
+
+  What made this one take four attempts is that one press is not one event.
+  macOS sends four behind a backspace that empties a Hangul composition — an
+  event with no key and no character, the backspace, the jamo it hands back,
+  and the backspace *again* — and every test that modelled the press as a
+  single event passed while the field emptied itself in front of the user.
+  Unity's own InputField suppresses that whole tail (character 0, no modifiers,
+  composition just gone) and so never deletes anything at all, which is the
+  other half of what people report. This keeps the press and drops the tail:
+  the empty event does nothing, the press throws away the syllable the platform
+  announced rather than inserting it and deleting the character in front, and
+  the repeat behind it is ignored for the rest of the update.
+
+- **A syllable came back a second time after leaving the field and returning.**
+  Type 안녕, click away, click back, and the field read 안녕녕. macOS delivers a
+  commit twice when focus moves on the frame a composition ends, and the
+  arbiter has guarded that since the milestone it was reported in — but the
+  guard was armed in only one of the two places a commit can arrive, and not in
+  the one Korean actually uses. A Hangul IME hands the finished syllable over
+  as a character *while it is still reporting the composition*, so every
+  syllable committed at a boundary — which is every syllable — came through a
+  door that armed nothing. The recording says it plainly: 녕 delivered twice,
+  and the arbiter reporting no accepted commit at all. Both doors arm it now,
+  and it retires when the user's own composition has lived through an update,
+  which is a beat later than when one is adopted — the repeat lands in the same
+  update as the composition it arrives behind.
+
+- **A syllable the IME reclaims to edit inside is no longer drawn twice.** Four
+  bug reports turned out to be one thing, and it took all four to see it. A
+  Hangul IME does not edit a syllable it has committed by sending edits: it
+  takes the syllable back into composition and works there. 삼겹살 then backspace
+  reports composing 사 — 살 with its final taken off — and read 삼겹살사. 삼겹살
+  then ㅅ reports 삸 — the same 살 with its final changed — and, when the platform
+  split that back apart, read 삼겹살살. 안녕하세요 then ㅇ reports 용, and read
+  안녕하세요요. 아 typed twice reports 앙, and stuck one syllable behind. Every one
+  of them is the value keeping a syllable the platform had taken back.
+
+  So the field takes it out of the value when the composition starts as that
+  syllable with its final moved — shorter, longer or changed, the lead and the
+  vowel are what stay. What the platform commits next is then the syllable
+  coming back, not a second one. Three rules that guessed at the shapes
+  separately, and a fourth that tried to tell the platform from the user by
+  whether a key arrived, are gone: the key says nothing, because the user does
+  press one for 삸, and every composition change carries a keycode-less event
+  behind it anyway.
+
+  A syllable of two jamo has one shape left that structure cannot read: take
+  the vowel off 에 and its lead is all that remains, reported as the bare ㅇ —
+  which is also exactly what the user starting a syllable looks like, and
+  reading it wrong either leaves 우리집에ㅇ or deletes a syllable nobody asked to
+  delete. So that one waits an update, and a keystroke arriving in it says the
+  ㅇ is the user's. It is the only place a key is still consulted, because it
+  is the only place the shapes are the same; and the keycode-less event that
+  rides behind every composition change does not count as one.
 
 - **A label with markup on it allocates nothing either.** The last ninety-five
   bytes a rebuild cost came from one line: the style spans arrive as

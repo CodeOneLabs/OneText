@@ -20,6 +20,21 @@ namespace OneText.UGUI
         /// <summary>False when this backend cannot run in the current project.</summary>
         bool IsAvailable { get; }
 
+        /// <summary>
+        /// True when <see cref="TryGetComposition"/> reads the platform's own
+        /// state, so that reporting nothing means the platform is composing
+        /// nothing. False when it reports a cache of what the platform last
+        /// pushed, where reporting nothing is only the absence of news: the
+        /// cache is emptied when a session ends, and says the same thing
+        /// whether the platform let go of a composition or is still holding one
+        /// it has not pushed again.
+        ///
+        /// The difference is worth a member of this interface because
+        /// <see cref="ImeCommitArbiter"/> retires its guards on evidence, and
+        /// this is what decides whether silence is any.
+        /// </summary>
+        bool ReportsPlatformState { get; }
+
         /// <summary>Starts accepting composition; called when a field takes focus.</summary>
         void Begin();
 

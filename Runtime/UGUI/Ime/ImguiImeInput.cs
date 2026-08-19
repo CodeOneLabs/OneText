@@ -56,6 +56,13 @@ namespace OneText.UGUI
         public void SetCursorScreenPosition(Vector2 screenPosition) =>
             Input.compositionCursorPos = screenPosition;
 
+        /// <summary>
+        /// True: <c>Input.compositionString</c> is the platform answering, not
+        /// a cache of what it last sent, so an empty one is the platform saying
+        /// it holds nothing.
+        /// </summary>
+        public bool ReportsPlatformState => true;
+
         public bool TryGetComposition(out string text, out int caret, out int clauseStart, out int clauseLength)
         {
             text = Input.compositionString;

@@ -262,6 +262,25 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void A_Character_That_Pays_For_Nothing_Does_Not_Spoil_The_Payment_Behind_It()
+        {
+            // 닭 and ㅏ: the platform commits 달 and composes 가, and 달 is no
+            // part of 가 — a character that pays for nothing on the screen.
+            // Left in the running total, the 가 the platform hands over later
+            // would arrive as "달가" and never match, and the composition would
+            // be drawn under the caret after it had been paid for.
+            var model = new TextEditingModel();
+            model.SetComposition("가");
+
+            Assert.IsTrue(model.AcceptCharacter('달', out _));
+            Assert.IsTrue(model.IsComposing, "달 is not 가, so 가 is still owed");
+
+            Assert.IsTrue(model.AcceptCharacter('가', out _));
+            Assert.AreEqual("달가", model.Text);
+            Assert.IsFalse(model.IsComposing, "the composition was paid and a stale character got in the way");
+        }
+
+        [Test]
         public void A_Cancelled_Composition_Commits_Nothing()
         {
             var model = new TextEditingModel { Text = "안녕" };
@@ -587,6 +606,14 @@ namespace OneText.Tests
             /// </summary>
             public bool KeepsComposingAfterEnd;
 
+            /// <summary>
+            /// The same fact as <see cref="KeepsComposingAfterEnd"/> read from
+            /// the other end: a fake standing in for the poll of the platform
+            /// is one whose empty report means the platform is empty, and one
+            /// standing in for the pushed cache is not.
+            /// </summary>
+            public bool ReportsPlatformState => KeepsComposingAfterEnd;
+
             public bool IsAvailable => true;
 
             public void Begin() => Running = true;
@@ -742,6 +769,78 @@ namespace OneText.Tests
             Assert.AreEqual(2, field.caretPosition);
             Assert.IsFalse(submitted, "Enter confirmed a candidate; it did not submit the form");
             Assert.IsTrue(field.isComposing);
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void Backspacing_The_Last_Jamo_Leaves_The_Committed_Text_Alone()
+        {
+            // Recorded on macOS, typing 안녕 and then backspacing it away. The
+            // last backspace is the one that empties the composition, and the
+            // platform reports all of it in a single update: the key, the
+            // syllable as a character, and the composition ending.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            field.text = "안";
+            field.caretPosition = 1;
+
+            _ime.Composition = "\u3134"; // ㄴ, all that is left of 녕
+            field.UpdateEditing();
+            Assert.IsTrue(field.isComposing);
+
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.Backspace));
+            field.ProcessKeyEvent(Key(KeyCode.None, '\u3134'));
+
+            Assert.AreEqual("안", field.text,
+                "the backspace belonged to the composition it emptied, not to the text behind it");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void The_Same_Syllable_Typed_Twice_Is_Drawn_The_Second_Time()
+        {
+            // "I type 아, then 아 again, and it is in the field but nothing
+            // shows until I press an arrow key or Enter." Driven the way the
+            // recording shows macOS driving it: the second 아 is never composed
+            // from nothing. The ㅇ that starts it is taken as the final of the
+            // first — 앙 — and the ㅏ after it splits that into 아, committed
+            // on the character channel, and 아, composing, in one update. That
+            // character matches the live composition exactly, and crediting it
+            // there ended a composition nobody had paid for, registered it as
+            // a replay, and refused every report of the second 아 after it.
+            var field = CreateField(out _);
+            _ime.KeepsComposingAfterEnd = true; // the platform-poll backend
+            field.ActivateInputField();
+
+            _ime.Composition = "\u3147"; // ㅇ
+            field.UpdateEditing();
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+            Assert.AreEqual(string.Empty, field.text, "nothing is committed while the syllable builds");
+
+            // The split: the report has moved on to the next 아 before the
+            // character for the first one is drained.
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+
+            Assert.AreEqual("아", field.text, "the first 아 is the value");
+            Assert.IsTrue(field.isComposing,
+                "the second 아 is the user typing, not the platform replaying the first");
+            Assert.AreEqual("아", field.compositionString,
+                "and it is the composition, drawn under the caret rather than refused");
+            Assert.AreEqual("아아", field.displayText);
+
+            // And it stays drawn for as long as the platform holds it.
+            for (int update = 0; update < 6; update++) field.UpdateEditing();
+            Assert.IsTrue(field.isComposing);
+            Assert.AreEqual("아아", field.displayText);
 
             Destroy(field);
         }
@@ -976,6 +1075,548 @@ namespace OneText.Tests
             field.UpdateEditing();
             field.ProcessKeyEvent(Key(KeyCode.None, '국'));
             Assert.AreEqual("한국", field.text, "and cleared the echo guard with it");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void Typing_An_Then_Backspacing_The_Jamo_Off_It_Replayed_From_A_Recording()
+        {
+            // Frame for frame off the probe: 안, then 녕 backspaced away one
+            // jamo at a time. Every composition value here is what
+            // Input.compositionString actually read on the update the field
+            // polled it, and every key is one the recording shows arriving.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+
+            Compose(field, "\u3147");            // ㅇ
+            Compose(field, "아");
+            Compose(field, "안");
+
+            // The platform hands 안 over as a character and has already flipped
+            // the composition to ㄴ by the time the field polls.
+            Compose(field, "\u3134");            // ㄴ
+            field.ProcessKeyEvent(Key(KeyCode.None, '안'));
+            Assert.AreEqual("안", field.text, "the syllable the platform handed over");
+
+            Compose(field, "녀");
+            Compose(field, "녕");
+            Compose(field, "녀");                 // backspaces the IME ate whole
+            Compose(field, "\u3134");            // ㄴ
+
+            // The last one: the IME hands back what is left, ends the
+            // composition, and lets the key through — four times over. This is
+            // the tail macOS sends behind a backspace that empties a
+            // composition, in the order the field pops it, and the reason a
+            // replay that modelled one press as one event could never
+            // reproduce the bug.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));            // no key, no character
+            field.ProcessKeyEvent(Key(KeyCode.Backspace));
+            field.ProcessKeyEvent(Key(KeyCode.None, '\u3134')); // the jamo handed back
+            field.ProcessKeyEvent(Key(KeyCode.Backspace));       // and the press again
+
+            Assert.AreEqual("안", field.text,
+                "one press deletes the composition it emptied and nothing else");
+
+            Destroy(field);
+        }
+
+        /// <summary>One update in which the platform reports this composition.</summary>
+        private void Compose(OneTextInputField field, string composition)
+        {
+            _ime.Composition = composition;
+            field.UpdateEditing();
+        }
+
+        [Test]
+        public void A_Syllable_The_Platform_Reclaims_To_Edit_Leaves_The_Value()
+        {
+            // 삼겹살, click away, click back, backspace. The IME consumes the
+            // key itself and reports composing 사 — 살 with its final jamo gone
+            // — so the syllable being deleted is in the composition while the
+            // value still holds it: 삼겹살사.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            field.text = "삼겹";
+            field.caretPosition = 2;
+
+            _ime.Composition = "살";
+            field.UpdateEditing();
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.F));
+            field.ProcessKeyEvent(Key(KeyCode.None, '살'));
+            Assert.AreEqual("삼겹살", field.text);
+
+            field.DeactivateInputField();
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+
+            // The IME consumed the backspace itself and reports 살 with its
+            // final taken off.
+            _ime.Composition = "사";
+            field.UpdateEditing();
+
+            Assert.AreEqual("삼겹", field.text,
+                "the 살 the platform took back to edit is still in the value as well");
+            Assert.AreEqual("사", field.compositionString);
+            Assert.AreEqual("삼겹사", field.displayText,
+                "which is what 삼겹살 with one jamo taken off it looks like");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Syllable_Reclaimed_Down_To_Its_Lead_Leaves_The_Value()
+        {
+            // 우리집에, click away, click back, backspace. 에 is a lead and a
+            // vowel, so taking the vowel off leaves the lead alone — reported
+            // as the compatibility ㅇ, which shares no code point with the
+            // conjoining one a decomposed 에 starts with. Structure cannot tell
+            // this from the ㅇ of a syllable being started; silence can.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            field.text = "우리집";
+            field.caretPosition = 3;
+
+            _ime.Composition = "에";
+            field.UpdateEditing();
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.P));
+            field.ProcessKeyEvent(Key(KeyCode.None, '에'));
+            Assert.AreEqual("우리집에", field.text);
+
+            field.DeactivateInputField();
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+
+            // The IME consumed the backspace itself: a composition appears and
+            // nothing carrying a key or a character comes with it.
+            _ime.Composition = "\u3147"; // ㅇ
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None)); // the event that rides behind every change
+            field.UpdateEditing();
+
+            Assert.AreEqual("우리집", field.text,
+                "에 is in the composition now and cannot be in the value as well");
+            Assert.AreEqual("우리집\u3147", field.displayText,
+                "which is 에 with its vowel taken off, and not a jamo beside it");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Lead_The_User_Types_After_A_Two_Jamo_Syllable_Is_Their_Own()
+        {
+            // The same shape with the keystroke that made it: 우리집에 and then
+            // ㅇ for the next syllable. Nothing of theirs may be taken back.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true;
+            field.text = "우리집";
+            field.caretPosition = 3;
+
+            _ime.Composition = "에";
+            field.UpdateEditing();
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.P));
+            field.ProcessKeyEvent(Key(KeyCode.None, '에'));
+            Assert.AreEqual("우리집에", field.text);
+
+            _ime.Composition = "\u3147"; // ㅇ
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None)); // the one that rides behind
+            field.ProcessKeyEvent(Key(KeyCode.D));    // and the keystroke that made it
+            field.UpdateEditing();
+
+            Assert.AreEqual("우리집에", field.text,
+                "the user pressed a key, so the syllable behind the caret is theirs to keep");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Syllable_The_Platform_Reclaims_To_Add_To_Leaves_The_Value()
+        {
+            // The same reclaim in the other direction, and the one that had
+            // 삼겹살 come back as 삼겹살살: pressing ㅅ after 삼겹살 makes the IME
+            // take 살 back and turn it into 삸, then split that into 살 and 사.
+            // With 살 still in the value, the piece it commits is a second one.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            field.text = "삼겹";
+            field.caretPosition = 2;
+
+            _ime.Composition = "살";
+            field.UpdateEditing();
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.F));
+            field.ProcessKeyEvent(Key(KeyCode.None, '살'));
+            Assert.AreEqual("삼겹살", field.text);
+
+            field.DeactivateInputField();
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+
+            // ㅅ, and the platform answers with 살 carrying it: 삸.
+            _ime.Composition = "삸";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.T));
+
+            Assert.AreEqual("삼겹", field.text,
+                "살 belongs to the composition now, and cannot stay in the value too");
+
+            // Which it then splits back into 살 and the 사 being typed.
+            _ime.Composition = "사";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.K));
+            field.ProcessKeyEvent(Key(KeyCode.None, '살'));
+
+            Assert.AreEqual("삼겹살", field.text,
+                "the 살 it committed is the one it took, not a second one");
+            Assert.AreEqual("삼겹살사", field.displayText);
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Syllable_The_User_Starts_Is_Not_Mistaken_For_A_Reclaim()
+        {
+            // The other side of it, and the reason the reclaim waits an update:
+            // ㅅ after committing 살 is a prefix of 살 too, and taking that as a
+            // reclaim would delete a syllable the user meant to keep. A key
+            // arriving with the composition is what says the user made it.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true;
+            field.text = "삼겹";
+            field.caretPosition = 2;
+
+            _ime.Composition = "살";
+            field.UpdateEditing();
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.F));
+            field.ProcessKeyEvent(Key(KeyCode.None, '살'));
+            Assert.AreEqual("삼겹살", field.text);
+
+            // A composition that starts life as a whole syllable and is a
+            // prefix of what was just committed — the shape a reclaim has —
+            // but with the keystroke that made it arriving behind it.
+            // A syllable the user starts arrives one jamo at a time, and as a
+            // compatibility jamo at that — which shares nothing with the
+            // conjoining one a decomposed 살 begins with.
+            _ime.Composition = "\u3145"; // ㅅ
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.T));
+            field.UpdateEditing();
+
+            Assert.AreEqual("삼겹살", field.text,
+                "a syllable the user is starting is not the last one coming back");
+            Assert.AreEqual("삼겹살\u3145", field.displayText,
+                "and what they are composing sits after it, not inside it");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void The_Same_Syllable_Typed_Over_And_Over_Advances_Every_Time()
+        {
+            // 아 아 아, and the field read 아아. Replayed frame by frame from
+            // the recording of 20 Aug: every 아 after the first is born at a
+            // split — 앙 giving up 아 on the character channel and leaving 아
+            // composing, in the same update — and the last one is committed by
+            // the platform on its own, as focus leaves, with the report already
+            // empty. Before this, the character at each split was credited to
+            // the live 아 instead of the 앙 it came off, which ended the
+            // composition "paid", refused every report of the real second 아
+            // as a replay (five hundred frames of it in the log), and left the
+            // register that refuses a repeated commit armed with nothing able
+            // to retire it — so the commit of the third 아, arriving bare, was
+            // swallowed as the platform repeating the first.
+            var field = CreateField(out _);
+            _ime.KeepsComposingAfterEnd = true; // ImguiImeInput, as recorded
+            field.ActivateInputField();
+
+            // f1006 ㅇ, f1118 ㅏ, f1543 ㅇ
+            _ime.Composition = "\u3147";
+            field.UpdateEditing();
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+            Assert.AreEqual(string.Empty, field.text);
+
+            // f1629 ㅏ: the poll sees the next 아 first, then the key queue
+            // delivers K without a character, the committed 아, and an empty
+            // event behind it — exactly as logged.
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.K));
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            Assert.AreEqual("아", field.text);
+            Assert.AreEqual("아", field.compositionString, "the second 아 is on screen, not refused");
+
+            // f1630..f1923: the platform goes on reporting the second 아.
+            for (int update = 0; update < 8; update++) field.UpdateEditing();
+            Assert.AreEqual("아", field.text);
+            Assert.AreEqual("아", field.compositionString);
+
+            // f1924 ㅇ, f2033 ㅏ: the same split again.
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.K));
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            Assert.AreEqual("아아", field.text);
+            Assert.AreEqual("아", field.compositionString);
+
+            for (int update = 0; update < 8; update++) field.UpdateEditing();
+
+            // f2577: the platform commits the third 아 itself — the report is
+            // empty at the poll and the character follows, with no composition
+            // of the user's in between to tell anyone it is not a repeat.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.K));
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            Assert.AreEqual("아아아", field.text, "the third 아 was swallowed as the platform repeating the first");
+            Assert.IsFalse(field.isComposing);
+
+            // And the focus loss that came with it adds nothing.
+            field.DeactivateInputField();
+            Assert.AreEqual("아아아", field.text);
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void The_Same_Syllable_The_Platform_Carries_On_Is_Not_Delivered_Twice()
+        {
+            // The 안녕하세요요 case with a syllable that is its own neighbour:
+            // 아, click away, click back, ㅇ, ㅏ. The platform reopens the 아
+            // it already delivered, makes 앙 of it, and splits that into 아
+            // and 아 — handing the first over a second time. It reads exactly
+            // as a user typing 아 again, and the register that refuses a
+            // repeated commit must still be armed when it lands: a fix that
+            // retired it the moment an equal composition was adopted took the
+            // repeat as the user's and typed 아아 where 아 was meant.
+            var field = CreateField(out _);
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            field.ActivateInputField();
+
+            _ime.Composition = "\u3147";
+            field.UpdateEditing();
+            _ime.Composition = "아";
+            field.UpdateEditing();
+
+            // Focus leaves: the platform ends the composition and delivers.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            Assert.AreEqual("아", field.text);
+            field.DeactivateInputField();
+
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+
+            // ㅇ reopens the delivered syllable …
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+            field.UpdateEditing();
+
+            // … and ㅏ splits it, handing 아 over again.
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+
+            Assert.AreEqual("아", field.text, "the 아 the platform carried on is the one already in the value");
+            Assert.IsTrue(field.isComposing);
+            Assert.AreEqual("아", field.compositionString, "and the one being typed now is on screen");
+
+            // Typing on from there is typed: one repeat is one repeat.
+            field.UpdateEditing();
+            _ime.Composition = "앙";
+            field.UpdateEditing();
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '아'));
+            Assert.AreEqual("아아", field.text, "the user's next 아 was taken for another repeat");
+            Assert.AreEqual("아", field.compositionString);
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Syllable_The_Platform_Carries_On_Is_Not_Delivered_Twice()
+        {
+            // 안녕하세요, click away, click back, press ㅇ — and the platform
+            // reports 용, because it kept 요 open and took the ㅇ as its final.
+            // It then splits that into 요 and 아 and hands 요 over a second
+            // time. Read frame by frame off a recording; uGUI's own field has
+            // the same extra 요.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            field.text = "안녕하세";
+            field.caretPosition = 4;
+
+            _ime.Composition = "요";
+            field.UpdateEditing();
+
+            // The composition ends and the field takes the commit itself.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.Y));
+            field.ProcessKeyEvent(Key(KeyCode.None, '요'));
+            Assert.AreEqual("안녕하세요", field.text);
+
+            field.DeactivateInputField();
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+
+            // One press of ㅇ, and the platform answers with the syllable it
+            // already gave us plus that consonant.
+            _ime.Composition = "용";
+            field.UpdateEditing();
+            field.UpdateEditing();
+
+            // Which it then splits, handing 요 back a second time.
+            _ime.Composition = "아";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '요'));
+
+            Assert.AreEqual("안녕하세요", field.text,
+                "the 요 the platform carried on is the one already in the value");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Commit_The_Field_Took_For_The_Platform_Is_Not_Taken_Again()
+        {
+            // Read frame by frame off a recording of 안녕 and a click. The
+            // composition ends, the field arms the window for the 녕 the
+            // platform announced, and the click ends the session in the same
+            // frame — before the character is drained — so the field inserts
+            // 녕 itself. A thousand frames later the platform delivers it for
+            // the first time, and for four milestones there was nothing
+            // anywhere that had heard of it: 안녕녕.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            field.text = "안";
+            field.caretPosition = 1;
+
+            _ime.Composition = "녕";
+            field.UpdateEditing();
+
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.DeactivateInputField();
+            Assert.AreEqual("안녕", field.text, "the field inserted what the platform had not sent");
+
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+            field.UpdateEditing();
+
+            // The first keystroke back: the delivery, alongside the composition
+            // for the syllable being typed now.
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '녕'));
+
+            Assert.AreEqual("안녕", field.text,
+                "the field had already taken that syllable on the platform's behalf");
+            Assert.IsTrue(field.isComposing, "and the one being typed now is untouched");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Commit_The_Platform_Makes_Twice_Is_Only_Taken_Once()
+        {
+            // Recorded on macOS: 안녕, click away, click back, and 녕 arrives a
+            // second time on the first keystroke of what the user types next —
+            // 안녕녕. Every syllable here is committed the way a Hangul IME
+            // commits: the character arrives while the composition is still
+            // being reported, which is the door that armed nothing.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+
+            _ime.Composition = "안";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '안'));
+            Assert.AreEqual("안", field.text);
+
+            _ime.Composition = "녕";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '녕'));
+            Assert.AreEqual("안녕", field.text);
+
+            field.DeactivateInputField();
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+
+            // The first keystroke back. The platform replays the syllable it
+            // already delivered, in the same update as the composition for the
+            // one the user is actually typing now.
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '녕'));
+
+            Assert.AreEqual("안녕", field.text,
+                "the platform said 녕 twice and the field took it once");
+            Assert.IsTrue(field.isComposing, "and the syllable being typed now is untouched");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void A_Platform_That_Went_Quiet_Still_Has_Its_Echo_Swallowed()
+        {
+            // The commit the field made on its way out of focus, and a platform
+            // that lets go of the composition without delivering the syllable
+            // until the user comes back and types. Nothing between those two
+            // moments is evidence of anything, and a guard that counted updates
+            // through them came down before the echo it was there to swallow:
+            // 안녕, click away, click back, and the field reads 안녕녕.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            field.text = "안";
+            field.caretPosition = 1;
+
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+            _ime.Composition = "녕";
+            field.UpdateEditing();
+
+            field.DeactivateInputField();
+            Assert.AreEqual("안녕", field.text, "the field committed what nobody else would");
+
+            // The platform is reporting nothing now — it did let go — and the
+            // syllable it owes arrives with the first keystroke after the user
+            // clicks back in.
+            _ime.Composition = string.Empty;
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+            for (int update = 0; update < 6; update++) field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '녕'));
+
+            Assert.AreEqual("안녕", field.text,
+                "the platform's copy of a syllable the field already committed is an echo, however late");
 
             Destroy(field);
         }

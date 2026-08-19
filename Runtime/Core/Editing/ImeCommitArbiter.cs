@@ -371,7 +371,173 @@ namespace OneText
             return false;
         }
 
-        private void ForgetPlatformCommit()
+        /// <summary>
+        /// The platform committed <paramref name="committed"/> by handing it
+        /// over as characters while it was still reporting the composition, and
+        /// the field took it. A second delivery of exactly this is the platform
+        /// repeating itself — see <see cref="IsThePlatformSayingItAgain"/>.
+        ///
+        /// The other way into that register is <see cref="ShouldSwallow"/>,
+        /// where a character arrives after the composition has ended, and for
+        /// four milestones that was the only way in. The recording that closed
+        /// this one shows why it is not enough: on macOS, a Hangul syllable is
+        /// committed on the character channel <em>before</em> the composition
+        /// report empties, so every commit typed at a syllable boundary — which
+        /// is every commit in ordinary Korean — came through the other door and
+        /// armed nothing at all. Type 안녕, click away, click back, and the
+        /// platform delivers 녕 a second time on the first keystroke: 안녕녕,
+        /// with nothing anywhere that had heard of 녕.
+        /// </summary>
+        public void NotePlatformCommitted(string committed)
+        {
+            if (string.IsNullOrEmpty(committed)) return;
+            _platformCommit = committed;
+            _platformCommitDecomposed = Decomposed(committed);
+            _repeatSoFar = string.Empty;
+        }
+
+        /// <summary>
+        /// Reports what is being composed, so the repeat register can tell the
+        /// user starting a syllable of their own from the platform carrying on
+        /// the one it has just handed over.
+        ///
+        /// The difference is the whole of the bug, and only a recording shows
+        /// it. Type 안녕하세요, click away, click back, press ㅇ — and the
+        /// platform reports 용, because a Hangul IME keeps the syllable it
+        /// committed open and takes the next consonant as its final. It then
+        /// splits that into 요 and 아, and hands 요 over a second time: 안녕하세요요.
+        /// Retiring the register on "something is being composed" threw the
+        /// guard away one update before the repeat arrived, which is what it
+        /// was armed for.
+        ///
+        /// A composition that begins with the commit we accepted is that commit
+        /// being carried on, so the register stands. Anything else is the user,
+        /// and it goes. Compared decomposed, because 용 is only 요 plus a jamo
+        /// in that form; composed they are two unrelated code points.
+        ///
+        /// Strictly longer, and equality is on the other side of that line on
+        /// purpose. A composition that reads exactly as the commit is the
+        /// platform holding the syllable it carried on, split back off again
+        /// — 아, a click away and back, ㅇ makes 앙 and ㅏ makes 아 and 아 — and
+        /// the repeat it hands over at that split has to find the register
+        /// still armed. A user who types the same syllable twice in a row does
+        /// not come through here at all: the commit for the first arrives in
+        /// the update the report changes from 앙 to 아, and
+        /// <c>TextEditingModel.NoteHandedOver</c> credits it to the 앙 that was
+        /// replaced rather than to the 아 that replaced it, so nothing is
+        /// registered and nothing needs retiring.
+        /// </summary>
+        public void NoteComposing(string composition)
+        {
+            if (_platformCommit == null) return;
+
+            string composing = Decomposed(composition ?? string.Empty);
+            if (composing.Length > _platformCommitDecomposed.Length &&
+                composing.StartsWith(_platformCommitDecomposed, StringComparison.Ordinal))
+                return;
+
+            ForgetPlatformCommit();
+        }
+
+        /// <summary>
+        /// The commit the platform has reclaimed into
+        /// <paramref name="composition"/> to edit inside it, or null when it
+        /// has not.
+        ///
+        /// A Hangul IME does not edit a syllable it has committed by sending
+        /// edits: it takes the syllable back into composition and works there.
+        /// Every shape of that was reported separately and fixed separately
+        /// before it was seen to be one thing — 살 becoming 사 with the final
+        /// taken off, 살 becoming 삸 with the final changed, 요 becoming 용 and
+        /// 아 becoming 앙 with one added — and all four are the platform saying
+        /// that the syllable is its own again. Left in the value as well, it is
+        /// drawn twice and committed twice: 삼겹살사, 삼겹살살, 안녕하세요요.
+        ///
+        /// What they have in common, decomposed, is the syllable itself: the
+        /// lead and the vowel of the commit survive and only the final moves.
+        /// So the test is a shared prefix of all but the commit's last jamo,
+        /// and at least a lead and a vowel of it.
+        ///
+        /// Two shared jamo is also the safety, and it is worth saying why it is
+        /// enough. A syllable the user starts arrives as one jamo, because it
+        /// takes a keystroke each — and that jamo comes through as a
+        /// compatibility one, U+3145 for ㅅ, which shares nothing with the
+        /// conjoining U+1109 a decomposed 살 begins with. So the ㅅ of a new
+        /// syllable after 살 shares zero, and only the platform handing back a
+        /// whole syllable can share two.
+        /// </summary>
+        public string ReclaimedInto(string composition, out bool certain)
+        {
+            certain = false;
+            if (_platformCommit == null || string.IsNullOrEmpty(composition)) return null;
+
+            // Folded rather than merely decomposed, because a syllable handed
+            // back with only its lead left comes through as the compatibility
+            // jamo — ㅇ is U+3147 where a decomposed 에 begins with U+110B, and
+            // canonically those are two unrelated characters. The compatibility
+            // form is what makes them the same letter.
+            string composing = Folded(composition);
+            string commit = Folded(_platformCommit);
+
+            int shared = 0;
+            int most = Math.Min(composing.Length, commit.Length);
+            while (shared < most && composing[shared] == commit[shared]) shared++;
+            if (shared < commit.Length - 1 || shared == 0) return null;
+
+            // Two jamo in common is the syllable itself, and nothing the user
+            // can type in one keystroke looks like that.
+            certain = shared >= 2;
+
+            // One is 에 backspaced down to its ㅇ — and also the ㅇ of a
+            // syllable the user is starting, which is why this one is not
+            // certain and the field waits a keystroke to find out.
+            return certain || composing.Length == 1 ? _platformCommit : null;
+        }
+
+        /// <summary>
+        /// Compatibility-decomposed: the form in which a lone ㅇ and the ㅇ
+        /// inside 에 are the same letter. Memoized like <see cref="Decomposed"/>
+        /// and for the same reason — the composition channel asks about the
+        /// same string every update while one is live.
+        /// </summary>
+        private static string Folded(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            if (string.Equals(value, s_foldedRaw, StringComparison.Ordinal)) return s_folded;
+
+            string folded;
+            try
+            {
+                folded = value.Normalize(NormalizationForm.FormKD);
+            }
+            catch (ArgumentException)
+            {
+                folded = value;
+            }
+
+            s_foldedRaw = value;
+            s_folded = folded;
+            return folded;
+        }
+
+        private static string s_foldedRaw;
+        private static string s_folded = string.Empty;
+
+        /// <summary>
+        /// Retires the repeat register: whatever the platform said before, the
+        /// field has since watched the user build a composition of their own,
+        /// and a syllable arriving now is theirs.
+        ///
+        /// Called once a composition has lived through a whole update rather
+        /// than the moment one is adopted, and the difference is the case this
+        /// is for. The repeat arrives in the same update as the composition the
+        /// user has just started — the field polls the input method before it
+        /// drains the key queue, so the new composition is already adopted when
+        /// the repeated character lands behind it. Retiring on the adoption
+        /// would take the guard down half an update before the thing it guards
+        /// against.
+        /// </summary>
+        public void ForgetPlatformCommit()
         {
             _platformCommit = null;
             _platformCommitDecomposed = null;
@@ -449,6 +615,81 @@ namespace OneText
         }
 
         /// <summary>
+        /// Hands the owed commit over now — to be inserted, or to be thrown
+        /// away because the user deleted the composition it belongs to — and
+        /// switches to swallowing what the platform sends for it. Null when
+        /// nothing is owed. The caller says whether the text reached the value,
+        /// with <see cref="NotePlatformCommitted"/>: only text that did can be
+        /// delivered a second time.
+        ///
+        /// The field reads the composition before it drains the key queue, so
+        /// the update a composition ends in is an update where a key can still
+        /// arrive behind it — and the recording that made this necessary is the
+        /// commonest keystroke in Korean: the backspace that empties a Hangul
+        /// composition arrives in the same update as the commit for whatever
+        /// was left of it, because the IME hands the remainder back and lets
+        /// the key through rather than eating it. Applied to a value that syllable
+        /// had not reached yet, the backspace deleted the syllable in front of
+        /// it, and the commit then landed on top of the hole.
+        ///
+        /// No replay is registered, which is the one thing that separates this
+        /// from <see cref="SuppressEchoOf"/>: there the field decided a
+        /// composition was over and the platform was never told, so it may go
+        /// on reporting it. Here the platform said so first. Registering one
+        /// would refuse the user's next composition if it happened to be the
+        /// same keystroke.
+        /// </summary>
+        public string TakeOwedNow()
+        {
+            if (_mode != Mode.AwaitingPlatform) return null;
+
+            string owed = _pending;
+            _mode = Mode.SuppressingEcho;
+            _echo = string.Empty;
+            _updatesLeft = GraceUpdates;
+            return owed;
+        }
+
+        /// <summary>
+        /// The platform reports it is composing nothing, on a backend whose
+        /// report is the platform's own live state rather than a cache of what
+        /// it last pushed. That is the evidence a refused replay waits for:
+        /// whatever the platform was still holding, it is not holding it now.
+        ///
+        /// Without this the register is only retired by a <em>different</em>
+        /// composition, and the composition that is the same is exactly the
+        /// case a user hits by typing the same syllable twice — 아 아, the bug
+        /// report "it is in the field but nothing shows until I press an arrow
+        /// key". <see cref="ImguiImeInput"/> reads
+        /// <c>Input.compositionString</c>, which is the platform answering; the
+        /// Input System backend caches pushed events and empties that cache
+        /// when a session ends, so its silence stays no news and it does not
+        /// call this.
+        /// </summary>
+        public void NotePlatformReleased()
+        {
+            if (_replay == null) return;
+
+            // Only while nothing is owed in either direction, and this is the
+            // whole of what the first version of it got wrong. A field that
+            // commits on its way out of focus arms the echo guard and registers
+            // the replay together, and the register is what stops the guard
+            // counting updates it cannot see — the field is not even running
+            // while the user is somewhere else. Retiring the register there let
+            // the window close across the gap, and the syllable the platform
+            // delivered on the first keystroke back was inserted a second time:
+            // 안녕, click away, click back, 안녕녕.
+            //
+            // A quiet platform is only evidence about the composition it is no
+            // longer holding. It says nothing about a character it still owes,
+            // and the field committing that text is precisely the state in
+            // which the platform has not been told anything at all.
+            if (_mode != Mode.Idle) return;
+
+            RegisterReplay(null);
+        }
+
+        /// <summary>
         /// Closes the window now rather than on a later update, and returns any
         /// text the platform still owed. The field calls this as focus leaves:
         /// a commit addressed to a field nobody is typing into is never coming.
@@ -457,6 +698,25 @@ namespace OneText
         {
             string owed = _mode == Mode.AwaitingPlatform ? _pending : null;
             Reset();
+
+            // Text the field takes because the platform announced it and has
+            // not sent it is still text the platform announced, and it can
+            // arrive whenever the platform gets round to it. Recorded: 안녕,
+            // and a click that lands on the frame the composition ends. The
+            // field polls, arms the window, the click ends the session before
+            // the key queue is drained, and this hands 녕 over for the field to
+            // insert itself — which for four milestones it did while writing
+            // nothing down anywhere. A thousand frames later the user clicks
+            // back in, types, and the platform delivers 녕 for the first time
+            // to a field with no guard armed at all: 안녕녕, and an arbiter
+            // reporting idle, no replay, no accepted commit — exactly what the
+            // recording shows.
+            //
+            // The repeat register rather than the echo window, because the two
+            // measure different things. The window is counted in updates and a
+            // field that lost focus does not tick; this gap was a thousand
+            // frames of not running. The register waits for evidence instead.
+            NotePlatformCommitted(owed);
             return owed;
         }
 
@@ -552,6 +812,26 @@ namespace OneText
         /// </summary>
         public static bool SameText(string left, string right) =>
             SameText(left, right, right == null ? null : Decomposed(right));
+
+        /// <summary>
+        /// Whether <paramref name="prefix"/> is the beginning of
+        /// <paramref name="whole"/> as text, in the same sense as
+        /// <see cref="SameText(string, string)"/>: compared decomposed, because
+        /// half a syllable is a prefix of it only in that form. 아 is not a
+        /// prefix of 앙 as strings; 아 is a prefix of 앙. An empty prefix
+        /// begins everything.
+        /// </summary>
+        public static bool TextStartsWith(string whole, string prefix)
+        {
+            if (string.IsNullOrEmpty(prefix)) return true;
+            if (string.IsNullOrEmpty(whole)) return false;
+            if (whole.StartsWith(prefix, StringComparison.Ordinal)) return true;
+            // Two calls through a one-entry memo: the second evicts the first,
+            // which only costs an allocation on a path taken once per syllable
+            // boundary, never once per frame.
+            string wholeDecomposed = Decomposed(whole);
+            return wholeDecomposed.StartsWith(Decomposed(prefix), StringComparison.Ordinal);
+        }
 
         private static bool SameText(string left, string right, string rightDecomposed)
         {

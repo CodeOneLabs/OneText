@@ -78,6 +78,13 @@ namespace OneText.UGUI
         public void SetCursorScreenPosition(Vector2 screenPosition) =>
             Keyboard.current?.SetIMECursorPosition(screenPosition);
 
+        /// <summary>
+        /// False: this is a cache of the compositions the platform pushed, and
+        /// <see cref="End"/> empties it. An empty one means no event has
+        /// arrived, which is not the same as the platform holding nothing.
+        /// </summary>
+        public bool ReportsPlatformState => false;
+
         public bool TryGetComposition(out string text, out int caret, out int clauseStart, out int clauseLength)
         {
             text = _composition;

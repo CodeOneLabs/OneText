@@ -108,6 +108,49 @@ namespace OneText.UGUI
         private readonly List<Rect> _rectScratch = new List<Rect>();
         private readonly Event _processingEvent = new Event();
         private IImeInput _ime;
+
+        // A backspace pressed while the IME was composing, waiting to see
+        // whether the composition survives the update. See ReleaseHeldBackspace.
+        private bool _backspaceHeld;
+
+        // Set for the rest of the update by the backspace that emptied a
+        // composition, so that the extra events macOS sends behind it do not
+        // delete anything. See ProcessKeyEvent.
+        private bool _swallowingCompositionTail;
+
+        // A commit the platform may have reclaimed into a composition of a
+        // single jamo, which is also what the user starting a syllable looks
+        // like. Held for the update; a keystroke in it settles the question.
+        private string _reclaimIfNoKeyFollows;
+
+        /// <summary>
+        /// Logs every decision the editing path makes, one line each, for a bug
+        /// that only a real input method reproduces. Off, and no cost when off:
+        /// the tests replay recordings frame for frame and there is a class of
+        /// difference they cannot model, so the field has to be able to say
+        /// what it did rather than be reasoned about.
+        /// </summary>
+        public static bool LogEditing;
+
+        private void Trace(string what)
+        {
+            if (!LogEditing) return;
+            Debug.Log($"[field] f={Time.frameCount} {what} | value={Quote(_model.Text)} " +
+                      $"caret={_model.Caret} anchor={_model.Anchor} composing={Quote(_model.Composition.Text)} " +
+                      $"held={_backspaceHeld} arbiter=" +
+                      (_model.Arbiter.IsAwaitingPlatform ? "awaiting" :
+                       _model.Arbiter.IsSuppressingEcho ? "suppressing" : "idle") +
+                      $" pending={Quote(_model.Arbiter.PendingText)}");
+        }
+
+        private static string Quote(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "\"\"";
+            var text = new System.Text.StringBuilder("\"").Append(value).Append("\"[");
+            for (int i = 0; i < value.Length; i++)
+                text.Append(i > 0 ? " " : string.Empty).Append("U+").Append(((int)value[i]).ToString("X4"));
+            return text.Append(']').ToString();
+        }
         // Whether this field is the one that switched the input method on. See
         // StopInputMethod, which is reached by fields that never began.
         private bool _imeBegun;
@@ -552,6 +595,8 @@ namespace OneText.UGUI
                     if (_processingEvent.rawType == EventType.KeyDown)
                         ProcessKeyEvent(_processingEvent);
                 }
+
+                ReleaseHeldBackspace();
             }
 
             eventData.Use();
@@ -565,6 +610,29 @@ namespace OneText.UGUI
         public void UpdateEditing()
         {
             _lastEditingFrame = Time.frameCount;
+            // Anything held by the last update and not released with it. The
+            // state it is judged against is the state that update left behind,
+            // so reading it here is reading it then.
+            ReleaseHeldBackspace();
+            if (_reclaimIfNoKeyFollows != null)
+            {
+                // Nothing carrying a key or a character arrived behind it, so
+                // the platform started that composition on its own — which it
+                // only does with a syllable it has taken back.
+                string reclaimed = _reclaimIfNoKeyFollows;
+                _reclaimIfNoKeyFollows = null;
+                if (_model.IsComposing) Reclaim(reclaimed);
+            }
+            _swallowingCompositionTail = false;
+
+            // A composition that was live when the last update ended may be
+            // the user building a syllable of their own, which retires the
+            // platform's right to repeat its last commit — or it may be that
+            // commit being carried on, which does not. The arbiter is asked
+            // rather than told: see NoteComposing. Read here rather than where
+            // the composition is adopted, because the repeat lands in the same
+            // update as the adoption.
+            if (_model.IsComposing) _model.Arbiter.NoteComposing(_model.Composition.Text);
 
             if (_mobile != null)
             {
@@ -599,6 +667,21 @@ namespace OneText.UGUI
             {
                 bool wasComposing = _model.IsComposing;
                 if (_model.SetComposition(composing, caret, clauseStart, clauseLength)) Changed();
+                Trace($"composition report {Quote(composing)}");
+
+                // A composition that starts life as the syllable already
+                // committed, with its final moved, is that syllable being
+                // reclaimed to be edited inside. It has to leave the value now
+                // rather than an update later: the platform can split it back
+                // apart in the very next update, and a value still holding the
+                // original takes the piece it commits as a second one.
+                if (!wasComposing && _model.IsComposing)
+                {
+                    string reclaimed = _model.Arbiter.ReclaimedInto(
+                        _model.Composition.Text, out bool certain);
+                    if (reclaimed != null && certain) Reclaim(reclaimed);
+                    else _reclaimIfNoKeyFollows = reclaimed;
+                }
                 // Only when something is or was on screen. A composition the
                 // model refuses as a replay of one the field already committed
                 // leaves the display exactly as it was, and marking it dirty
@@ -607,14 +690,24 @@ namespace OneText.UGUI
                 if (wasComposing || _model.IsComposing) _visualsDirty = true;
             }
 
-            // Nothing is reported here when both sides are idle, and that is
-            // deliberate. "The backend has no composition" is not news that the
-            // platform released one: InputSystemImeInput caches what the
+            // When both sides are idle, whether that is news depends on the
+            // backend, and the difference is the second half of the bug report
+            // this milestone closes. InputSystemImeInput caches what the
             // platform pushes and empties that cache when the session ends, so
-            // the updates just after focus returns say the same thing whether
-            // the platform let go or is still holding a syllable it has not
-            // pushed again yet. The arbiter retires a refusal on evidence
-            // instead — a different composition, or a character.
+            // its silence says the same thing whether the platform let go or is
+            // still holding a syllable it has not pushed again — no news, and
+            // the arbiter retires a refusal on other evidence instead.
+            // ImguiImeInput is the platform answering, and an empty answer from
+            // it is the platform saying it holds nothing at all.
+            //
+            // Which matters because the only other thing that retires a refusal
+            // is a composition that differs, and a user typing the same
+            // syllable twice — 아 아 — never sends one. The second 아 was
+            // refused as the platform replaying the first, and stayed refused
+            // until some later keystroke changed the string: "it is in the
+            // field, but nothing shows until I press an arrow key."
+            else if (composing.Length == 0 && !_model.IsComposing && _ime.ReportsPlatformState)
+                _model.Arbiter.NotePlatformReleased();
 
             if (_model.IsComposing) _ime.SetCursorScreenPosition(CaretScreenPosition());
         }
@@ -638,6 +731,64 @@ namespace OneText.UGUI
         }
 
         /// <summary>
+        /// Takes the syllable the platform reclaimed out of the value, so that
+        /// it is not held in both places at once.
+        /// </summary>
+        private void Reclaim(string committed)
+        {
+            if (!_model.TakeBackCommitted(committed)) return;
+
+            // It is not in the value any more, so there is nothing left for the
+            // platform to repeat.
+            _model.Arbiter.ForgetPlatformCommit();
+            Changed();
+            Trace($"reclaimed {Quote(committed)} into the composition");
+        }
+
+        /// <summary>
+        /// Applies a backspace the field held while a composition was live, if
+        /// that composition did not survive the update.
+        ///
+        /// Held rather than dropped because the two things a backspace can mean
+        /// are told apart by what happens to the composition, and not before.
+        /// While the IME is composing, the key is the IME's: it shortens the
+        /// syllable, and acting on it as well would delete committed text
+        /// behind the composition. But the press that would empty the
+        /// composition is not the IME's at all — on macOS it hands back what is
+        /// left of the syllable, ends the composition and lets the key through
+        /// for the field to delete what it just handed over, and dropping it
+        /// there is a backspace the user pressed and nothing happened for.
+        ///
+        /// Both arrive in one update and in either order: the composition can
+        /// end at the poll, before the key queue is drained, or on the
+        /// character the IME hands over in the middle of draining it. So the
+        /// question is asked once, at the end, when the update has settled —
+        /// composition still live, the key was the IME's and is dropped;
+        /// composition gone, it was the field's.
+        /// </summary>
+        private void ReleaseHeldBackspace()
+        {
+            if (!_backspaceHeld) return;
+            _backspaceHeld = false;
+            if (_model.IsComposing) { Trace("dropped the held backspace (still composing)"); return; }
+            Trace("releasing the held backspace");
+
+            if (_model.DiscardOwedCommit())
+            {
+                _swallowingCompositionTail = true;
+                _visualsDirty = true;
+                Trace("dropped the composition the held backspace emptied");
+                return;
+            }
+
+            // The syllable the IME handed back may still be owed rather than
+            // inserted, and a backspace applied to a value missing it deletes
+            // the character in front instead. See SettleOwedCommit.
+            if (_model.SettleOwedCommit()) Changed();
+            if (_model.Backspace()) Changed();
+        }
+
+        /// <summary>
         /// Applies one key event, exactly as the EventSystem does. Public
         /// because that is the only way to test the composition rules without a
         /// platform IME to type into.
@@ -647,6 +798,12 @@ namespace OneText.UGUI
             if (keyEvent == null) return;
             _blinkStart = Time.unscaledTime;
 
+            // A key that carries something is the user; the keycode-less,
+            // character-less one that rides behind every composition change
+            // carries nothing and says nothing about who caused it.
+            if (keyEvent.keyCode != KeyCode.None || keyEvent.character != 0)
+                _reclaimIfNoKeyFollows = null;
+
             if (_model.IsComposing)
             {
                 // Escape abandons the composition and keeps the field, which is
@@ -655,6 +812,16 @@ namespace OneText.UGUI
                 {
                     _model.CancelComposition();
                     _visualsDirty = true;
+                    return;
+                }
+
+                // Backspace is held rather than dropped, and released at the
+                // end of the update by ReleaseHeldBackspace, which is where the
+                // reason is written down.
+                if (keyEvent.keyCode == KeyCode.Backspace)
+                {
+                    _backspaceHeld = true;
+                    Trace("held a backspace (composing)");
                     return;
                 }
 
@@ -694,6 +861,73 @@ namespace OneText.UGUI
                 return;
             }
 
+            // The composition may have ended in this very update. The field
+            // reads the input method before it drains the key queue, so a key
+            // pressed at the moment a composition finished arrives here with
+            // the syllable it committed still owed: announced by the
+            // composition ending, not yet delivered as a character. Until it
+            // lands the value is one syllable short, and a key that acts on the
+            // value acts on the wrong string.
+            //
+            // Which is the whole of the recorded bug. Backspacing away a Hangul
+            // composition, the last press is the one the IME does not eat: it
+            // hands back what was left of the syllable and lets the key through
+            // for the field to delete it. Applied to a value that syllable had
+            // not reached yet, the backspace deleted the character in front of
+            // it instead — 강ㄱ, one backspace, and both of them gone.
+            //
+            // Only for a key that carries no text of its own. One that does is
+            // the delivery itself, and it goes to the arbiter below, which
+            // stands down for it rather than inserting a second copy.
+            char pressed = keyEvent.character;
+            Trace($"key {keyEvent.keyCode} char={Quote(pressed == 0 ? string.Empty : pressed.ToString())} (not composing)");
+
+            // An event with neither a key nor a character can do nothing, and
+            // macOS sends one ahead of the real press when a composition
+            // terminates. Reaching the settle below, it spends the owed
+            // syllable a step before the backspace behind it can say the user
+            // deleted it — which is how one press still emptied the field with
+            // everything else here already right.
+            if (keyEvent.keyCode == KeyCode.None && pressed == 0) return;
+
+            // A backspace arriving while the platform still owes the
+            // composition it has only just ended is the press that emptied
+            // that composition. The syllable it announced is one the user has
+            // deleted, so it is thrown away rather than inserted, the
+            // platform's copy of it is swallowed when it turns up, and the
+            // committed text behind it is not touched at all. 강ㄱ, one press,
+            // 강 — where before the owed syllable was inserted and then the
+            // character in front of it deleted instead.
+            //
+            // And then everything else this press produces is dropped, because
+            // macOS produces more than one. The recording shows a backspace
+            // that empties a Hangul composition arriving as a stray keycode-less
+            // event, the backspace itself, the committed jamo, and the backspace
+            // *again* — four events for one press, of which only the first two
+            // carry anything. Unity's own InputField suppresses the lot with the
+            // same test (character 0, no modifiers, composition just gone) and
+            // therefore never deletes anything at all, which is the other half
+            // of the bug report. This keeps the press and drops its tail.
+            if (keyEvent.keyCode == KeyCode.Backspace && _model.DiscardOwedCommit())
+            {
+                _swallowingCompositionTail = true;
+                _visualsDirty = true;
+                Trace("dropped the composition the backspace emptied");
+                return;
+            }
+
+            if (_swallowingCompositionTail && pressed == 0 &&
+                keyEvent.keyCode == KeyCode.Backspace)
+            {
+                Trace("dropped a repeat of that backspace");
+                return;
+            }
+            if ((pressed == 0 || char.IsControl(pressed)) && _model.SettleOwedCommit())
+            {
+                Changed();
+                Trace("settled the owed commit");
+            }
+
             bool shift = (keyEvent.modifiers & EventModifiers.Shift) != 0;
             bool command = (keyEvent.modifiers & (EventModifiers.Control | EventModifiers.Command)) != 0;
             bool word = command || (keyEvent.modifiers & EventModifiers.Alt) != 0;
@@ -702,6 +936,7 @@ namespace OneText.UGUI
             {
                 case KeyCode.Backspace:
                     if (_model.Backspace()) Changed();
+                    Trace("backspaced");
                     return;
                 case KeyCode.Delete:
                     if (_model.ForwardDelete()) Changed();
@@ -760,7 +995,9 @@ namespace OneText.UGUI
 
             // The arbiter gets a look first: this may be the platform echoing a
             // composition the field already committed on its way out of focus.
-            if (_model.AcceptCharacter(character, out bool changed) && changed) Changed();
+            bool taken = _model.AcceptCharacter(character, out bool changed);
+            Trace($"character {Quote(character.ToString())} taken={taken} changed={changed}");
+            if (taken && changed) Changed();
             else _visualsDirty = true;
         }
 
@@ -990,7 +1227,19 @@ namespace OneText.UGUI
         {
             if (!_focused)
             {
-                _textComponent.ScrollOffset = Vector2.zero;
+                // What the user left in view stays in view. Rewinding to the
+                // start here is what every other field does and it reads well
+                // in a list of values — but it costs the thing a user does far
+                // more often, which is click back into a long value to carry on
+                // typing at the end of it. The end was on screen when they left;
+                // rewound, the click lands wherever the twelfth character
+                // happens to be, and 입니다 goes into the middle of the string.
+                //
+                // Only clamped, so that a value replaced from script cannot
+                // leave the field holding a window into a string that is no
+                // longer there: scrolled past the end of the text, the offset
+                // comes back until the end sits at the edge again.
+                ClampScrollToEndOfText();
                 return;
             }
 
@@ -1017,6 +1266,26 @@ namespace OneText.UGUI
                     Mathf.Max(0f, _textComponent.ScrollOffset.x),
                     Mathf.Min(0f, _textComponent.ScrollOffset.y));
             }
+        }
+
+        /// <summary>
+        /// Pulls the scroll back until the end of the text is no further left
+        /// than the edge of the box, and never past the start. What it is for
+        /// is a value assigned from script while the field is not focused: the
+        /// offset the user left belongs to the string they left, and a shorter
+        /// one would otherwise be drawn from a window past its own end.
+        /// </summary>
+        private void ClampScrollToEndOfText()
+        {
+            var offset = _textComponent.ScrollOffset;
+            if (offset.x <= 0f && offset.y >= 0f) return;
+
+            var box = CaretBox();
+            var end = _textComponent.GetCaretRect(_model.Text.Length, _caretWidth);
+            float overshoot = box.xMax - end.xMax;
+            if (overshoot > 0f) offset.x -= overshoot;
+
+            _textComponent.ScrollOffset = new Vector2(Mathf.Max(0f, offset.x), Mathf.Min(0f, offset.y));
         }
 
         private void UpdateCaretGeometry()

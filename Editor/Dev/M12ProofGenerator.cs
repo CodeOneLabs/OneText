@@ -36,6 +36,8 @@ namespace OneText.Editor
 
             public bool IsAvailable => true;
 
+            public bool ReportsPlatformState => true;
+
             public void Begin() { }
 
             public void End() => Composition = string.Empty;
