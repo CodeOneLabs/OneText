@@ -2,7 +2,49 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`SetText` overloads that never make a string.** `SetText(int)`,
+  `SetText(float, int decimals)`, `SetText(ReadOnlySpan<char>)` and
+  `SetText(char[], int, int)` write into a buffer the label owns, so a score, a
+  timer or a countdown can change every frame and allocate nothing at all.
+  Measured over 600 frames, fifty labels retexted a frame: **0 bytes**, against
+  3.8 KB a frame for TextMeshPro's own non-allocating equivalent,
+  `SetText("{0}", n)`. `Text` still answers with a string when something asks;
+  it builds one at that moment rather than every frame.
+
+### Changed
+
+- **The text pipeline reads characters, not strings.** The layout engine, the
+  shaper, line breaking, bidi, segmentation, the Asian typography rules, the
+  dictionary breaker and the rich-text parser all take `ReadOnlySpan<char>`
+  now, with the old string signatures kept as one-line overloads. Nothing about
+  the output changes; what changes is that text can reach the shaper from a
+  buffer a game filled itself.
+
 ### Fixed
+
+- **Rich text stopped allocating a kilobyte a rebuild.** `RichTextParser.Parse`
+  built a `StringBuilder`, a list and a string per call, and cut two more
+  strings out of the source for every tag it read. It writes into a buffer the
+  result owns, matches tag names against interned ones, and parses arguments —
+  numbers, colours, alignment, effect and decoration attributes — off spans;
+  the hex colour forms are read here rather than through
+  `ColorUtility.TryParseHtmlString`, which takes a string. Fifty labels with
+  markup, retexted every frame: **108.7 KB a frame to 4.8 KB**, and the parse
+  itself is now zero.
+
+- **Two more places a method group became a delegate every call.** The three
+  name resolvers handed to the parser (`<style=>`, `<font=>`, `<sprite=>`) were
+  three allocations per parse, and `CharsetRecorder.Record(DisplayText, …)`
+  built the display string on every rebuild to pass an argument the recorder
+  discards when it is off — which it is, unless a session asked to record its
+  charset. Both cached, both measured to zero.
+
+- **The density watcher reads the camera once per canvas, not once per label.**
+  `ScreenPpem` asked the same camera the same six questions for every label on
+  it, every frame; the answers that do not vary per label are read once and
+  passed down.
 
 - **A label rebuild allocates nothing.** Changing a label's text cost about 380
   bytes of garbage, and all of it came from three method groups —

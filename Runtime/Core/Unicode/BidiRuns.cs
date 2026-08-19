@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace OneText.Unicode
@@ -35,10 +36,15 @@ namespace OneText.Unicode
         /// <param name="output">Cleared and filled with runs in logical order.</param>
         /// <returns>The resolved paragraph level.</returns>
         public static byte GetLogicalRuns(string text, int start, int length,
+            byte paragraphDirection, List<Run> output) =>
+            GetLogicalRuns(text.AsSpan(), start, length, paragraphDirection, output);
+
+        /// <inheritdoc cref="GetLogicalRuns(string, int, int, byte, List{Run})"/>
+        public static byte GetLogicalRuns(ReadOnlySpan<char> text, int start, int length,
             byte paragraphDirection, List<Run> output)
         {
             output.Clear();
-            if (string.IsNullOrEmpty(text) || length <= 0) return 0;
+            if (text.IsEmpty || length <= 0) return 0;
 
             var cps = t_cps ??= new List<int>();
             var cpStarts = t_cpStarts ??= new List<int>();
@@ -47,7 +53,7 @@ namespace OneText.Unicode
             int end = start + length;
             for (int i = start; i < end;)
             {
-                cps.Add(char.ConvertToUtf32(text, i));
+                cps.Add(Codepoint(text, i));
                 cpStarts.Add(i);
                 i += char.IsHighSurrogate(text[i]) ? 2 : 1;
             }
@@ -102,10 +108,14 @@ namespace OneText.Unicode
         /// <param name="paragraphDirection">0 = LTR, 1 = RTL, BidiAlgorithm.AutoDirection = auto.</param>
         /// <param name="output">Cleared and filled with runs in visual order.</param>
         /// <returns>The resolved paragraph level (0 = LTR base, 1 = RTL base).</returns>
-        public static byte GetVisualRuns(string text, byte paragraphDirection, List<Run> output)
+        public static byte GetVisualRuns(string text, byte paragraphDirection, List<Run> output) =>
+            GetVisualRuns(text.AsSpan(), paragraphDirection, output);
+
+        /// <inheritdoc cref="GetVisualRuns(string, byte, List{Run})"/>
+        public static byte GetVisualRuns(ReadOnlySpan<char> text, byte paragraphDirection, List<Run> output)
         {
             output.Clear();
-            if (string.IsNullOrEmpty(text)) return 0;
+            if (text.IsEmpty) return 0;
 
             var cps = t_cps ??= new List<int>();
             var cpStarts = t_cpStarts ??= new List<int>();
@@ -113,7 +123,7 @@ namespace OneText.Unicode
             cpStarts.Clear();
             for (int i = 0; i < text.Length;)
             {
-                int cp = char.ConvertToUtf32(text, i);
+                int cp = Codepoint(text, i);
                 cps.Add(cp);
                 cpStarts.Add(i);
                 i += char.IsHighSurrogate(text[i]) ? 2 : 1;
@@ -154,5 +164,10 @@ namespace OneText.Unicode
 
             return para;
         }
+
+        /// <summary>The codepoint at <paramref name="index"/>; see Unicode.Utf16.</summary>
+        private static int Codepoint(ReadOnlySpan<char> text, int index) =>
+            Utf16.Codepoint(text, index);
+
     }
 }

@@ -59,6 +59,11 @@ namespace OneText
         /// </summary>
         public void Shape(FontData font, string text, int start, int length,
             Direction direction, List<ShapedGlyph> output) =>
+            Shape(font, text.AsSpan(), start, length, direction, output, null);
+
+        /// <inheritdoc cref="Shape(FontData, string, int, int, Direction, List{ShapedGlyph})"/>
+        public void Shape(FontData font, ReadOnlySpan<char> text, int start, int length,
+            Direction direction, List<ShapedGlyph> output) =>
             Shape(font, text, start, length, direction, output, null);
 
         /// <summary>
@@ -84,11 +89,16 @@ namespace OneText
         /// every one of them.
         /// </summary>
         public void Shape(FontData font, string text, int start, int length,
+            Direction direction, List<ShapedGlyph> output, string language) =>
+            Shape(font, text.AsSpan(), start, length, direction, output, language);
+
+        /// <inheritdoc cref="Shape(FontData, string, int, int, Direction, List{ShapedGlyph}, string)"/>
+        public void Shape(FontData font, ReadOnlySpan<char> text, int start, int length,
             Direction direction, List<ShapedGlyph> output, string language)
         {
             if (font == null || !font.IsValid) throw new ArgumentException("Invalid font.", nameof(font));
             if (output == null) throw new ArgumentNullException(nameof(output));
-            if (string.IsNullOrEmpty(text) || length <= 0) return;
+            if (text.IsEmpty || length <= 0) return;
 
             HarfBuzzApi.hb_buffer_reset(_buffer);
             unsafe
@@ -138,8 +148,8 @@ namespace OneText
         }
 
         /// <summary>Shape an entire string as a single auto-direction run.</summary>
-        public void Shape(FontData font, string text, List<ShapedGlyph> output) =>
-            Shape(font, text, 0, text?.Length ?? 0, Direction.Auto, output);
+        public void Shape(FontData font, ReadOnlySpan<char> text, List<ShapedGlyph> output) =>
+            Shape(font, text, 0, text.Length, Direction.Auto, output);
 
         /// <summary>
         /// Interned <c>hb_language_t</c> for a tag. HarfBuzz interns these

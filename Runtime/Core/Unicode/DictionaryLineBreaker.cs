@@ -91,7 +91,11 @@ namespace OneText.Unicode
         /// Length of the longest word starting at <paramref name="start"/>, or
         /// 0 if none.
         /// </summary>
-        public int LongestMatch(string text, int start, int limit)
+        public int LongestMatch(string text, int start, int limit) =>
+            LongestMatch(text.AsSpan(), start, limit);
+
+        /// <inheritdoc cref="LongestMatch(string, int, int)"/>
+        public int LongestMatch(ReadOnlySpan<char> text, int start, int limit)
         {
             var node = _root;
             int best = 0;
@@ -219,10 +223,14 @@ namespace OneText.Unicode
         /// arbitrarily. Wrapping Thai in the wrong place is what this exists to
         /// fix; inventing a wrong place of our own would be no better.
         /// </summary>
-        public static void Apply(string text, LineBreaker.Opportunity[] opportunities)
+        public static void Apply(string text, LineBreaker.Opportunity[] opportunities) =>
+            Apply(text.AsSpan(), opportunities);
+
+        /// <inheritdoc cref="Apply(string, LineBreaker.Opportunity[])"/>
+        public static void Apply(ReadOnlySpan<char> text, LineBreaker.Opportunity[] opportunities)
         {
             EnsureDefaults();
-            if (string.IsNullOrEmpty(text) || s_lists.Count == 0) return;
+            if (text.IsEmpty || s_lists.Count == 0) return;
 
             int n = Math.Min(text.Length, opportunities.Length - 1);
             for (int start = 0; start < n;)
@@ -248,7 +256,7 @@ namespace OneText.Unicode
         /// gives up at the first unknown word produces one unbreakable line,
         /// which is exactly the failure being fixed.
         /// </summary>
-        private static void Segment(string text, int start, int end, WordList words,
+        private static void Segment(ReadOnlySpan<char> text, int start, int end, WordList words,
             LineBreaker.Opportunity[] opportunities)
         {
             int i = start;

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace OneText.Unicode
@@ -142,9 +143,14 @@ namespace OneText.Unicode
         /// because the alternative is a line that never ends.
         /// </summary>
         public static void ApplyKinsoku(string text, LineBreaker.Opportunity[] opportunities,
+            Kinsoku severity) =>
+            ApplyKinsoku(text.AsSpan(), opportunities, severity);
+
+        /// <inheritdoc cref="ApplyKinsoku(string, LineBreaker.Opportunity[], Kinsoku)"/>
+        public static void ApplyKinsoku(ReadOnlySpan<char> text, LineBreaker.Opportunity[] opportunities,
             Kinsoku severity)
         {
-            if (severity == Kinsoku.Off || string.IsNullOrEmpty(text)) return;
+            if (severity == Kinsoku.Off || text.IsEmpty) return;
 
             int n = text.Length;
             for (int i = 1; i < n && i < opportunities.Length; i++)
@@ -171,9 +177,13 @@ namespace OneText.Unicode
         /// a global toggle: a Korean line in a Japanese UI still wants Korean
         /// wrapping.
         /// </summary>
-        public static void ApplyKoreanWordWrap(string text, LineBreaker.Opportunity[] opportunities)
+        public static void ApplyKoreanWordWrap(string text, LineBreaker.Opportunity[] opportunities) =>
+            ApplyKoreanWordWrap(text.AsSpan(), opportunities);
+
+        /// <inheritdoc cref="ApplyKoreanWordWrap(string, LineBreaker.Opportunity[])"/>
+        public static void ApplyKoreanWordWrap(ReadOnlySpan<char> text, LineBreaker.Opportunity[] opportunities)
         {
-            if (string.IsNullOrEmpty(text)) return;
+            if (text.IsEmpty) return;
 
             int n = text.Length;
             for (int i = 1; i < n && i < opportunities.Length; i++)

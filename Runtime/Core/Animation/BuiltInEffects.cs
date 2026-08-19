@@ -113,6 +113,24 @@ namespace OneText
         /// <summary>True if markup should treat this name as an effect tag.</summary>
         public static bool Has(string name) => s_registry.ContainsKey(name);
 
+        /// <summary>
+        /// The registered name matching <paramref name="name"/>, as the string
+        /// instance the registry holds, or null.
+        ///
+        /// The parser reads a tag name out of the source as a span and needs a
+        /// string to switch on; handing back the registry's own instance means
+        /// a tag costs a compare rather than a substring and a lower-case copy.
+        /// The registry is a handful of entries, so a walk is cheaper than the
+        /// dictionary lookup it replaces would be if one existed for spans.
+        /// </summary>
+        public static string CanonicalName(ReadOnlySpan<char> name)
+        {
+            foreach (var registered in s_registry.Keys)
+                if (name.Equals(registered.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                    return registered;
+            return null;
+        }
+
         /// <summary>Builds an effect by name, or null.</summary>
         public static ITextEffect Create(string name, in TextEffectParameters parameters) =>
             s_registry.TryGetValue(name, out var factory) ? factory(parameters) : null;

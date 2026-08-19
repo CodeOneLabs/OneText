@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -31,9 +32,13 @@ namespace OneText
         public static IReadOnlyCollection<int> PixelsPerEm => s_sizes;
 
         /// <summary>Records the characters of a string drawn at a given em size.</summary>
-        public static void Record(string text, float pixelsPerEm)
+        public static void Record(string text, float pixelsPerEm) =>
+            Record(text.AsSpan(), pixelsPerEm);
+
+        /// <inheritdoc cref="Record(string, float)"/>
+        public static void Record(System.ReadOnlySpan<char> text, float pixelsPerEm)
         {
-            if (!Enabled || string.IsNullOrEmpty(text)) return;
+            if (!Enabled || text.IsEmpty) return;
 
             s_sizes.Add(GlyphAtlas.QuantizePixelsPerEm(pixelsPerEm));
             for (int i = 0; i < text.Length; i++)

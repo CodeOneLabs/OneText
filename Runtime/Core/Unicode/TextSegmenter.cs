@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace OneText.Unicode
@@ -22,10 +23,14 @@ namespace OneText.Unicode
         /// Fills <paramref name="boundaries"/> with every UTF-16 offset at which
         /// an extended grapheme cluster starts, plus <c>text.Length</c>.
         /// </summary>
-        public static void GraphemeBoundaries(string text, List<int> boundaries)
+        public static void GraphemeBoundaries(string text, List<int> boundaries) =>
+            GraphemeBoundaries(text.AsSpan(), boundaries);
+
+        /// <inheritdoc cref="GraphemeBoundaries(string, List{int})"/>
+        public static void GraphemeBoundaries(ReadOnlySpan<char> text, List<int> boundaries)
         {
             boundaries.Clear();
-            int n = text?.Length ?? 0;
+            int n = text.Length;
             boundaries.Add(0);                 // GB1
             if (n == 0) return;
 
@@ -40,10 +45,14 @@ namespace OneText.Unicode
         /// Fills <paramref name="boundaries"/> with every UTF-16 offset at which
         /// a word boundary falls, including 0 and <c>text.Length</c>.
         /// </summary>
-        public static void WordBoundaries(string text, List<int> boundaries)
+        public static void WordBoundaries(string text, List<int> boundaries) =>
+            WordBoundaries(text.AsSpan(), boundaries);
+
+        /// <inheritdoc cref="WordBoundaries(string, List{int})"/>
+        public static void WordBoundaries(ReadOnlySpan<char> text, List<int> boundaries)
         {
             boundaries.Clear();
-            int n = text?.Length ?? 0;
+            int n = text.Length;
             boundaries.Add(0);                 // WB1
             if (n == 0) return;
 
@@ -58,10 +67,14 @@ namespace OneText.Unicode
         /// Fills <paramref name="boundaries"/> with every UTF-16 offset at which
         /// a sentence boundary falls, including 0 and <c>text.Length</c>.
         /// </summary>
-        public static void SentenceBoundaries(string text, List<int> boundaries)
+        public static void SentenceBoundaries(string text, List<int> boundaries) =>
+            SentenceBoundaries(text.AsSpan(), boundaries);
+
+        /// <inheritdoc cref="SentenceBoundaries(string, List{int})"/>
+        public static void SentenceBoundaries(ReadOnlySpan<char> text, List<int> boundaries)
         {
             boundaries.Clear();
-            int n = text?.Length ?? 0;
+            int n = text.Length;
             boundaries.Add(0);                 // SB1
             if (n == 0) return;
 
@@ -73,14 +86,17 @@ namespace OneText.Unicode
         }
 
         /// <summary>Number of extended grapheme clusters in the text.</summary>
-        public static int CountGraphemes(string text)
+        public static int CountGraphemes(string text) => CountGraphemes(text.AsSpan());
+
+        /// <inheritdoc cref="CountGraphemes(string)"/>
+        public static int CountGraphemes(ReadOnlySpan<char> text)
         {
             var list = new List<int>();
             GraphemeBoundaries(text, list);
             return System.Math.Max(0, list.Count - 1);
         }
 
-        private static void Decode(string text, out List<int> cps, out List<int> offsets)
+        private static void Decode(ReadOnlySpan<char> text, out List<int> cps, out List<int> offsets)
         {
             cps = t_cps ??= new List<int>();
             offsets = t_offsets ??= new List<int>();
@@ -88,7 +104,7 @@ namespace OneText.Unicode
             offsets.Clear();
             for (int i = 0; i < text.Length;)
             {
-                cps.Add(char.ConvertToUtf32(text, i));
+                cps.Add(Codepoint(text, i));
                 offsets.Add(i);
                 i += char.IsHighSurrogate(text[i]) ? 2 : 1;
             }
@@ -420,5 +436,10 @@ namespace OneText.Unicode
             }
             return -1;
         }
+
+        /// <summary>The codepoint at <paramref name="index"/>; see Unicode.Utf16.</summary>
+        private static int Codepoint(ReadOnlySpan<char> text, int index) =>
+            Utf16.Codepoint(text, index);
+
     }
 }

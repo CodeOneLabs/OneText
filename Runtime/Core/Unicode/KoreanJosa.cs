@@ -1,3 +1,5 @@
+using System;
+
 namespace OneText.Unicode
 {
     /// <summary>
@@ -53,11 +55,15 @@ namespace OneText.Unicode
         };
 
         /// <summary>True if this is a particle this can resolve, either spelling.</summary>
-        public static bool IsJosa(string particle)
+        public static bool IsJosa(string particle) => IsJosa(particle.AsSpan());
+
+        /// <inheritdoc cref="IsJosa(string)"/>
+        public static bool IsJosa(ReadOnlySpan<char> particle)
         {
-            if (string.IsNullOrEmpty(particle)) return false;
+            if (particle.IsEmpty) return false;
             foreach (var pair in Pairs)
-                if (particle == pair.AfterConsonant || particle == pair.AfterVowel) return true;
+                if (particle.SequenceEqual(pair.AfterConsonant.AsSpan()) ||
+                    particle.SequenceEqual(pair.AfterVowel.AsSpan())) return true;
             return false;
         }
 
@@ -70,7 +76,11 @@ namespace OneText.Unicode
         /// is a real case, and guessing at it produces something worse than
         /// leaving the author's choice alone.
         /// </summary>
-        public static string Resolve(string preceding, string particle)
+        public static string Resolve(string preceding, string particle) =>
+            Resolve(preceding.AsSpan(), particle);
+
+        /// <inheritdoc cref="Resolve(string, string)"/>
+        public static string Resolve(ReadOnlySpan<char> preceding, string particle)
         {
             if (string.IsNullOrEmpty(particle)) return particle;
 
@@ -101,10 +111,14 @@ namespace OneText.Unicode
         /// rather than a table: the block is laid out as
         /// (initial × 21 + medial) × 28 + final.
         /// </summary>
-        public static bool TryGetFinalConsonant(string text, out int jongseong)
+        public static bool TryGetFinalConsonant(string text, out int jongseong) =>
+            TryGetFinalConsonant(text.AsSpan(), out jongseong);
+
+        /// <inheritdoc cref="TryGetFinalConsonant(string, out int)"/>
+        public static bool TryGetFinalConsonant(ReadOnlySpan<char> text, out int jongseong)
         {
             jongseong = 0;
-            if (string.IsNullOrEmpty(text)) return false;
+            if (text.IsEmpty) return false;
 
             // Trailing punctuation and spaces are skipped: "사과 " before a
             // particle is still 사과, and a closing bracket after a name does

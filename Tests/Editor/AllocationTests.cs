@@ -306,6 +306,40 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void Markup_Resolvers_Are_Built_Once_Per_Label()
+        {
+            // The same trap as the layout resolvers, in the other place a
+            // method group is handed across: the three name lookups the parser
+            // takes. Uncached they were three allocations per parse, which is
+            // per frame for any label whose markup changes.
+            _label.RichText = true;
+            _label.Text = "<b>one</b>";
+            _label.EnsureLayout();
+
+            var fields = new[] { "_namedStyleIndex", "_namedFontIndex", "_namedSpriteIndex" };
+            var before = new object[fields.Length];
+            for (int i = 0; i < fields.Length; i++)
+            {
+                var field = typeof(OneTextLabel).GetField(fields[i],
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.NotNull(field, $"{fields[i]} is gone; the cache it names was the fix");
+                before[i] = field.GetValue(_label);
+                Assert.NotNull(before[i], $"{fields[i]} was not built by the first parse");
+            }
+
+            _label.Text = "<b>two</b>";
+            _label.EnsureLayout();
+
+            for (int i = 0; i < fields.Length; i++)
+            {
+                var field = typeof(OneTextLabel).GetField(fields[i],
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.AreSame(before[i], field.GetValue(_label),
+                    $"{fields[i]} was rebuilt by a second parse");
+            }
+        }
+
+        [Test]
         public void Steady_State_Redraw_Does_Not_Allocate()
         {
             _label.Text = Sample;

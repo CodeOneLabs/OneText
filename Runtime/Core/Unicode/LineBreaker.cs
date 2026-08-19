@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace OneText.Unicode
@@ -42,9 +43,13 @@ namespace OneText.Unicode
         /// always <see cref="Opportunity.None"/> (LB2) and index
         /// <c>text.Length</c> is always <see cref="Opportunity.Mandatory"/> (LB3).
         /// </summary>
-        public static void Analyze(string text, Opportunity[] opportunities)
+        public static void Analyze(string text, Opportunity[] opportunities) =>
+            Analyze(text.AsSpan(), opportunities);
+
+        /// <inheritdoc cref="Analyze(string, Opportunity[])"/>
+        public static void Analyze(ReadOnlySpan<char> text, Opportunity[] opportunities)
         {
-            int n = text?.Length ?? 0;
+            int n = text.Length;
             System.Array.Clear(opportunities, 0, n + 1);
             opportunities[n] = Opportunity.Mandatory; // LB3
             if (n == 0) return;
@@ -56,7 +61,7 @@ namespace OneText.Unicode
             var previousRaw = (LineBreakClass)255;
             for (int i = 0; i < n;)
             {
-                int cp = char.ConvertToUtf32(text, i);
+                int cp = Codepoint(text, i);
                 int width = char.IsHighSurrogate(text[i]) ? 2 : 1;
                 var raw = BreakData.GetLineClass(cp);
 
@@ -104,9 +109,12 @@ namespace OneText.Unicode
         /// questions are "why did it break there", and the answer stops being
         /// an opinion once it is a rule number somebody can look up.
         /// </summary>
-        public static string RuleAt(string text, int index)
+        public static string RuleAt(string text, int index) => RuleAt(text.AsSpan(), index);
+
+        /// <inheritdoc cref="RuleAt(string, int)"/>
+        public static string RuleAt(ReadOnlySpan<char> text, int index)
         {
-            if (string.IsNullOrEmpty(text) || index <= 0 || index > text.Length) return null;
+            if (text.IsEmpty || index <= 0 || index > text.Length) return null;
             if (index == text.Length) return "LB3";
 
             var opportunities = new Opportunity[text.Length + 1];
@@ -126,9 +134,12 @@ namespace OneText.Unicode
         }
 
         /// <summary>Convenience overload allocating the result array.</summary>
-        public static Opportunity[] Analyze(string text)
+        public static Opportunity[] Analyze(string text) => Analyze(text.AsSpan());
+
+        /// <inheritdoc cref="Analyze(string)"/>
+        public static Opportunity[] Analyze(ReadOnlySpan<char> text)
         {
-            var result = new Opportunity[(text?.Length ?? 0) + 1];
+            var result = new Opportunity[(text.Length) + 1];
             Analyze(text, result);
             return result;
         }
@@ -423,5 +434,10 @@ namespace OneText.Unicode
         private static bool IsBreakBase(LineBreakClass c) =>
             c == LineBreakClass.BK || c == LineBreakClass.CR || c == LineBreakClass.LF ||
             c == LineBreakClass.NL || c == LineBreakClass.SP || c == LineBreakClass.ZW;
+
+        /// <summary>The codepoint at <paramref name="index"/>; see Unicode.Utf16.</summary>
+        private static int Codepoint(ReadOnlySpan<char> text, int index) =>
+            Utf16.Codepoint(text, index);
+
     }
 }

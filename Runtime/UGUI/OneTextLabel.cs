@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using OneText.Unicode;
@@ -147,7 +148,7 @@ namespace OneText.UGUI
         private readonly List<TextLink> _links = new List<TextLink>();
         private readonly RichTextResult _markup = new RichTextResult();
         private string _displayText;
-        private string _parsedFrom;
+        private bool _parsedValid;
         private bool _parsedRich;
         private bool _parsedEscapes;
 
@@ -157,7 +158,12 @@ namespace OneText.UGUI
         /// </summary>
         private readonly struct LayoutKey : System.IEquatable<LayoutKey>
         {
-            private readonly string _text;
+            // The text as a length and a hash rather than a reference: the
+            // text is characters in a buffer now, and the same buffer with
+            // different contents is a different layout. The generation counter
+            // beside them already changes on every edit, so these two are the
+            // belt to its braces.
+            private readonly int _length, _hash;
             private readonly float _width, _height, _size, _lineSpacing;
             private readonly TextAlignment _alignment;
             private readonly TextWrap _wrap;
@@ -166,11 +172,12 @@ namespace OneText.UGUI
             private readonly bool _autoSize;
             private readonly float _autoSizeMin, _autoSizeMax;
 
-            public LayoutKey(string text, float width, float height, float size, float lineSpacing,
+            public LayoutKey(int length, int hash, float width, float height, float size, float lineSpacing,
                 TextAlignment alignment, TextWrap wrap, TextOverflow overflow, int generation,
                 bool autoSize, float autoSizeMin, float autoSizeMax)
             {
-                _text = text;
+                _length = length;
+                _hash = hash;
                 _width = width;
                 _height = height;
                 _size = size;
@@ -185,13 +192,32 @@ namespace OneText.UGUI
             }
 
             public bool Equals(LayoutKey other) =>
-                ReferenceEquals(_text, other._text) &&
+                _length == other._length && _hash == other._hash &&
                 _width.Equals(other._width) && _height.Equals(other._height) &&
                 _size.Equals(other._size) && _lineSpacing.Equals(other._lineSpacing) &&
                 _alignment == other._alignment && _wrap == other._wrap &&
                 _overflow == other._overflow && _generation == other._generation &&
                 _autoSize == other._autoSize && _autoSizeMin.Equals(other._autoSizeMin) &&
                 _autoSizeMax.Equals(other._autoSizeMax);
+        }
+
+        /// <summary>
+        /// A hash of the text as laid out, for the layout cache key. FNV-1a
+        /// over the characters: cheap enough to run per layout call, and it
+        /// only has to disagree when the text does.
+        /// </summary>
+        private int DisplayHash
+        {
+            get
+            {
+                var text = _markup.TextSpan;
+                unchecked
+                {
+                    int hash = (int)2166136261;
+                    for (int i = 0; i < text.Length; i++) hash = (hash ^ text[i]) * 16777619;
+                    return hash;
+                }
+            }
         }
 
         private LayoutKey _layoutKey;
@@ -233,9 +259,20 @@ namespace OneText.UGUI
         private Vector2 _blockOrigin;
         private Vector2 _scrollOffset;
 
+        /// <summary>
+        /// The text, as a string.
+        ///
+        /// Reading it after one of the <see cref="SetText(ReadOnlySpan{char})"/>
+        /// overloads builds the string those exist to avoid, once, and caches
+        /// it — so a game that formats into the buffer every frame and never
+        /// reads this back allocates nothing, and one that does read it pays
+        /// exactly what it would have paid anyway.
+        /// </summary>
         public string Text
         {
-            get => _text;
+            get => _text ??= _sourceLength == 0
+                ? string.Empty
+                : new string(_sourceBuffer, 0, _sourceLength);
             set
             {
                 // Assigning the string the label already holds used to cost a
@@ -244,7 +281,7 @@ namespace OneText.UGUI
                 // game state pays that every frame. TextMeshPro's setter has
                 // guarded this since it existed; measured here it was 380 bytes
                 // and a relayout per label per frame.
-                if (_text == value)
+                if (SourceEquals(value))
                 {
                     // The one thing a same-value assignment did that mattered:
                     // a running typewriter retyped the line. RestartReveal is
@@ -255,8 +292,164 @@ namespace OneText.UGUI
                     return;
                 }
                 _text = value;
+                CopyIntoSource(value.AsSpan());
                 InvalidateText();
             }
+        }
+
+        /// <summary>
+        /// The text, in characters this label owns.
+        ///
+        /// Every setter writes here and the whole pipeline reads it as a span,
+        /// so text that arrives as characters — a formatted number, a char[],
+        /// a StringBuilder — never has to become a string on the way in. The
+        /// serialized field is the same characters when they came from one.
+        /// </summary>
+        [System.NonSerialized] private char[] _sourceBuffer = new char[16];
+        [System.NonSerialized] private int _sourceLength;
+
+        internal ReadOnlySpan<char> SourceSpan
+        {
+            get
+            {
+                // A label asked for its text before it was ever enabled — an
+                // editor preview, a layout query on a fresh instance — has the
+                // serialized string and an empty buffer.
+                if (_sourceLength == 0 && !string.IsNullOrEmpty(_text)) CopyIntoSource(_text.AsSpan());
+                return new ReadOnlySpan<char>(_sourceBuffer, 0, _sourceLength);
+            }
+        }
+
+        private bool SourceEquals(ReadOnlySpan<char> value) =>
+            value.Length == _sourceLength && value.SequenceEqual(SourceSpan);
+
+        private bool SourceEquals(string value) =>
+            value == null ? _sourceLength == 0 : SourceEquals(value.AsSpan());
+
+        /// <summary>
+        /// Copies the serialized string into the buffer the pipeline reads.
+        ///
+        /// Unity fills the field, not the buffer: on deserialization, on a
+        /// prefab revert, and on every inspector edit. A label whose buffer was
+        /// filled at runtime and whose string is therefore null keeps what it
+        /// has — that text did not come from the field and the field is not
+        /// where it lives.
+        /// </summary>
+        private void SyncSourceFromSerialized()
+        {
+            if (_text == null) return;
+            if (SourceEquals(_text)) return;
+            CopyIntoSource(_text.AsSpan());
+            _parsedValid = false;
+        }
+
+        private void CopyIntoSource(ReadOnlySpan<char> value)
+        {
+            if (_sourceBuffer.Length < value.Length)
+                _sourceBuffer = new char[Mathf.Max(16, Mathf.NextPowerOfTwo(value.Length))];
+            value.CopyTo(_sourceBuffer);
+            _sourceLength = value.Length;
+        }
+
+        /// <summary>
+        /// Sets the text from characters, without a string anywhere.
+        ///
+        /// This is the overload a score, a timer or a countdown wants: format
+        /// into a buffer once, hand it over, and nothing on the way to the
+        /// screen allocates. <see cref="Text"/> still answers with a string if
+        /// something asks, built at that moment rather than every frame.
+        /// </summary>
+        public void SetText(ReadOnlySpan<char> value)
+        {
+            if (SourceEquals(value))
+            {
+                if (_charactersPerSecond > 0f && Application.isPlaying) RestartReveal();
+                return;
+            }
+            CopyIntoSource(value);
+            _text = null;
+            InvalidateText();
+        }
+
+        /// <inheritdoc cref="SetText(ReadOnlySpan{char})"/>
+        public void SetText(char[] value, int start, int length) =>
+            SetText(new ReadOnlySpan<char>(value, start, length));
+
+        /// <summary>
+        /// Sets the text to a whole number, written straight into the label's
+        /// own buffer. <c>label.SetText(score)</c> where <c>label.Text =
+        /// score.ToString()</c> would make a string a frame.
+        /// </summary>
+        public void SetText(int value)
+        {
+            Span<char> digits = stackalloc char[12];
+            SetText(digits.Slice(0, WriteInt(digits, value)));
+        }
+
+        /// <summary>
+        /// Sets the text to a number with <paramref name="decimals"/> places,
+        /// rounded half away from zero, written into the label's own buffer.
+        /// </summary>
+        public void SetText(float value, int decimals)
+        {
+            Span<char> buffer = stackalloc char[32];
+            SetText(buffer.Slice(0, WriteFloat(buffer, value, decimals)));
+        }
+
+        /// <summary>Digits and a sign, written backwards then reversed.</summary>
+        private static int WriteInt(Span<char> buffer, long value)
+        {
+            bool negative = value < 0;
+            // long.MinValue has no positive counterpart, so the digits come off
+            // the negative side and the sign is put on afterwards.
+            int written = 0;
+            do
+            {
+                long digit = value % 10;
+                buffer[written++] = (char)('0' + (negative ? -digit : digit));
+                value /= 10;
+            } while (value != 0);
+            if (negative) buffer[written++] = '-';
+            for (int i = 0, j = written - 1; i < j; i++, j--)
+            {
+                char swap = buffer[i];
+                buffer[i] = buffer[j];
+                buffer[j] = swap;
+            }
+            return written;
+        }
+
+        private static int WriteFloat(Span<char> buffer, float value, int decimals)
+        {
+            decimals = Mathf.Clamp(decimals, 0, 9);
+            if (float.IsNaN(value) || float.IsInfinity(value))
+            {
+                // Nothing sensible to draw, and a format exception in a frame
+                // loop is worse than a zero.
+                buffer[0] = '0';
+                return 1;
+            }
+
+            long scale = 1;
+            for (int i = 0; i < decimals; i++) scale *= 10;
+            bool negative = value < 0f;
+            double scaled = System.Math.Round(System.Math.Abs((double)value) * scale,
+                System.MidpointRounding.AwayFromZero);
+            long units = (long)scaled;
+
+            int written = 0;
+            if (negative && units != 0) buffer[written++] = '-';
+            written += WriteInt(buffer.Slice(written), units / scale);
+            if (decimals == 0) return written;
+
+            buffer[written++] = '.';
+            long fraction = units % scale;
+            for (long place = scale / 10; place >= 1; place /= 10)
+            {
+                buffer[written++] = (char)('0' + fraction / place);
+                fraction %= place;
+            }
+            return written;
         }
 
         public float FontSize
@@ -543,6 +736,7 @@ namespace OneText.UGUI
         // must not carry one scene's camera distance into another.
         [System.NonSerialized] private float _ppemScale = 1f;
 
+
         /// <summary>
         /// The screen scale the atlas density currently includes; 1 until a
         /// measurement says otherwise. Read-only from outside: the Hub shows
@@ -563,7 +757,15 @@ namespace OneText.UGUI
         /// the tiles its font size asks for, which is what it drew before this
         /// existed, and a zoom-out therefore never invalidates anything.
         /// </summary>
-        internal bool RefreshPpemScale()
+        internal bool RefreshPpemScale() =>
+            RefreshPpemScale(ScreenPpem.Context.For(canvas));
+
+        /// <summary>
+        /// The same, against a canvas context the caller already read. The
+        /// watcher polls two hundred labels a frame and they nearly all share
+        /// one canvas and one camera; asking per label was most of the cost.
+        /// </summary>
+        internal bool RefreshPpemScale(in ScreenPpem.Context context)
         {
             if (!DynamicPpem)
             {
@@ -573,7 +775,7 @@ namespace OneText.UGUI
                 return true;
             }
 
-            float raw = ScreenPpem.Compute(this);
+            float raw = ScreenPpem.Compute(this, context);
             if (raw <= 0f || float.IsNaN(raw) || float.IsInfinity(raw)) return false;
             if (raw < 1f) raw = 1f;
 
@@ -598,7 +800,7 @@ namespace OneText.UGUI
             get
             {
                 EnsureDisplayText();
-                return _displayText;
+                return _displayText ??= _markup.Text;
             }
         }
 
@@ -711,6 +913,8 @@ namespace OneText.UGUI
         protected override void OnEnable()
         {
             base.OnEnable();
+            // Deserialization fills the string, never the buffer.
+            SyncSourceFromSerialized();
             // Tiles move when the atlas compacts or evicts; a baked mesh holds
             // their UVs and has to be told.
             AtlasInvalidation.Register(this);
@@ -809,7 +1013,7 @@ namespace OneText.UGUI
             // A style can change the font, so the stack is rebuilt rather than
             // reused: the alternative is a label rendering last frame's face.
             ReleaseFonts();
-            _parsedFrom = null;
+            _parsedValid = false;
             _layoutGeneration++;
             SetVerticesDirty();
             SetLayoutDirty();
@@ -998,7 +1202,12 @@ namespace OneText.UGUI
         protected override void OnValidate()
         {
             base.OnValidate();
-            _parsedFrom = null;
+            // The inspector writes the serialized string directly, so the
+            // buffer everything downstream reads is now the old text. Nothing
+            // else re-syncs it: the setter that normally does is not on this
+            // path.
+            SyncSourceFromSerialized();
+            _parsedValid = false;
             // Any of them may also have been the text, and the spans the
             // animator is holding were built from the last one. Nothing else
             // drops them: only InvalidateText does, and the inspector does not
@@ -1019,7 +1228,7 @@ namespace OneText.UGUI
 
         private void InvalidateText()
         {
-            _parsedFrom = null;
+            _parsedValid = false;
             _layoutGeneration++;
             _animatorBuilt = false;
             _unitsValid = false;
@@ -1035,28 +1244,62 @@ namespace OneText.UGUI
 
         private void EnsureDisplayText()
         {
-            if (_parsedFrom == _text && _displayText != null && _parsedRich == _richText &&
-                _parsedEscapes == _parseEscapes) return;
-            _parsedFrom = _text;
+            if (_parsedValid && _parsedRich == _richText && _parsedEscapes == _parseEscapes) return;
+            _parsedValid = true;
             _parsedRich = _richText;
             _parsedEscapes = _parseEscapes;
+            _displayText = null;
 
             // Escapes resolve before markup so every index the parser hands
-            // out refers to the text the engine will actually see.
-            var source = _parseEscapes ? EscapeParser.Unescape(_text) : _text;
+            // out refers to the text the engine will actually see. The string
+            // this makes is the one path in here that still allocates, and it
+            // is only entered by text with a backslash in it.
+            var source = SourceSpan;
+            if (_parseEscapes && EscapeParser.MightHaveEscapes(source))
+            {
+                _escaped = EscapeParser.Unescape(Text);
+                source = _escaped.AsSpan();
+            }
 
             if (_richText && RichTextParser.MightHaveMarkup(source))
             {
-                RichTextParser.Parse(source, _markup, NamedStyleIndex, NamedFontIndex, NamedSpriteIndex);
-                _displayText = _markup.Text;
+                RichTextParser.Parse(source, _markup,
+                    _namedStyleIndex ??= NamedStyleIndex,
+                    _namedFontIndex ??= NamedFontIndex,
+                    _namedSpriteIndex ??= NamedSpriteIndex);
                 _links.Clear();
                 _links.AddRange(_markup.Links);
             }
             else
             {
-                _markup.Clear();
+                // The markup result carries the text either way, so everything
+                // downstream reads one span and does not care which branch
+                // filled it.
+                _markup.SetPlain(source);
                 _links.Clear();
-                _displayText = source ?? string.Empty;
+            }
+        }
+
+        // Cached for the same reason the layout resolvers are: a method group
+        // makes a new delegate every time it is converted, and these three are
+        // converted on every parse. Three allocations per markup label per
+        // frame, which is what a rebuild with markup still cost after the
+        // parser itself stopped allocating.
+        private Func<string, int> _namedStyleIndex, _namedFontIndex, _namedSpriteIndex;
+
+        /// <summary>Unescaped source, when there was anything to unescape.</summary>
+        [System.NonSerialized] private string _escaped;
+
+        /// <summary>
+        /// The text as laid out — markup removed, escapes resolved — without
+        /// building a string for it.
+        /// </summary>
+        internal ReadOnlySpan<char> DisplaySpan
+        {
+            get
+            {
+                EnsureDisplayText();
+                return _markup.TextSpan;
             }
         }
 
@@ -1500,13 +1743,13 @@ namespace OneText.UGUI
             // Keyed by the base size, not the fitted one: the fitted size is a
             // function of everything else in the key, so keying by it would
             // make the cache chase its own output.
-            var key = new LayoutKey(_displayText, maxWidth, maxHeight, BaseFontSize,
+            var key = new LayoutKey(_markup.Length, DisplayHash, maxWidth, maxHeight, BaseFontSize,
                 EffectiveLineSpacing, _alignment, _wrap, _overflow, _layoutGeneration,
                 _autoSize, _autoSizeMin, _autoSizeMax);
             if (!_layoutValid || !key.Equals(_layoutKey))
             {
                 if (_autoSize) _fittedSize = FitFontSize(rect);
-                _engine.Layout(_displayText, BuildSettings(maxWidth, maxHeight), _layout);
+                _engine.Layout(_markup.TextSpan, BuildSettings(maxWidth, maxHeight), _layout);
                 _layoutKey = key;
                 _layoutValid = true;
                 _quadsValid = false;
@@ -1556,7 +1799,7 @@ namespace OneText.UGUI
         {
             float min = Mathf.Max(1f, Mathf.Min(_autoSizeMin, _autoSizeMax));
             float max = Mathf.Max(min, _autoSizeMax);
-            if (string.IsNullOrEmpty(_displayText)) return max;
+            if (_markup.Length == 0) return max;
 
             if (FitsAt(max, rect)) return max;
             if (!FitsAt(min, rect)) return min;
@@ -1589,7 +1832,7 @@ namespace OneText.UGUI
                 vertical ? rect.height : 0f,
                 size);
             settings.Overflow = TextOverflow.Overflow;
-            _engine.Layout(_displayText, settings, _measure);
+            _engine.Layout(_markup.TextSpan, settings, _measure);
 
             const float slack = 0.5f;
             float inlineBudget = vertical ? rect.height : rect.width;
@@ -2947,15 +3190,16 @@ namespace OneText.UGUI
         /// </summary>
         private float PunctuationDelayAfter(int unit)
         {
-            if (_punctuationDelays.Count == 0 || string.IsNullOrEmpty(_displayText)) return 0f;
+            if (_punctuationDelays.Count == 0 || _markup.Length == 0) return 0f;
 
             var starts = _layout.GraphemeStarts;
             int from = starts[_unitStarts[unit]];
             int to = starts[_unitStarts[unit + 1]];
             float longest = 0f;
-            for (int i = from; i < to && i < _displayText.Length; i++)
+            var display = _markup.TextSpan;
+            for (int i = from; i < to && i < display.Length; i++)
             {
-                char c = _displayText[i];
+                char c = display[i];
                 for (int d = 0; d < _punctuationDelays.Count; d++)
                 {
                     var entry = _punctuationDelays[d];
@@ -3048,7 +3292,10 @@ namespace OneText.UGUI
             // The density, not the size: prewarm bakes what the recorder saw,
             // and a session that actually baked 96 ppem tiles is not predicted
             // by a record that says 36.
-            CharsetRecorder.Record(DisplayText, DensityFor(EffectiveFontSize));
+            // The span, not the string: this is off unless a session asked to
+            // record its charset, and reading DisplayText to hand it an
+            // argument it will not use built a string on every rebuild.
+            CharsetRecorder.Record(DisplaySpan, DensityFor(EffectiveFontSize));
 
             // Quad generation depends on the layout and on the atlas, and on
             // nothing an animation frame touches. Regenerating it per frame
@@ -3782,7 +4029,7 @@ namespace OneText.UGUI
         {
             if (forceTextReparsing)
             {
-                _parsedFrom = null;
+                _parsedValid = false;
                 _layoutValid = false;
             }
 

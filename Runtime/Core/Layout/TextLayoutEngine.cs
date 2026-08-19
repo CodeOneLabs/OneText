@@ -150,7 +150,11 @@ namespace OneText
             IsVertical(settings) ? settings.MaxWidth : settings.MaxHeight;
 
         /// <summary>Lays <paramref name="text"/> out into <paramref name="result"/>.</summary>
-        public void Layout(string text, in TextLayoutSettings settings, TextLayoutResult result)
+        public void Layout(string text, in TextLayoutSettings settings, TextLayoutResult result) =>
+            Layout(text.AsSpan(), settings, result);
+
+        /// <inheritdoc cref="Layout(string, in TextLayoutSettings, TextLayoutResult)"/>
+        public void Layout(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result)
         {
             result.Clear();
             _spanCursor = 0;
@@ -161,7 +165,7 @@ namespace OneText
             result.FontSize = settings.FontSize;
             result.WritingMode = settings.WritingMode;
 
-            int n = text?.Length ?? 0;
+            int n = text.Length;
             if (n == 0)
             {
                 // An empty label still occupies one line box: one column's
@@ -290,7 +294,11 @@ namespace OneText
         }
 
         /// <summary>Convenience overload for a single font.</summary>
-        public void Layout(string text, FontData font, float fontSize, TextLayoutResult result)
+        public void Layout(string text, FontData font, float fontSize, TextLayoutResult result) =>
+            Layout(text.AsSpan(), font, fontSize, result);
+
+        /// <inheritdoc cref="Layout(string, FontData, float, TextLayoutResult)"/>
+        public void Layout(ReadOnlySpan<char> text, FontData font, float fontSize, TextLayoutResult result)
         {
             using var stack = FontStack.Single(font);
             Layout(text, TextLayoutSettings.Default(stack, fontSize), result);
@@ -370,7 +378,7 @@ namespace OneText
         /// Anything else (one Thai character, one emoji, one span, one line
         /// break) takes the general path exactly as before.
         /// </summary>
-        private bool IsSimple(string text, in TextLayoutSettings settings, int length)
+        private bool IsSimple(ReadOnlySpan<char> text, in TextLayoutSettings settings, int length)
         {
             if (settings.Wrap != TextWrap.NoWrap) return false;
             // Printable ASCII is the one thing this path is about, and every
@@ -406,7 +414,7 @@ namespace OneText
         /// one still has to shape and still has to measure; all it gets to
         /// skip is deciding where the items are.
         /// </summary>
-        private void MeasureItems(string text, in TextLayoutSettings settings)
+        private void MeasureItems(ReadOnlySpan<char> text, in TextLayoutSettings settings)
         {
             _measured.Clear();
             for (int itemIndex = 0; itemIndex < _items.Count; itemIndex++)
@@ -572,7 +580,7 @@ namespace OneText
         /// Splits [start, end) into runs of one bidi level and one font, shapes
         /// each for measurement, and records per-character advances.
         /// </summary>
-        private byte BuildItems(string text, in TextLayoutSettings settings, int start, int end)
+        private byte BuildItems(ReadOnlySpan<char> text, in TextLayoutSettings settings, int start, int end)
         {
             _items.Clear();
             int span = Math.Max(0, end - start);
@@ -651,7 +659,7 @@ namespace OneText
                 int itemStart = run.Start;
                 for (int i = run.Start; i < runEnd;)
                 {
-                    int cp = char.ConvertToUtf32(text, i);
+                    int cp = Codepoint(text, i);
                     int width = char.IsHighSurrogate(text[i]) ? 2 : 1;
 
                     // Font and style are decided per grapheme cluster: marks
@@ -740,7 +748,7 @@ namespace OneText
         /// as fitting and then drawn overfull, which is the bug this engine
         /// keeps not having.
         /// </summary>
-        private void MeasureRubies(string text, in TextLayoutSettings settings, int start, int end)
+        private void MeasureRubies(ReadOnlySpan<char> text, in TextLayoutSettings settings, int start, int end)
         {
             _rubies.Clear();
             _rubySegments.Clear();
@@ -1010,7 +1018,7 @@ namespace OneText
         /// decide which font in the stack should get the cluster at all, which
         /// is a decision only the fallback walk can make.
         /// </summary>
-        private static FontStack.Presentation PresentationAt(string text, int index, int width, int end)
+        private static FontStack.Presentation PresentationAt(ReadOnlySpan<char> text, int index, int width, int end)
         {
             int next = index + width;
             if (next >= end || next >= text.Length) return FontStack.Presentation.Any;
@@ -1022,7 +1030,7 @@ namespace OneText
 
         // ------------------------------------------------------------- wrapping
 
-        private void WrapParagraph(string text, in TextLayoutSettings settings, TextLayoutResult result,
+        private void WrapParagraph(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
             int start, int end, byte paragraphLevel, ref float cursorY)
         {
             if (start >= end)
@@ -1042,7 +1050,7 @@ namespace OneText
         }
 
         /// <summary>Greedy line breaking: the last opportunity whose line still fits.</summary>
-        private int FindLineEnd(string text, in TextLayoutSettings settings, int lineStart, int end)
+        private int FindLineEnd(ReadOnlySpan<char> text, in TextLayoutSettings settings, int lineStart, int end)
         {
             float limit = InlineLimit(settings);
             if (settings.Wrap == TextWrap.NoWrap || limit <= 0f) return end;
@@ -1109,7 +1117,7 @@ namespace OneText
         /// the box, which is the case no rule can win and the one the bug
         /// tracker is full of.
         /// </summary>
-        private bool PushOutHelps(string text, in TextLayoutSettings settings, int lineStart, int end)
+        private bool PushOutHelps(ReadOnlySpan<char> text, in TextLayoutSettings settings, int lineStart, int end)
         {
             float width = 0f;
             for (int i = lineStart + 1; i <= end; i++)
@@ -1128,7 +1136,7 @@ namespace OneText
         /// asks of the opportunity table, asked again where there is no
         /// opportunity to consult.
         /// </summary>
-        private static bool LegalBreak(string text, in TextLayoutSettings settings, int index)
+        private static bool LegalBreak(ReadOnlySpan<char> text, in TextLayoutSettings settings, int index)
         {
             if (settings.Kinsoku == AsianTypography.Kinsoku.Off || index <= 0 ||
                 index >= text.Length) return true;
@@ -1136,7 +1144,7 @@ namespace OneText
                    !AsianTypography.ForbiddenAtLineEnd(text[index - 1], settings.Kinsoku);
         }
 
-        private float MeasureVisible(string text, int start, int end)
+        private float MeasureVisible(ReadOnlySpan<char> text, int start, int end)
         {
             float width = 0f;
             for (int i = start; i < end; i++) width += _advances[i];
@@ -1156,7 +1164,7 @@ namespace OneText
         private float EdgeGive(int start, int end) =>
             !_edgeGive || end <= start ? 0f : _startGive[start] + _endGive[end - 1];
 
-        private float TrailingSpaceWidth(string text, int start, int end)
+        private float TrailingSpaceWidth(ReadOnlySpan<char> text, int start, int end)
         {
             float width = 0f;
             for (int i = end - 1; i >= start && char.IsWhiteSpace(text[i]); i--) width += _advances[i];
@@ -1166,7 +1174,7 @@ namespace OneText
         // ----------------------------------------------------------- line output
 
         /// <returns>False if the line was dropped because the box is full.</returns>
-        private bool EmitLine(string text, in TextLayoutSettings settings, TextLayoutResult result,
+        private bool EmitLine(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
             int start, int end, bool lastInParagraph, bool withEllipsis, byte paragraphLevel,
             ref float cursorY)
         {
@@ -1527,7 +1535,7 @@ namespace OneText
         /// the run itself may only be part of; the line-edge punctuation rule
         /// is the one thing here that cannot be decided from the run alone.
         /// </summary>
-        private TextRun ShapeRun(string text, in TextLayoutSettings settings, TextLayoutResult result,
+        private TextRun ShapeRun(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
             in Item item, int start, int end, int lineStart, int lineEnd)
         {
             if (item.Style.IsSprite)
@@ -1726,7 +1734,7 @@ namespace OneText
         /// glyph in half a square box, and two of them in a row leave an em of
         /// white space in the middle of a sentence.
         /// </summary>
-        private static void ApplyAsianSpacing(string text, in TextLayoutSettings settings,
+        private static void ApplyAsianSpacing(ReadOnlySpan<char> text, in TextLayoutSettings settings,
             TextLayoutResult result, in Item item, int glyphStart, int lineStart, int lineEnd)
         {
             if (!settings.CjkLatinSpacing && !settings.PunctuationCompression) return;
@@ -1763,7 +1771,7 @@ namespace OneText
         /// only way two passes cannot disagree about a width is for there to be
         /// one function that decides it.
         /// </summary>
-        private static int AsianSpacingFor(string text, in TextLayoutSettings settings,
+        private static int AsianSpacingFor(ReadOnlySpan<char> text, in TextLayoutSettings settings,
             in Item item, in ShapedGlyph glyph)
         {
             if (!settings.CjkLatinSpacing && !settings.PunctuationCompression) return 0;
@@ -1814,7 +1822,7 @@ namespace OneText
         /// concluded, the answer for an opening mark at a line start is half an
         /// em either way.
         /// </summary>
-        private static int LineEdgeCompressionFor(string text, in TextLayoutSettings settings,
+        private static int LineEdgeCompressionFor(ReadOnlySpan<char> text, in TextLayoutSettings settings,
             in Item item, in ShapedGlyph glyph, LineEdge edge)
         {
             if (!settings.PunctuationCompression || edge == LineEdge.None) return 0;
@@ -1895,7 +1903,7 @@ namespace OneText
         private static int TrackingFor(in ShapedGlyph glyph, int trackingUnits) =>
             glyph.XAdvance == 0 ? 0 : trackingUnits;
 
-        private TextRun ShapeEllipsis(string text, in TextLayoutSettings settings, TextLayoutResult result,
+        private TextRun ShapeEllipsis(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
             byte paragraphLevel, int textPosition)
         {
             var font = settings.Fonts.Resolve(EllipsisText[0]);
@@ -1919,7 +1927,7 @@ namespace OneText
         }
 
         /// <summary>Re-emits the last line shortened by an ellipsis.</summary>
-        private void ApplyEllipsis(string text, in TextLayoutSettings settings, TextLayoutResult result)
+        private void ApplyEllipsis(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result)
         {
             if (result.Lines.Count == 0) return;
 
@@ -1950,7 +1958,7 @@ namespace OneText
             EmitLine(text, settings, result, start, end, true, true, line.ParagraphLevel, ref cursorY);
         }
 
-        private float Measure(string text, in TextLayoutSettings settings, FontData font)
+        private float Measure(ReadOnlySpan<char> text, in TextLayoutSettings settings, FontData font)
         {
             _scratch.Clear();
             // The same direction the run will be shaped in, or the width this
@@ -1974,7 +1982,7 @@ namespace OneText
         }
 
         /// <summary>Spreads the slack of a justified line across its spaces.</summary>
-        private void Justify(string text, in TextLayoutSettings settings, TextLayoutResult result, float slack)
+        private void Justify(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result, float slack)
         {
             int spaces = 0;
             foreach (var run in _lineRuns)
@@ -2002,7 +2010,7 @@ namespace OneText
             }
         }
 
-        private static bool IsExpandableSpace(string text, int index) =>
+        private static bool IsExpandableSpace(ReadOnlySpan<char> text, int index) =>
             index >= 0 && index < text.Length && char.IsWhiteSpace(text[index]);
 
         /// <summary>UAX #9 L2, applied to whole runs: reverse by descending level.</summary>
@@ -2146,7 +2154,7 @@ namespace OneText
             };
         }
 
-        private static bool IsMandatoryBreakChar(string text, int index)
+        private static bool IsMandatoryBreakChar(ReadOnlySpan<char> text, int index)
         {
             var cls = BreakData.GetLineClass(text[index]);
             return cls == LineBreakClass.BK || cls == LineBreakClass.CR ||
@@ -2158,5 +2166,10 @@ namespace OneText
             _shaper?.Dispose();
             GC.SuppressFinalize(this);
         }
+
+        /// <summary>The codepoint at <paramref name="index"/>; see Unicode.Utf16.</summary>
+        private static int Codepoint(ReadOnlySpan<char> text, int index) =>
+            Unicode.Utf16.Codepoint(text, index);
+
     }
 }

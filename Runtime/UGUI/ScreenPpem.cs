@@ -39,45 +39,87 @@ namespace OneText.UGUI
         /// for its wide axis and the narrow one is minified, which a distance
         /// field survives far better than the reverse.
         /// </summary>
-        public static float Compute(OneTextLabel label)
+        public static float Compute(OneTextLabel label) =>
+            Compute(label, Context.For(label.canvas));
+
+        /// <summary>
+        /// What every label on one canvas shares: the render mode, and the
+        /// camera's own numbers.
+        ///
+        /// Read once per poll rather than once per label. The camera reads are
+        /// property calls into the engine, and two hundred nameplates asking
+        /// the same camera the same six questions every frame is most of what
+        /// measuring density cost.
+        /// </summary>
+        internal readonly struct Context
+        {
+            public readonly bool ScaleOnly;      // overlay, or nothing to ask
+            public readonly bool Orthographic;
+            public readonly float PixelsPerWorldUnit;   // orthographic only
+            public readonly float PixelHeight;          // perspective only
+            public readonly float TanHalfFov;
+            public readonly Vector3 CameraPosition;
+            public readonly Vector3 CameraForward;
+
+            private Context(bool scaleOnly, bool orthographic, float pixelsPerWorldUnit,
+                float pixelHeight, float tanHalfFov, Vector3 position, Vector3 forward)
+            {
+                ScaleOnly = scaleOnly;
+                Orthographic = orthographic;
+                PixelsPerWorldUnit = pixelsPerWorldUnit;
+                PixelHeight = pixelHeight;
+                TanHalfFov = tanHalfFov;
+                CameraPosition = position;
+                CameraForward = forward;
+            }
+
+            private static readonly Context Scale =
+                new Context(true, false, 0f, 0f, 0f, Vector3.zero, Vector3.forward);
+
+            public static Context For(Canvas canvas)
+            {
+                if (canvas == null) return Scale;
+                var root = canvas.rootCanvas;
+                if (root.renderMode == RenderMode.ScreenSpaceOverlay) return Scale;
+
+                var camera = root.worldCamera;
+                // A world-space canvas with no event camera assigned is still
+                // drawn by whatever camera looks at it; the main camera is the
+                // only answer available from here. A screen-space canvas with
+                // no camera is defined by Unity to fall back to overlay
+                // behaviour.
+                if (camera == null && root.renderMode == RenderMode.WorldSpace) camera = Camera.main;
+                if (camera == null) return Scale;
+
+                if (camera.orthographic)
+                    return new Context(false, true,
+                        camera.pixelHeight / Mathf.Max(2f * camera.orthographicSize, 1e-6f),
+                        0f, 0f, Vector3.zero, Vector3.forward);
+
+                var t = camera.transform;
+                return new Context(false, false, 0f, camera.pixelHeight,
+                    Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad), t.position, t.forward);
+            }
+        }
+
+        /// <summary>The per-label half: a scale, and one dot product in perspective.</summary>
+        internal static float Compute(OneTextLabel label, in Context context)
         {
             Vector3 lossy = label.rectTransform.lossyScale;
             float local = Mathf.Max(Mathf.Abs(lossy.x), Mathf.Abs(lossy.y));
             if (float.IsNaN(local) || float.IsInfinity(local) || local <= 0f) return 0f;
+            if (context.ScaleOnly) return local;
 
-            var canvas = label.canvas;
-            if (canvas == null) return local;
-            var root = canvas.rootCanvas;
-            if (root.renderMode == RenderMode.ScreenSpaceOverlay) return local;
+            if (context.Orthographic) return local * context.PixelsPerWorldUnit;
 
-            var camera = root.worldCamera;
-            // A world-space canvas with no event camera assigned is still drawn
-            // by whatever camera looks at it; the main camera is the only
-            // answer available from here. A screen-space canvas with no camera
-            // is defined by Unity to fall back to overlay behaviour.
-            if (camera == null && root.renderMode == RenderMode.WorldSpace) camera = Camera.main;
-            if (camera == null) return local;
-
-            float pixelsPerWorldUnit;
-            if (camera.orthographic)
-            {
-                pixelsPerWorldUnit = camera.pixelHeight
-                    / Mathf.Max(2f * camera.orthographicSize, 1e-6f);
-            }
-            else
-            {
-                // Depth along the view axis, not Euclidean distance: the
-                // perspective divide is by the z the camera sees, and a label
-                // at the edge of the frame is not larger for being further
-                // from the lens.
-                float depth = Vector3.Dot(
-                    label.rectTransform.position - camera.transform.position,
-                    camera.transform.forward);
-                if (depth <= 1e-4f) return 0f;
-                pixelsPerWorldUnit = camera.pixelHeight
-                    / (2f * depth * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
-            }
-            return local * pixelsPerWorldUnit;
+            // Depth along the view axis, not Euclidean distance: the
+            // perspective divide is by the z the camera sees, and a label at
+            // the edge of the frame is not larger for being further from the
+            // lens.
+            float depth = Vector3.Dot(label.rectTransform.position - context.CameraPosition,
+                context.CameraForward);
+            if (depth <= 1e-4f) return 0f;
+            return local * context.PixelHeight / (2f * depth * context.TanHalfFov);
         }
 
         // ----------------------------------------------------------- watcher
@@ -123,6 +165,10 @@ namespace OneText.UGUI
         /// </summary>
         public static void PollNow()
         {
+            Canvas cached = null;
+            var context = default(Context);
+            bool have = false;
+
             for (int i = s_labels.Count - 1; i >= 0; i--)
             {
                 var label = s_labels[i];
@@ -131,7 +177,20 @@ namespace OneText.UGUI
                     s_labels.RemoveAt(i);
                     continue;
                 }
-                if (label.RefreshPpemScale()) label.SetVerticesDirty();
+
+                // Labels are registered in creation order, so a scene's worth
+                // of them shares one canvas and this reads it once. A scene
+                // with several canvases re-reads at each boundary, which is
+                // still once per canvas per frame rather than once per label.
+                var canvas = label.canvas;
+                if (!have || !ReferenceEquals(canvas, cached))
+                {
+                    cached = canvas;
+                    context = Context.For(canvas);
+                    have = true;
+                }
+
+                if (label.RefreshPpemScale(context)) label.SetVerticesDirty();
             }
         }
     }

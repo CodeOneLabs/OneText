@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text;
 using UnityEngine;
 
 namespace OneText
@@ -13,8 +12,55 @@ namespace OneText
     /// </summary>
     public sealed class RichTextResult
     {
-        /// <summary>The text with markup removed: what indices refer to.</summary>
-        public string Text = string.Empty;
+        /// <summary>
+        /// The text with markup removed: what indices refer to.
+        ///
+        /// Held as a buffer this result owns and turned into a string only when
+        /// something asks for one. A label lays out the span and never asks;
+        /// the string exists for callers (an input field's model, a caret's
+        /// hit test, anyone reading DisplayText) and is built once per parse.
+        /// </summary>
+        public string Text
+        {
+            get => _text ??= Length == 0 ? string.Empty : new string(Buffer, 0, Length);
+            set
+            {
+                _text = value ?? string.Empty;
+                Length = _text.Length;
+                if (Buffer == null || Buffer.Length < Length) Buffer = new char[Mathf.Max(16, Length)];
+                _text.CopyTo(0, Buffer, 0, Length);
+            }
+        }
+
+        /// <summary>The same text without building a string for it.</summary>
+        public ReadOnlySpan<char> TextSpan => new ReadOnlySpan<char>(Buffer, 0, Length);
+
+        /// <summary>The buffer behind <see cref="TextSpan"/>, grown by the parser.</summary>
+        internal char[] Buffer = new char[64];
+
+        /// <summary>How much of <see cref="Buffer"/> is text: its length in chars.</summary>
+        public int Length;
+
+        private string _text = string.Empty;
+
+        /// <summary>Called by the parser when it has written a new text.</summary>
+        internal void TextWritten() => _text = null;
+
+        /// <summary>
+        /// Holds text that has no markup in it, as one default-styled span.
+        /// What the parser's own early-out does, for a caller that already
+        /// knows there is nothing to parse.
+        /// </summary>
+        public void SetPlain(ReadOnlySpan<char> text)
+        {
+            Clear();
+            if (Buffer.Length < text.Length)
+                Buffer = new char[Mathf.Max(16, Mathf.NextPowerOfTwo(text.Length))];
+            text.CopyTo(Buffer);
+            Length = text.Length;
+            TextWritten();
+            Spans.Add(new TextStyleSpan(0, text.Length, TextStyle.Default));
+        }
 
         /// <summary>Contiguous, non-overlapping, covering the whole of <see cref="Text"/>.</summary>
         public readonly List<TextStyleSpan> Spans = new List<TextStyleSpan>();
@@ -79,7 +125,8 @@ namespace OneText
 
         public void Clear()
         {
-            Text = string.Empty;
+            Length = 0;
+            TextWritten();
             Spans.Clear();
             Links.Clear();
             Alignments.Clear();
@@ -159,6 +206,10 @@ namespace OneText
         public static bool MightHaveMarkup(string text) =>
             !string.IsNullOrEmpty(text) && text.IndexOf('<') >= 0;
 
+        /// <inheritdoc cref="MightHaveMarkup(string)"/>
+        public static bool MightHaveMarkup(ReadOnlySpan<char> text) =>
+            text.IndexOf('<') >= 0;
+
         /// <summary>Placeholder character standing in for an inline sprite.</summary>
         public const char SpritePlaceholder = '￼'; // OBJECT REPLACEMENT CHARACTER
 
@@ -178,6 +229,10 @@ namespace OneText
         }
 
         public static void Parse(string source, RichTextResult result) =>
+            Parse(source.AsSpan(), result, null, null);
+
+        /// <inheritdoc cref="Parse(string, RichTextResult)"/>
+        public static void Parse(ReadOnlySpan<char> source, RichTextResult result) =>
             Parse(source, result, null, null);
 
         /// <summary>
@@ -191,28 +246,95 @@ namespace OneText
         /// </summary>
         public static void Parse(string source, RichTextResult result,
             Func<string, int> styleNames, Func<string, int> fontNames) =>
+            Parse(source.AsSpan(), result, styleNames, fontNames, null);
+
+        /// <inheritdoc cref="Parse(string, RichTextResult, Func{string, int}, Func{string, int})"/>
+        public static void Parse(ReadOnlySpan<char> source, RichTextResult result,
+            Func<string, int> styleNames, Func<string, int> fontNames) =>
             Parse(source, result, styleNames, fontNames, null);
 
         /// <summary>
         /// Same, with a resolver for <c>&lt;sprite=name&gt;</c>. An index still
         /// works; a name is what survives someone reordering the sheet.
         /// </summary>
+        /// <summary>
+        /// The text being built, and the open-tag stack, reused between calls.
+        ///
+        /// A parse used to allocate a StringBuilder, a list and a string per
+        /// tag; on a label whose markup changes every frame that is about two
+        /// kilobytes a rebuild, which is the largest thing a warmed steady
+        /// state allocated. A char buffer rather than a StringBuilder because
+        /// the josa resolver and the tag readers want to look at what has been
+        /// written as a span, and a StringBuilder cannot show them one.
+        ///
+        /// Thread-static rather than plain static: layout is single-threaded
+        /// today, and a field that quietly stops being safe when it is not is
+        /// worse than one that was never shared.
+        /// </summary>
+        [ThreadStatic] private static List<Open> s_stack;
+
+        /// <summary>
+        /// The result being written to. A field rather than a parameter because
+        /// every Write below would otherwise carry it, and the parser is not
+        /// reentrant either way: the name resolvers it calls out to look names
+        /// up in tables, they do not parse.
+        /// </summary>
+        [ThreadStatic] private static RichTextResult s_result;
+
+        private static void Write(char value)
+        {
+            var result = s_result;
+            if (result.Length == result.Buffer.Length)
+                Array.Resize(ref result.Buffer, result.Buffer.Length * 2);
+            result.Buffer[result.Length++] = value;
+        }
+
+        private static void Write(ReadOnlySpan<char> value)
+        {
+            var result = s_result;
+            int needed = result.Length + value.Length;
+            if (needed > result.Buffer.Length)
+            {
+                int size = result.Buffer.Length;
+                while (size < needed) size *= 2;
+                Array.Resize(ref result.Buffer, size);
+            }
+            value.CopyTo(new Span<char>(result.Buffer, result.Length, value.Length));
+            result.Length += value.Length;
+        }
+
+        private static void Write(string source, int start, int count) =>
+            Write(source.AsSpan(start, count));
+
+        /// <summary>
+        /// The same, from a string. Everything inside works on the span, so a
+        /// caller that already has characters does not have to make one.
+        /// </summary>
         public static void Parse(string source, RichTextResult result,
+            Func<string, int> styleNames, Func<string, int> fontNames, Func<string, int> spriteNames) =>
+            Parse(source.AsSpan(), result, styleNames, fontNames, spriteNames);
+
+        /// <inheritdoc cref="Parse(string, RichTextResult, Func{string, int}, Func{string, int}, Func{string, int})"/>
+        public static void Parse(ReadOnlySpan<char> source, RichTextResult result,
             Func<string, int> styleNames, Func<string, int> fontNames, Func<string, int> spriteNames)
         {
             if (result == null) throw new ArgumentNullException(nameof(result));
             result.Clear();
-            if (string.IsNullOrEmpty(source)) return;
-
-            if (!MightHaveMarkup(source))
+            if (source.IsEmpty)
             {
-                result.Text = source;
-                result.Spans.Add(new TextStyleSpan(0, source.Length, TextStyle.Default));
+                result.Spans.Add(new TextStyleSpan(0, 0, TextStyle.Default));
                 return;
             }
 
-            var output = new StringBuilder(source.Length);
-            var stack = new List<Open>();
+            if (!MightHaveMarkup(source))
+            {
+                result.SetPlain(source);
+                return;
+            }
+
+            var stack = s_stack ??= new List<Open>();
+            stack.Clear();
+            s_result = result;
             var style = TextStyle.Default;
             var spanStart = 0;
             var spanStyle = style;
@@ -221,14 +343,14 @@ namespace OneText
             {
                 if (source[i] != '<')
                 {
-                    output.Append(source[i++]);
+                    Write(source[i++]);
                     continue;
                 }
 
-                if (!TryReadTag(source, i, out string name, out string argument,
-                        out bool closing, out int after))
+                if (!TryReadTag(source, i, out string name, out int argStart, out int argLength,
+                        out bool hasArgument, out bool closing, out int after))
                 {
-                    output.Append(source[i++]);
+                    Write(source[i++]);
                     continue;
                 }
 
@@ -240,18 +362,19 @@ namespace OneText
                 // point — it is what a chat line or a player's name has to be
                 // shown through if a user typing <size=500> is not to resize the
                 // window.
-                if (!closing && argument == null && name == "noparse")
+                if (!closing && !hasArgument && name == "noparse")
                 {
                     result.HasMarkup = true;
                     int literalStart = after;
-                    int end = source.IndexOf("</noparse>", literalStart,
+                    int end = source.Slice(literalStart).IndexOf("</noparse>".AsSpan(),
                         StringComparison.OrdinalIgnoreCase);
+                    if (end >= 0) end += literalStart;
 
                     // Unterminated, so the rest of the text is literal. The
                     // house rule everywhere else is that unclosed markup runs to
                     // the end, and this is that rule with nothing to close.
                     if (end < 0) end = source.Length;
-                    output.Append(source, literalStart, end - literalStart);
+                    Write(source.Slice(literalStart, end - literalStart));
                     i = end < source.Length ? end + "</noparse>".Length : source.Length;
                     continue;
                 }
@@ -262,10 +385,10 @@ namespace OneText
                 // localisation table cell, a CSV column, an XML attribute —
                 // places where a literal newline is somebody else's escaping
                 // problem and a tag is not.
-                if (!closing && argument == null && name == "br")
+                if (!closing && !hasArgument && name == "br")
                 {
                     result.HasMarkup = true;
-                    output.Append('\n');
+                    Write('\n');
                     i = after;
                     continue;
                 }
@@ -275,15 +398,16 @@ namespace OneText
                 string josa = null;
                 bool consumed;
                 if (closing)
-                    consumed = ApplyClose(name, stack, result, output.Length, ref next);
+                    consumed = ApplyClose(name, stack, result, s_result.Length, ref next);
                 else
-                    consumed = ApplyOpen(name, argument, stack, result, output.Length, style,
+                    consumed = ApplyOpen(name, source, argStart, argLength, hasArgument, stack,
+                        result, s_result.Length, style,
                         styleNames, fontNames, spriteNames, ref next, ref sprite, ref josa);
 
                 if (!consumed)
                 {
                     // Not a tag we understand, or not a well-formed use of one.
-                    output.Append(source[i++]);
+                    Write(source[i++]);
                     continue;
                 }
 
@@ -294,16 +418,20 @@ namespace OneText
                     // Written straight into the output, styled like the text it
                     // follows: a particle is part of the sentence, not a tag
                     // that leaves a mark.
-                    output.Append(Unicode.KoreanJosa.Resolve(output.ToString(), josa));
+                    // Against the text written so far, read as a span: the
+                    // resolver only walks back to the last syllable, and
+                    // materialising the whole paragraph to show it one
+                    // character was the second-largest allocation here.
+                    Write(Unicode.KoreanJosa.Resolve(result.TextSpan, josa));
                     i = after;
                     continue;
                 }
 
                 if (!next.Equals(spanStyle))
                 {
-                    if (output.Length > spanStart)
-                        result.Spans.Add(new TextStyleSpan(spanStart, output.Length - spanStart, spanStyle));
-                    spanStart = output.Length;
+                    if (s_result.Length > spanStart)
+                        result.Spans.Add(new TextStyleSpan(spanStart, s_result.Length - spanStart, spanStyle));
+                    spanStart = s_result.Length;
                     spanStyle = next;
                 }
 
@@ -313,22 +441,22 @@ namespace OneText
                     // own: it takes an index so carets, selection and reveal can
                     // count it, and it is not a pair, so the span opens and
                     // closes here rather than going on the stack.
-                    if (output.Length > spanStart)
-                        result.Spans.Add(new TextStyleSpan(spanStart, output.Length - spanStart, spanStyle));
+                    if (s_result.Length > spanStart)
+                        result.Spans.Add(new TextStyleSpan(spanStart, s_result.Length - spanStart, spanStyle));
                     var spriteStyle = next;
                     spriteStyle.Sprite = sprite;
                     spriteStyle.Flags |= TextStyle.Flag.Sprite;
-                    output.Append(SpritePlaceholder);
-                    result.Spans.Add(new TextStyleSpan(output.Length - 1, 1, spriteStyle));
-                    spanStart = output.Length;
+                    Write(SpritePlaceholder);
+                    result.Spans.Add(new TextStyleSpan(s_result.Length - 1, 1, spriteStyle));
+                    spanStart = s_result.Length;
                 }
 
                 style = next;
                 i = after;
             }
 
-            if (output.Length > spanStart || result.Spans.Count == 0)
-                result.Spans.Add(new TextStyleSpan(spanStart, output.Length - spanStart, spanStyle));
+            if (s_result.Length > spanStart || result.Spans.Count == 0)
+                result.Spans.Add(new TextStyleSpan(spanStart, s_result.Length - spanStart, spanStyle));
 
             // Anything still open at the end closes at the end. Unterminated
             // markup styling the rest of the text is what every other engine
@@ -337,17 +465,19 @@ namespace OneText
             {
                 if (stack[i].Name == "link")
                     result.Links.Add(new TextLink(stack[i].LinkId, stack[i].LinkStart,
-                        output.Length - stack[i].LinkStart));
+                        s_result.Length - stack[i].LinkStart));
                 else if (stack[i].Name == "ruby")
-                    CloseRuby(result, stack[i], output.Length);
+                    CloseRuby(result, stack[i], s_result.Length);
                 else if (IsDecoration(stack[i].Name))
-                    CloseDecoration(result, stack[i].DecorationIndex, output.Length);
+                    CloseDecoration(result, stack[i].DecorationIndex, s_result.Length);
                 else if (BuiltInEffects.Has(stack[i].Name))
                     result.Effects.Add((stack[i].Name, stack[i].EffectParameters,
-                        stack[i].EffectStart, output.Length));
+                        stack[i].EffectStart, s_result.Length));
             }
 
-            result.Text = output.ToString();
+            // Written, not built: the string behind it is made only if someone
+            // asks for one.
+            result.TextWritten();
         }
 
         /// <summary>
@@ -363,11 +493,60 @@ namespace OneText
         /// Reads a tag at <paramref name="at"/>. Returns false (consuming
         /// nothing) unless the whole thing is well formed.
         /// </summary>
-        private static bool TryReadTag(string s, int at, out string name, out string argument,
+        /// <summary>
+        /// Every tag name this parser answers to, as the exact string instances
+        /// the switch below compares against.
+        ///
+        /// A name used to be cut out of the source and lower-cased, which is
+        /// two strings per tag, thrown away a frame later. Matching the source
+        /// against these instead costs a case-insensitive span compare and
+        /// hands the switch a string it can compare by reference.
+        /// </summary>
+        private static readonly string[] KnownNames =
+        {
+            "b", "i", "u", "s", "nobr", "color", "mark", "size", "voffset", "cspace", "mspace",
+            "sup", "sub", "alpha", "align", "style", "font", "outline", "shadow", "glow",
+            "ruby", "link", "josa", "wait", "sprite", "noparse", "br",
+        };
+
+        /// <summary>
+        /// The canonical instance of the tag name at <paramref name="start"/>,
+        /// or a fresh lower-cased string when nothing recognises it — which is
+        /// a tag that stays literal, so the allocation is on a path that is
+        /// already the exceptional one.
+        /// </summary>
+        private static string CanonicalName(ReadOnlySpan<char> s, int start, int length)
+        {
+            var span = s.Slice(start, length);
+            foreach (string candidate in KnownNames)
+                if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                    return candidate;
+
+            // Effects are registered rather than listed, so a project can add
+            // one from user code and have markup find it.
+            string effect = BuiltInEffects.CanonicalName(span);
+            if (effect != null) return effect;
+
+            return new string(span).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Reads a tag at <paramref name="at"/>. Returns false (consuming
+        /// nothing) unless the whole thing is well formed.
+        ///
+        /// The argument comes back as a range into the source rather than a
+        /// string: most tags parse a number or a colour out of it and never
+        /// need one, and the handful that do (a style, font or sprite name, a
+        /// link id, a particle) cut it themselves.
+        /// </summary>
+        private static bool TryReadTag(ReadOnlySpan<char> s, int at, out string name,
+            out int argStart, out int argLength, out bool hasArgument,
             out bool closing, out int after)
         {
             name = null;
-            argument = null;
+            argStart = 0;
+            argLength = 0;
+            hasArgument = false;
             closing = false;
             after = at;
 
@@ -383,7 +562,7 @@ namespace OneText
             while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '-' || s[i] == '_')) i++;
             if (i == nameStart && !(closing && i < s.Length && s[i] == '>')) return false;
 
-            name = s.Substring(nameStart, i - nameStart).ToLowerInvariant();
+            name = i == nameStart ? string.Empty : CanonicalName(s, nameStart, i - nameStart);
 
             // `<wave amp=2 freq=1.5>`: a space after the name introduces an
             // attribute list, which runs to the '>' and is handed to the tag to
@@ -394,32 +573,37 @@ namespace OneText
                 int listStart = ++i;
                 while (i < s.Length && s[i] != '>' && s[i] != '<' && s[i] != '\n') i++;
                 if (i >= s.Length || s[i] != '>') return false;
-                argument = s.Substring(listStart, i - listStart).Trim();
+                Trim(s, listStart, i - listStart, out argStart, out argLength);
+                hasArgument = true;
                 after = i + 1;
-                return argument.Length > 0;
+                return argLength > 0;
             }
 
             if (i < s.Length && s[i] == '=')
             {
                 i++;
-                int argStart = i;
+                int start = i;
                 // A quoted argument may contain anything but its quote; an
                 // unquoted one runs to '>'. Newlines end a tag either way; an
                 // unterminated '<' should not swallow a paragraph.
                 if (i < s.Length && (s[i] == '"' || s[i] == '\''))
                 {
                     char quote = s[i++];
-                    argStart = i;
+                    start = i;
                     while (i < s.Length && s[i] != quote && s[i] != '\n') i++;
                     if (i >= s.Length || s[i] != quote) return false;
-                    argument = s.Substring(argStart, i - argStart);
+                    argStart = start;
+                    argLength = i - start;
+                    hasArgument = true;
                     i++;
                 }
                 else
                 {
                     while (i < s.Length && s[i] != '>' && s[i] != '<' && s[i] != '\n') i++;
                     if (i >= s.Length || s[i] != '>') return false;
-                    argument = s.Substring(argStart, i - argStart);
+                    argStart = start;
+                    argLength = i - start;
+                    hasArgument = true;
                 }
             }
 
@@ -428,46 +612,66 @@ namespace OneText
             return true;
         }
 
-        private static bool ApplyOpen(string name, string argument, List<Open> stack,
+        /// <summary>The range with leading and trailing whitespace taken off.</summary>
+        private static void Trim(ReadOnlySpan<char> s, int start, int length,
+            out int trimmedStart, out int trimmedLength)
+        {
+            int end = start + length;
+            while (start < end && char.IsWhiteSpace(s[start])) start++;
+            while (end > start && char.IsWhiteSpace(s[end - 1])) end--;
+            trimmedStart = start;
+            trimmedLength = end - start;
+        }
+
+        /// <summary>
+        /// The argument arrives as a range into the source rather than as a
+        /// string. Most tags read a number or a colour out of it and never need
+        /// one; the five that keep what they read — a style, font or sprite
+        /// name, a link id, a particle — cut a string themselves, and are the
+        /// only tags that still allocate.
+        /// </summary>
+        private static bool ApplyOpen(string name, ReadOnlySpan<char> source, int argStart, int argLength,
+            bool hasArgument, List<Open> stack,
             RichTextResult result, int position, TextStyle current,
             Func<string, int> styleNames, Func<string, int> fontNames, Func<string, int> spriteNames,
             ref TextStyle style, ref int sprite, ref string josa)
         {
             var previous = current;
+            var arg = hasArgument ? source.Slice(argStart, argLength) : default;
             switch (name)
             {
                 // These take no argument, so one makes the tag malformed:
                 // the same all-or-nothing rule the rest of the parser follows.
                 // <b=7> is more likely a typo than a bold.
-                case "b": if (argument != null) return false; style.Flags |= TextStyle.Flag.Bold; break;
-                case "i": if (argument != null) return false; style.Flags |= TextStyle.Flag.Italic; break;
-                case "u": if (argument != null) return false; style.Flags |= TextStyle.Flag.Underline; break;
-                case "s": if (argument != null) return false; style.Flags |= TextStyle.Flag.Strikethrough; break;
-                case "nobr": if (argument != null) return false; style.Flags |= TextStyle.Flag.NoBreak; break;
+                case "b": if (hasArgument) return false; style.Flags |= TextStyle.Flag.Bold; break;
+                case "i": if (hasArgument) return false; style.Flags |= TextStyle.Flag.Italic; break;
+                case "u": if (hasArgument) return false; style.Flags |= TextStyle.Flag.Underline; break;
+                case "s": if (hasArgument) return false; style.Flags |= TextStyle.Flag.Strikethrough; break;
+                case "nobr": if (hasArgument) return false; style.Flags |= TextStyle.Flag.NoBreak; break;
 
                 case "color":
-                    if (!TryParseColor(argument, out var color)) return false;
+                    if (!TryParseColor(arg, out var color)) return false;
                     style.Color = color;
                     style.Flags |= TextStyle.Flag.HasColor;
                     break;
 
                 case "mark":
                     // <mark> with no argument is a conventional yellow wash.
-                    if (string.IsNullOrEmpty(argument)) style.MarkColor = new Color32(255, 235, 0, 80);
-                    else if (!TryParseColor(argument, out style.MarkColor)) return false;
+                    if (arg.IsEmpty) style.MarkColor = new Color32(255, 235, 0, 80);
+                    else if (!TryParseColor(arg, out style.MarkColor)) return false;
                     style.Flags |= TextStyle.Flag.HasMark;
                     break;
 
                 case "size":
-                    if (!TryParseSize(argument, current, ref style)) return false;
+                    if (!TryParseSize(arg, current, ref style)) return false;
                     break;
 
                 case "voffset":
-                    if (!TryParseEms(argument, out style.BaselineShiftEm)) return false;
+                    if (!TryParseEms(arg, out style.BaselineShiftEm)) return false;
                     break;
 
                 case "cspace":
-                    if (!TryParseEms(argument, out style.LetterSpacingEm)) return false;
+                    if (!TryParseEms(arg, out style.LetterSpacingEm)) return false;
                     // Flagged, not inferred from the number: <cspace=0> is an
                     // author pulling a run back to the face's own metrics over
                     // a label, a style asset or a font that widened it, and
@@ -476,7 +680,7 @@ namespace OneText
                     break;
 
                 case "mspace":
-                    if (!TryParseEms(argument, out style.MonoAdvanceEm)) return false;
+                    if (!TryParseEms(arg, out style.MonoAdvanceEm)) return false;
                     // A cell of zero or less is not a cell. Unlike <cspace=0>,
                     // which is a real request, <mspace=0> asks for every glyph
                     // to be drawn on top of the last, and the house rule for a
@@ -493,14 +697,14 @@ namespace OneText
                 // everybody's text already looks like beats a lookup that
                 // arrives one layer too late.
                 case "sup":
-                    if (argument != null) return false;
+                    if (hasArgument) return false;
                     style.SizeScale = current.SizeScale * SuperscriptSize;
                     style.BaselineShiftEm = Lift(current.BaselineShiftEm, SuperscriptOffsetEm,
                         SuperscriptSize);
                     break;
 
                 case "sub":
-                    if (argument != null) return false;
+                    if (hasArgument) return false;
                     style.SizeScale = current.SizeScale * SubscriptSize;
                     style.BaselineShiftEm = Lift(current.BaselineShiftEm, SubscriptOffsetEm,
                         SubscriptSize);
@@ -508,14 +712,14 @@ namespace OneText
 
                 case "alpha":
                 {
-                    if (!TryParseAlpha(argument, out style.AlphaOverride)) return false;
+                    if (!TryParseAlpha(arg, out style.AlphaOverride)) return false;
                     style.Flags |= TextStyle.Flag.HasAlpha;
                     break;
                 }
 
                 case "align":
                 {
-                    if (!TryParseAlignment(argument, out var alignment)) return false;
+                    if (!TryParseAlignment(arg, out var alignment)) return false;
                     // Remember what was in force, so </align> can put it back.
                     // Without this the tag is one-way: the rest of the text
                     // keeps an alignment the author explicitly ended.
@@ -536,8 +740,8 @@ namespace OneText
 
                 case "style":
                 {
-                    if (styleNames == null || string.IsNullOrEmpty(argument)) return false;
-                    int index = styleNames(argument);
+                    if (styleNames == null || arg.IsEmpty) return false;
+                    int index = styleNames(new string(source.Slice(argStart, argLength)));
                     if (index < 0) return false;
                     style.NamedStyle = index;
                     break;
@@ -545,8 +749,8 @@ namespace OneText
 
                 case "font":
                 {
-                    if (fontNames == null || string.IsNullOrEmpty(argument)) return false;
-                    int index = fontNames(argument);
+                    if (fontNames == null || arg.IsEmpty) return false;
+                    int index = fontNames(new string(source.Slice(argStart, argLength)));
                     if (index < 0) return false;
                     style.FontOverride = index;
                     break;
@@ -556,7 +760,7 @@ namespace OneText
                 case "shadow":
                 case "glow":
                 {
-                    if (!TryParseDecoration(name, argument, out var decoration)) return false;
+                    if (!TryParseDecoration(name, arg, out var decoration)) return false;
                     // Recorded at OPEN, not at close, so the list stays in the
                     // order the author wrote: DecorationAt lays later spans over
                     // earlier ones, and closing order is the reverse of that;
@@ -573,7 +777,7 @@ namespace OneText
 
                 case "ruby":
                 {
-                    if (string.IsNullOrEmpty(argument)) return false;
+                    if (arg.IsEmpty) return false;
                     // Ruby inside ruby is refused rather than guessed at. Two
                     // annotations over one base is double-sided ruby (両側ルビ),
                     // which is a placement problem of its own and not what
@@ -587,19 +791,19 @@ namespace OneText
                         Name = "ruby",
                         Previous = previous,
                         RubyStart = position,
-                        RubyText = argument,
+                        RubyText = new string(source.Slice(argStart, argLength)),
                     });
                     return true;
                 }
 
                 case "link":
-                    if (string.IsNullOrEmpty(argument)) return false;
+                    if (arg.IsEmpty) return false;
                     stack.Add(new Open
                     {
                         Name = "link",
                         Previous = previous,
                         LinkStart = position,
-                        LinkId = argument,
+                        LinkId = new string(source.Slice(argStart, argLength)),
                     });
                     return true; // pushed with its own bookkeeping
 
@@ -610,8 +814,8 @@ namespace OneText
                     // was interpolated at runtime, with no C# call anywhere.
                     // A formatter cannot help a string that arrives from a
                     // localisation table already assembled.
-                    if (!Unicode.KoreanJosa.IsJosa(argument)) return false;
-                    josa = argument;
+                    if (!Unicode.KoreanJosa.IsJosa(arg)) return false;
+                    josa = new string(source.Slice(argStart, argLength));
                     return true;
                 }
 
@@ -623,7 +827,7 @@ namespace OneText
                     // finite and non-negative; <wait=soon> is a typo, and the
                     // house rule for a typo is that it stays visible rather than
                     // silently doing nothing.
-                    if (!float.TryParse(argument, NumberStyles.Float,
+                    if (!float.TryParse(arg, NumberStyles.Float,
                             CultureInfo.InvariantCulture, out float seconds)) return false;
                     if (float.IsNaN(seconds) || float.IsInfinity(seconds) || seconds < 0f) return false;
                     result.Waits.Add((position, seconds));
@@ -634,13 +838,13 @@ namespace OneText
                 {
                     // Reported back rather than emitted here: a sprite is a
                     // character, and the caller owns the text and its spans.
-                    if (string.IsNullOrEmpty(argument)) return false;
-                    if (!int.TryParse(argument, NumberStyles.Integer,
+                    if (arg.IsEmpty) return false;
+                    if (!int.TryParse(arg, NumberStyles.Integer,
                             CultureInfo.InvariantCulture, out int index))
                     {
                         // A name, then, which is what survives someone
                         // reordering the sheet, and is why IndexOf exists.
-                        index = spriteNames?.Invoke(argument) ?? -1;
+                        index = spriteNames?.Invoke(new string(source.Slice(argStart, argLength))) ?? -1;
                     }
                     if (index < 0) return false;
                     sprite = index;
@@ -658,7 +862,7 @@ namespace OneText
                     {
                         Name = name,
                         Previous = previous,
-                        EffectParameters = ParseEffectParameters(argument),
+                        EffectParameters = ParseEffectParameters(arg),
                         EffectStart = position,
                     });
                     return true;
@@ -716,13 +920,14 @@ namespace OneText
 
         // ------------------------------------------------------------ parsing
 
-        private static bool TryParseSize(string argument, TextStyle current, ref TextStyle style)
+        private static bool TryParseSize(ReadOnlySpan<char> argument, TextStyle current,
+            ref TextStyle style)
         {
-            if (string.IsNullOrEmpty(argument)) return false;
+            if (argument.IsEmpty) return false;
 
             if (argument[argument.Length - 1] == '%')
             {
-                if (!float.TryParse(argument.Substring(0, argument.Length - 1),
+                if (!float.TryParse(argument.Slice(0, argument.Length - 1),
                         NumberStyles.Float, CultureInfo.InvariantCulture, out float percent) ||
                     percent <= 0f) return false;
                 style.SizeScale = current.SizeScale * (percent / 100f);
@@ -791,39 +996,57 @@ namespace OneText
         /// <c>&lt;alpha=0.5&gt;</c> would read a migrated <c>&lt;alpha=#80&gt;</c>
         /// one way and a hand-written one another.
         /// </summary>
-        private static bool TryParseAlpha(string argument, out byte alpha)
+        private static bool TryParseAlpha(ReadOnlySpan<char> argument, out byte alpha)
         {
             alpha = 255;
-            if (string.IsNullOrEmpty(argument) || argument[0] != '#') return false;
+            if (argument.IsEmpty || argument[0] != '#') return false;
             if (argument.Length != 3) return false;
-            return byte.TryParse(argument.Substring(1), NumberStyles.HexNumber,
+            return byte.TryParse(argument.Slice(1), NumberStyles.HexNumber,
                 CultureInfo.InvariantCulture, out alpha);
         }
 
-        private static bool TryParseEms(string argument, out float ems)
+        private static bool TryParseEms(ReadOnlySpan<char> argument, out float ems)
         {
             ems = 0f;
-            if (string.IsNullOrEmpty(argument)) return false;
-            string value = argument.EndsWith("em", StringComparison.OrdinalIgnoreCase)
-                ? argument.Substring(0, argument.Length - 2)
+            if (argument.IsEmpty) return false;
+            var value = argument.EndsWith("em".AsSpan(), StringComparison.OrdinalIgnoreCase)
+                ? argument.Slice(0, argument.Length - 2)
                 : argument;
             return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out ems);
         }
 
-        private static bool TryParseAlignment(string argument, out TextAlignment alignment)
+        private static bool TryParseAlignment(ReadOnlySpan<char> argument, out TextAlignment alignment)
         {
             alignment = TextAlignment.Start;
-            if (string.IsNullOrEmpty(argument)) return false;
-            switch (argument.ToLowerInvariant())
-            {
-                case "left": alignment = TextAlignment.Left; return true;
-                case "right": alignment = TextAlignment.Right; return true;
-                case "center": case "centre": alignment = TextAlignment.Center; return true;
-                case "justified": case "justify": alignment = TextAlignment.Justified; return true;
-                case "start": alignment = TextAlignment.Start; return true;
-                case "end": alignment = TextAlignment.End; return true;
-                default: return false;
-            }
+            if (argument.IsEmpty) return false;
+            if (Is(argument, "left")) { alignment = TextAlignment.Left; return true; }
+            if (Is(argument, "right")) { alignment = TextAlignment.Right; return true; }
+            if (Is(argument, "center") || Is(argument, "centre"))
+            { alignment = TextAlignment.Center; return true; }
+            if (Is(argument, "justified") || Is(argument, "justify"))
+            { alignment = TextAlignment.Justified; return true; }
+            if (Is(argument, "start")) { alignment = TextAlignment.Start; return true; }
+            if (Is(argument, "end")) { alignment = TextAlignment.End; return true; }
+            return false;
+        }
+
+        /// <summary>Case-insensitive compare against a literal, allocating nothing.</summary>
+        private static bool Is(ReadOnlySpan<char> value, string literal) =>
+            value.Equals(literal.AsSpan(), StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The next token of an attribute list, split on spaces and commas.
+        /// The list form is what <c>&lt;wave amp=2 freq=1.5&gt;</c> and
+        /// <c>&lt;outline=black w=0.6&gt;</c> both use, and splitting it with
+        /// string.Split allocated an array and a string per token.
+        /// </summary>
+        private static bool NextToken(ReadOnlySpan<char> s, ref int index, out ReadOnlySpan<char> token)
+        {
+            while (index < s.Length && (s[index] == ' ' || s[index] == ',')) index++;
+            int start = index;
+            while (index < s.Length && s[index] != ' ' && s[index] != ',') index++;
+            token = s.Slice(start, index - start);
+            return token.Length > 0;
         }
 
         /// <summary>
@@ -837,11 +1060,15 @@ namespace OneText
         /// Public because the inspector's effect table reads a tag's arguments
         /// through the same rules the runtime does; two parsers is one bug.
         /// </summary>
-        public static TextEffectParameters ParseEffectParameters(string argument)
+        public static TextEffectParameters ParseEffectParameters(string argument) =>
+            ParseEffectParameters(argument.AsSpan());
+
+        /// <inheritdoc cref="ParseEffectParameters(string)"/>
+        public static TextEffectParameters ParseEffectParameters(ReadOnlySpan<char> argument)
         {
             float amplitude = float.NaN, frequency = float.NaN, speed = float.NaN, extra = float.NaN;
             float duration = float.NaN;
-            if (string.IsNullOrEmpty(argument))
+            if (argument.IsEmpty)
                 return new TextEffectParameters(amplitude, frequency, speed, extra, duration);
 
             // A bare number is the amplitude: <shake=3> is what people write.
@@ -849,25 +1076,23 @@ namespace OneText
                     out float bare))
                 return new TextEffectParameters(bare, frequency, speed, extra, duration);
 
-            foreach (var pair in argument.Split(new[] { ' ', ',' },
-                         StringSplitOptions.RemoveEmptyEntries))
+            int index = 0;
+            while (NextToken(argument, ref index, out var pair))
             {
                 int equals = pair.IndexOf('=');
                 if (equals <= 0) continue;
-                if (!float.TryParse(pair.Substring(equals + 1), NumberStyles.Float,
+                if (!float.TryParse(pair.Slice(equals + 1), NumberStyles.Float,
                         CultureInfo.InvariantCulture, out float value)) continue;
 
-                switch (pair.Substring(0, equals).ToLowerInvariant())
-                {
-                    case "amp": case "amplitude": amplitude = value; break;
-                    case "freq": case "frequency": frequency = value; break;
-                    case "speed": case "time": speed = value; break;
-                    case "extra": case "arg": extra = value; break;
-                    // Seconds the effect runs before settling; the animation
-                    // clock starts when the label enables, so <wave for=0.5>
-                    // is "wave for half a second on appear".
-                    case "for": case "dur": case "duration": duration = value; break;
-                }
+                var key = pair.Slice(0, equals);
+                if (Is(key, "amp") || Is(key, "amplitude")) amplitude = value;
+                else if (Is(key, "freq") || Is(key, "frequency")) frequency = value;
+                else if (Is(key, "speed") || Is(key, "time")) speed = value;
+                else if (Is(key, "extra") || Is(key, "arg")) extra = value;
+                // Seconds the effect runs before settling; the animation
+                // clock starts when the label enables, so <wave for=0.5>
+                // is "wave for half a second on appear".
+                else if (Is(key, "for") || Is(key, "dur") || Is(key, "duration")) duration = value;
             }
             return new TextEffectParameters(amplitude, frequency, speed, extra, duration);
         }
@@ -914,7 +1139,12 @@ namespace OneText
         /// arguments through the same rules the runtime does; two parsers is
         /// one bug.
         /// </summary>
-        public static bool TryParseDecoration(string name, string argument, out TextDecoration decoration)
+        public static bool TryParseDecoration(string name, string argument, out TextDecoration decoration) =>
+            TryParseDecoration(name, argument.AsSpan(), out decoration);
+
+        /// <inheritdoc cref="TryParseDecoration(string, string, out TextDecoration)"/>
+        public static bool TryParseDecoration(string name, ReadOnlySpan<char> argument,
+            out TextDecoration decoration)
         {
             switch (name)
             {
@@ -923,9 +1153,10 @@ namespace OneText
                 case "glow": decoration = TextDecoration.DefaultGlow; break;
                 default: decoration = TextDecoration.None; return false;
             }
-            if (string.IsNullOrEmpty(argument)) return true;
+            if (argument.IsEmpty) return true;
 
-            foreach (var token in argument.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            int index = 0;
+            while (NextToken(argument, ref index, out var token))
             {
                 int equals = token.IndexOf('=');
                 if (equals <= 0)
@@ -937,9 +1168,9 @@ namespace OneText
                     continue;
                 }
 
-                string key = token.Substring(0, equals).ToLowerInvariant();
-                string value = token.Substring(equals + 1);
-                if (key == "color" || key == "colour" || key == "c")
+                var key = token.Slice(0, equals);
+                var value = token.Slice(equals + 1);
+                if (Is(key, "color") || Is(key, "colour") || Is(key, "c"))
                 {
                     if (!TryParseColor(value, out var named)) return false;
                     SetDecorationColor(ref decoration, named);
@@ -950,20 +1181,26 @@ namespace OneText
                         out float number) || float.IsNaN(number) || float.IsInfinity(number))
                     return false;
 
+                bool known;
                 switch (name)
                 {
-                    case "outline" when key == "w" || key == "width":
-                        decoration.OutlineWidth = number; break;
-                    case "shadow" when key == "x":
-                        decoration.ShadowOffset.x = number; break;
-                    case "shadow" when key == "y":
-                        decoration.ShadowOffset.y = number; break;
-                    case "shadow" when key == "soft" || key == "softness":
-                        decoration.ShadowSoftness = number; break;
-                    case "glow" when key == "r" || key == "radius" || key == "w" || key == "width":
-                        decoration.GlowRadius = number; break;
-                    default: return false;
+                    case "outline":
+                        known = Is(key, "w") || Is(key, "width");
+                        if (known) decoration.OutlineWidth = number;
+                        break;
+                    case "shadow":
+                        if (Is(key, "x")) { decoration.ShadowOffset.x = number; known = true; }
+                        else if (Is(key, "y")) { decoration.ShadowOffset.y = number; known = true; }
+                        else if (Is(key, "soft") || Is(key, "softness"))
+                        { decoration.ShadowSoftness = number; known = true; }
+                        else known = false;
+                        break;
+                    default:
+                        known = Is(key, "r") || Is(key, "radius") || Is(key, "w") || Is(key, "width");
+                        if (known) decoration.GlowRadius = number;
+                        break;
                 }
+                if (!known) return false;
             }
 
             decoration = decoration.Clamped();
@@ -983,36 +1220,71 @@ namespace OneText
         /// the hex forms; the names are here because `<color=red>` is what
         /// people write.
         /// </summary>
-        public static bool TryParseColor(string argument, out Color32 color)
+        public static bool TryParseColor(string argument, out Color32 color) =>
+            TryParseColor(argument.AsSpan(), out color);
+
+        /// <inheritdoc cref="TryParseColor(string, out Color32)"/>
+        public static bool TryParseColor(ReadOnlySpan<char> argument, out Color32 color)
         {
             color = default;
-            if (string.IsNullOrEmpty(argument)) return false;
+            if (argument.IsEmpty) return false;
 
-            if (argument[0] == '#')
-            {
-                if (!ColorUtility.TryParseHtmlString(argument, out var parsed)) return false;
-                color = parsed;
-                return true;
-            }
+            // The hex forms are read here rather than through
+            // ColorUtility.TryParseHtmlString, which takes a string and would
+            // make <color=#ff8800> cost one on every parse. The four lengths
+            // are the four that function accepts after a '#'.
+            if (argument[0] == '#') return TryParseHex(argument.Slice(1), out color);
 
-            switch (argument.ToLowerInvariant())
+            if (Is(argument, "black")) { color = new Color32(0, 0, 0, 255); return true; }
+            if (Is(argument, "white")) { color = new Color32(255, 255, 255, 255); return true; }
+            if (Is(argument, "red")) { color = new Color32(255, 0, 0, 255); return true; }
+            if (Is(argument, "green")) { color = new Color32(0, 255, 0, 255); return true; }
+            if (Is(argument, "blue")) { color = new Color32(0, 0, 255, 255); return true; }
+            if (Is(argument, "yellow")) { color = new Color32(255, 255, 0, 255); return true; }
+            if (Is(argument, "orange")) { color = new Color32(255, 128, 0, 255); return true; }
+            if (Is(argument, "purple")) { color = new Color32(160, 32, 240, 255); return true; }
+            if (Is(argument, "grey") || Is(argument, "gray"))
+            { color = new Color32(128, 128, 128, 255); return true; }
+            if (Is(argument, "cyan")) { color = new Color32(0, 255, 255, 255); return true; }
+            if (Is(argument, "magenta")) { color = new Color32(255, 0, 255, 255); return true; }
+            if (Is(argument, "brown")) { color = new Color32(165, 42, 42, 255); return true; }
+            if (Is(argument, "pink")) { color = new Color32(255, 192, 203, 255); return true; }
+            if (Is(argument, "clear")) { color = new Color32(0, 0, 0, 0); return true; }
+            return false;
+        }
+
+        /// <summary>`rgb`, `rgba`, `rrggbb` or `rrggbbaa`, without the hash.</summary>
+        private static bool TryParseHex(ReadOnlySpan<char> hex, out Color32 color)
+        {
+            color = default;
+            bool shorthand = hex.Length == 3 || hex.Length == 4;
+            if (!shorthand && hex.Length != 6 && hex.Length != 8) return false;
+
+            Span<byte> channels = stackalloc byte[4] { 255, 255, 255, 255 };
+            int count = shorthand ? hex.Length : hex.Length / 2;
+            for (int i = 0; i < count; i++)
             {
-                case "black": color = new Color32(0, 0, 0, 255); return true;
-                case "white": color = new Color32(255, 255, 255, 255); return true;
-                case "red": color = new Color32(255, 0, 0, 255); return true;
-                case "green": color = new Color32(0, 255, 0, 255); return true;
-                case "blue": color = new Color32(0, 0, 255, 255); return true;
-                case "yellow": color = new Color32(255, 255, 0, 255); return true;
-                case "orange": color = new Color32(255, 128, 0, 255); return true;
-                case "purple": color = new Color32(160, 32, 240, 255); return true;
-                case "grey": case "gray": color = new Color32(128, 128, 128, 255); return true;
-                case "cyan": color = new Color32(0, 255, 255, 255); return true;
-                case "magenta": color = new Color32(255, 0, 255, 255); return true;
-                case "brown": color = new Color32(165, 42, 42, 255); return true;
-                case "pink": color = new Color32(255, 192, 203, 255); return true;
-                case "clear": color = new Color32(0, 0, 0, 0); return true;
-                default: return false;
+                if (shorthand)
+                {
+                    if (!TryHexDigit(hex[i], out int digit)) return false;
+                    channels[i] = (byte)(digit * 16 + digit);
+                    continue;
+                }
+                if (!TryHexDigit(hex[i * 2], out int high)) return false;
+                if (!TryHexDigit(hex[i * 2 + 1], out int low)) return false;
+                channels[i] = (byte)(high * 16 + low);
             }
+            color = new Color32(channels[0], channels[1], channels[2], channels[3]);
+            return true;
+        }
+
+        private static bool TryHexDigit(char c, out int value)
+        {
+            if (c >= '0' && c <= '9') { value = c - '0'; return true; }
+            if (c >= 'a' && c <= 'f') { value = c - 'a' + 10; return true; }
+            if (c >= 'A' && c <= 'F') { value = c - 'A' + 10; return true; }
+            value = 0;
+            return false;
         }
     }
 }

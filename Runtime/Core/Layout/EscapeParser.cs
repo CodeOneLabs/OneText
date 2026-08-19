@@ -1,3 +1,4 @@
+using System;
 using System.Text;
 
 namespace OneText
@@ -22,6 +23,9 @@ namespace OneText
         /// <summary>Cheap pre-check: no backslash means nothing to do.</summary>
         public static bool MightHaveEscapes(string text) =>
             !string.IsNullOrEmpty(text) && text.IndexOf('\\') >= 0;
+
+        /// <inheritdoc cref="MightHaveEscapes(string)"/>
+        public static bool MightHaveEscapes(ReadOnlySpan<char> text) => text.IndexOf('\\') >= 0;
 
         /// <summary>
         /// The unescaped string. Returns the instance it was given when there
