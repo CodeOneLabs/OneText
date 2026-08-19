@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.2] - 2026-08-20
 
 ### Added
 
@@ -21,8 +21,6 @@
   now, with the old string signatures kept as one-line overloads. Nothing about
   the output changes; what changes is that text can reach the shaper from a
   buffer a game filled itself.
-
-### Changed
 
 - **A field that loses focus keeps the view the user left, rather than
   rewinding to the start of its value.** Read off a recording: 23 jamo typed

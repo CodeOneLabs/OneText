@@ -111,13 +111,24 @@ convert keeps working. Scan again whenever you want to see what is left.
 
 ## Status
 
-**v0.3.0.** Everything above is shipped. v0.1.0 was the first public release,
+**v0.3.2.** Everything above is shipped. v0.1.0 was the first public release,
 v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
-the Onboarding tab, and this one is about coming from TextMesh Pro and finding
+the Onboarding tab, and v0.3.0 was about coming from TextMesh Pro and finding
 less missing: a migration you can run on part of a project without the rest
 going quiet, the rich-text tags a real TMP project turns out to contain, and a
-`<b>` that reaches a designed bold instead of silently drawing regular. What
-comes next is verification and reach, not features:
+`<b>` that reaches a designed bold instead of silently drawing regular.
+
+v0.3.2 is about what a label costs and what a Korean keyboard does to a field.
+A score, a timer or a countdown can change every frame and allocate nothing —
+`SetText(int)` and its span-taking siblings write into a buffer the label owns,
+and the whole pipeline down to the shaper reads characters rather than strings.
+Writing the value a label already holds now costs nothing at all, and a label
+drawing in a system font stopped re-laying-out every frame. On the editing
+side, eight bugs a Korean IME could produce — a backspace that took two
+characters, a syllable that came back doubled after a click away, the same
+syllable typed twice never advancing — turned out to be mostly one thing, and
+each fix is a test replaying the frames a real keyboard produced. What comes
+next is verification and reach, not features:
 
 | | |
 |---|---|

@@ -10,7 +10,7 @@ Files directly in `Runtime/Core` (sub-folders are listed in the next table):
 |---|---|
 | `OneText.asmdef` | Assembly definition for `OneText` (root namespace `OneText`). References `Unity.Burst`, `Unity.Collections`, `Unity.Mathematics`; `allowUnsafeCode: true`; auto-referenced; no platform restrictions. |
 | `AssemblyInfo.cs` | `[assembly: InternalsVisibleTo("OneText.Tests")]` so tests can reach `internal` members (the comment names `OneFontAsset.DropPackedData` as the motivating case). |
-| `OneTextInfo.cs` | `OneTextInfo.Version` (`"0.3.0"`) and `OneTextInfo.PackageName` (`"com.onetext.core"`): the package identity a player build can read, since it has no package manager. A test keeps `Version` equal to `package.json`. |
+| `OneTextInfo.cs` | `OneTextInfo.Version` (`"0.3.2"`) and `OneTextInfo.PackageName` (`"com.onetext.core"`): the package identity a player build can read, since it has no package manager. A test keeps `Version` equal to `package.json`. |
 | `OneTextSettings.cs` | `OneTextSettings : ScriptableObject`, loaded from `Resources/OneTextSettings`: default font, fallback chain, system-font fallback switch, new-text defaults (`TextDefaults`), project `TextQuality`, atlas size/layers, prewarm charset, charset recording, and the `OneTextDictionary` list installed before the first scene. |
 | `TextQuality.cs` | `TextQuality` enum (`Project`, `Performance`, `Medium`, `High`) and `TextQualityScale`, which resolves `Project` against the settings asset and maps a rung to a texel multiplier on the world ladder (1, 2, 4) or the canvas ladder (1, 1.5, 2). |
 
