@@ -9,8 +9,10 @@
   `SetText(char[], int, int)` write into a buffer the label owns, so a score, a
   timer or a countdown can change every frame and allocate nothing at all.
   Measured over 600 frames, fifty labels retexted a frame: **0 bytes**, against
-  3.8 KB a frame for TextMeshPro's own non-allocating equivalent,
-  `SetText("{0}", n)`. `Text` still answers with a string when something asks;
+  2.6 to 3.8 KB a frame across runs for TextMeshPro's own non-allocating
+  equivalent, `SetText("{0}", n)`. The gauge is a managed heap delta that
+  resolves about a page and over-estimates; `Docs/BENCHMARKS.md` states what it
+  can and cannot show. `Text` still answers with a string when something asks;
   it builds one at that moment rather than every frame.
 
 ### Changed

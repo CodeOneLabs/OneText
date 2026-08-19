@@ -11,8 +11,19 @@ Unity -batchmode -quit -nographics -projectPath <dev project> \
 `CompoundBench` lives in the dev project because it references TextMeshPro;
 the scenarios themselves are in the package, so both systems run the identical
 scene, strings and frame loop. `OneText.Benchmarks.BenchSuite.RunAll` is the
-same thing without the TMP side, and `.AsianLayout` prices the M10 tailorings
-on their own.
+same thing without the TMP side, `.WorkloadMatrix` varies rebuild count and
+glyph novelty independently, and `.AsianLayout` prices the M10 tailorings on
+their own. `AllocDiff.Run`, also in the dev project, is where the allocation
+figures come from.
+
+**Everything below was re-measured at v0.3.2 on 2026-08-20.** The raw reports
+that run produced are kept beside this file:
+[v0.3.2-compound-report.md](benchmarks/v0.3.2-compound-report.md) and
+[v0.3.2-alloc-diff.md](benchmarks/v0.3.2-alloc-diff.md). The tables it
+replaces were v0.1.0's, and three of them had gone stale in ways worth stating
+rather than quietly overwriting: what got faster, what got slower, and one
+headline multiple that shrank. Those are collected under "What moved since
+v0.1.0".
 
 ## What is measured
 
@@ -38,9 +49,42 @@ report that was not measured this way says so in its header.
 
 Draw groups are distinct material+texture pairs (what decides whether uGUI can
 batch), counted structurally, because a hand-driven render does not tick the
-engine's own batch statistics. Allocation is a managed heap delta, so it is a
-floor. The editor's null graphics device means absolute microseconds are not a
-device measurement; the ratios are symmetric across systems.
+engine's own batch statistics. The editor's null graphics device means absolute
+microseconds are not a device measurement; the ratios are symmetric across
+systems.
+
+**Coverage is in every table, because a frame time is only comparable to
+another frame time when both frames drew the same text.** A system that has no
+glyph for a fifth of the characters posts a better number for doing less work,
+and TMP draws a replacement glyph for what it cannot find, so the rendered
+frame looks complete either way. Where a row says "no system fonts", that is
+OneText run with its last-resort tier switched off so that it draws the same
+set TMP draws: **that row, not the arithmetic in the us/char column, is the
+like-for-like comparison.**
+
+### The allocation instrument
+
+Allocation is a managed heap delta over a whole frame, with frames that
+collected excluded rather than clamped to zero — clamping makes a frame that
+allocated look like one that did not.
+
+The gauge is coarse and the harness now states its own resolution rather than
+implying precision it does not have. Measured against known allocations it read
+20.8 KB of real work as 28-32 KB, 5.2 KB as 4-8 KB, and 1 KB as 0 more often
+than not, while never reporting bytes for a frame that allocated none. **A
+per-frame figure below a page means nothing; the mean over hundreds of frames
+is the number to read, and it is an over-estimate.** Nothing here can prove
+zero from a single call, which is why every allocation figure below comes from
+50 to 200 labels over 600 frames.
+
+**The profiler's `GC.Alloc` recorder — the instrument that could prove zero —
+does not work in this environment, and the tables do not use it.** It counts
+nothing under `-executeMethod` and nothing under the test runner either,
+because neither submits the player-loop frames it records against. This is not
+inferred: the harness carries a control case that allocates one `byte[64]` per
+call and must therefore read 1.000 allocations per call. It reads 0.000, with
+and without `-nographics`. Any table that shows a zero in that column, here or
+in a report file, is showing a broken instrument.
 
 ## Scenarios
 
@@ -53,38 +97,80 @@ device measurement; the ratios are symmetric across systems.
 
 ## Results
 
-Unity 6000.0.77f1, Apple M4 Pro, null graphics device. Median of 3 repetitions
-per cell, chosen by p99.
+Unity 6000.0.77f1, Apple M4 Pro, null graphics device, v0.3.2. Median of 3
+repetitions per cell, chosen by p99.
 
-| Scenario | System | Median ms | p99 ms | Max ms | Draw groups | Texture | Coverage |
-|---|---|---|---|---|---|---|---|
-| C2 | OneText 4 MB | **0.216** | **0.480** | **0.599** | **1** | 4 MB | full |
-| C2 | OneText 16 MB | 0.210 | 0.476 | 0.619 | 1 | 16 MB | full |
-| C2 | TMP dynamic 1024² | 0.658 | 10.003 | 12.325 | 6 | 9 MB → grows | full |
-| C2 | TMP dynamic 1024² +prewarm | 0.569 | 10.102 | 10.975 | 6 | 11 MB → grows | full |
-| C2 | TMP dynamic 2048² +prewarm | 3.548 | 15.670 | 24.554 | 2 | 20 MB → grows | full |
-| C2 | TMP static 1024² | 0.091 | 0.126 | 0.182 | 2 | 3 MB | **60 %** |
-| C1 | OneText 4 MB | **0.446** | **1.385** | **6.875** | **1** | 4 MB | full |
-| C1 | TMP dynamic 1024² | 0.454 | 14.438 | **351.800** | 5 | 4 MB → grows | full |
-| C1 | TMP static 1024² | 0.506 | 0.752 | 2.651 | 8 | 3 MB | full |
-| C3 | OneText 4 MB | 0.630 | 0.814 | 0.933 | **1** | 4 MB | full |
-| C3 | TMP dynamic 1024² | 0.632 | 0.759 | 0.850 | 3 | 2 MB → grows | full |
-| C3 | TMP static 1024² | 0.621 | 0.677 | 0.733 | 5 | 3 MB | full |
+| Scenario | System | Median ms | p99 ms | Max ms | Draw groups | Alloc/frame | Texture | Coverage |
+|---|---|---|---|---|---|---|---|---|
+| C2 | OneText 4 MB | 0.501 | **1.290** | **1.611** | **1** | **3.4 KB** | 4 MB | **100 %** |
+| C2 | OneText 4 MB, no system fonts | **0.246** | 0.531 | 0.692 | 1 | 2.2 KB | 4 MB | 78 % |
+| C2 | OneText 16 MB | 0.424 | 1.186 | 1.643 | 1 | 3.9 KB | 16 MB | 100 % |
+| C2 | TMP dynamic 1024² | 0.637 | 10.315 | 12.467 | 6 | 43.1 KB | 9 MB → grows | 78 % |
+| C2 | TMP dynamic 1024² +prewarm | 0.573 | 10.260 | 11.067 | 6 | 41.1 KB | 11 MB → grows | 78 % |
+| C2 | TMP dynamic 2048² +prewarm | 3.496 | 15.551 | 23.510 | 2 | 126.0 KB | 20 MB → grows | 78 % |
+| C2 | TMP static 1024² | **0.097** | **0.164** | **0.245** | 2 | 7.0 KB | 3 MB | **60 %** |
+| C1 | OneText 4 MB | 0.568 | 3.184 | 14.682 | **1** | **2.9 KB** | 4 MB | 100 % |
+| C1 | OneText 4 MB, no system fonts | 0.576 | **1.625** | **6.786** | 1 | 1.5 KB | 4 MB | 100 % |
+| C1 | TMP dynamic 1024² | **0.471** | 14.357 | 340.889 | 5 | 25.8 KB | 4 MB → grows | 100 % |
+| C1 | TMP static 1024² | 0.544 | 0.917 | 2.559 | 8 | 12.6 KB | 3 MB | 100 % |
+| C3 | OneText 4 MB | 0.846 | 1.126 | 1.159 | **1** | **894 B** | 4 MB | 100 % |
+| C3 | OneText 4 MB, no system fonts | 0.845 | 1.122 | 1.265 | 1 | 894 B | 4 MB | 100 % |
+| C3 | TMP dynamic 1024² | **0.663** | **0.726** | **0.756** | 3 | 1.6 KB | 2 MB → grows | 100 % |
+| C3 | TMP static 1024² | 0.678 | 0.909 | 0.951 | 5 | 1.6 KB | 3 MB | 100 % |
 
-C3 is a tie and was not always one. It lost by 16 % until three changes landed
-on 2026-08-04: the label colour stopped being multiplied into every quad when it
-is opaque white, `ShapeRun` began reusing the glyphs `BuildItems` already
-shaped when a line did not cut the item, and a fast path skips break analysis,
-grapheme segmentation and bidi for printable-ASCII `NoWrap` text with no style
-spans that one font covers, where all four have a forced answer. Anything else
-takes the general path unchanged.
+**C2 is the scenario this engine exists for, and it now draws more than TMP
+does rather than the same amount.** OneText draws all 659 characters of the
+last frame; TMP draws 517 of them and substitutes a replacement for the rest.
+Doing that, it is still ahead at the median (0.501 against 0.637) and ahead at
+p99 by 8x. Switch the system-font tier off so both draw the same 78 % and the
+median is 0.246 — 2.6x — with a p99 of 0.531 against 10.3.
 
-Coverage is the share of the last frame's characters the font asset can
-actually draw, asked of the asset directly; TMP substitutes a replacement for
-a character it cannot find, so a generated mesh looks complete either way. The
-78 % ceiling the dynamic runs hit in C2 is the system CJK font's own coverage
-of the mixed corpus and applies to both systems equally; the static column is
-scaled against that same ceiling.
+**C3 is a loss and used to be a tie.** 0.846 ms against TMP dynamic's 0.663 and
+TMP static's 0.678. The parity row is the same, so the system-font tier is not
+the cause: short ASCII over a warm atlas is layout and nothing else, and
+OneText's layout has got slower since v0.1.0. See "What moved since v0.1.0".
+
+**In C1 the system-font tier costs a worst frame and buys nothing.** Both C1
+rows draw 357 of 357 characters — the project's own fonts already cover that
+text — but the tier still probes 3,089 files, and the language-switch frame
+goes from 6.8 ms to 14.7 ms for it. That is the clearest actionable finding in
+this table: the tier should not be paying to look for glyphs the stack can
+already draw.
+
+TMP static's C2 row is the fair version of "TMP is 2.5x faster than you": it
+draws 60 % of the text. It is a good answer for a charset fixed at build time
+and this table says so.
+
+## What allocation costs
+
+`AllocDiff.Run` changes one thing at a time on a 200-label scene over 600
+frames, so the difference between two rows names its cause. The instrument and
+its resolution are described above.
+
+| Case | OneText | TMP |
+|---|---|---|
+| idle: nothing changes | 0.00 KB | 0.00 KB |
+| 50 labels retexted, strings pre-built | **0.00 KB** | 0.00 KB |
+| 200 labels retexted, strings pre-built | **0.00 KB** | 0.00 KB |
+| 50 labels retexted, rich-text markup | **0.00 KB** | 0.00 KB |
+| 50 labels retexted, `ToString()` each (= C3) | 1.53 KB | 1.57 KB |
+| a number every frame, no string anywhere | **0.00 KB** | 2.62 KB |
+
+The last row is the one v0.3.2 was written for. `SetText(int)` writes the digits
+into a buffer the label owns; TMP's own non-allocating answer to the same case,
+`SetText("{0}", n)`, reads 2.62 KB a frame on this gauge. The row above it is
+the same fifty labels with `int.ToString()` left in, and the 1.53 KB there is
+the caller's fifty strings, not either engine — which is why the two systems
+agree to within 40 bytes on it.
+
+Markup allocating nothing is new as well: the rich-text parser writes into the
+label's own buffer and interns tag names, and the layout engine indexes style
+spans rather than enumerating an `IReadOnlyList<T>`, which was boxing an
+enumerator once per layout.
+
+Times from the same run, for the frame these rows measure: 50 labels retexted
+costs OneText 793 µs against TMP's 568, and with markup 1,605 against 1,011.
+Allocation is where this release moved; that gap is not.
 
 ## The workload matrix
 
@@ -100,28 +186,49 @@ Unity -batchmode -quit -nographics -projectPath <dev project> \
       -executeMethod CompoundBench.WorkloadMatrix -oneOut <dir>
 ```
 
-| Rebuilds/frame | Glyphs | System | Median ms | p99 ms | Max ms | Draw groups |
-|---|---|---|---|---|---|---|
-| 5 | warm | **OneText** | **0.146** | **0.235** | **0.306** | 1 |
-| 5 | warm | TMP dynamic | 0.174 | 0.308 | 0.496 | 1 |
-| 50 | warm | **OneText** | **1.320** | **1.464** | **1.547** | 1 |
-| 50 | warm | TMP dynamic | 1.520 | 1.721 | 1.922 | 1 |
-| 5 | new | **OneText** | **1.032** | **1.598** | **4.036** | **1** |
-| 5 | new | TMP dynamic | 12.380 | 36.146 | 43.836 | 8 |
-| 50 | new | OneText | 11.419 | **15.142** | **16.736** | **1** |
-| 50 | new | TMP dynamic | **4.384** | 191.701 | 254.569 | 18 |
+| Rebuilds/frame | Glyphs | System | Median ms | p99 ms | Max ms | Draw groups | Coverage |
+|---|---|---|---|---|---|---|---|
+| 5 | warm | OneText | 0.226 | **0.308** | **0.431** | 1 | **100 %** |
+| 5 | warm | TMP dynamic | **0.208** | 0.340 | 0.495 | 1 | 79 % |
+| 50 | warm | OneText | 1.946 | 2.256 | 2.494 | 1 | **100 %** |
+| 50 | warm | TMP dynamic | **1.639** | **1.879** | **2.034** | 1 | 78 % |
+| 5 | new | **OneText** | **2.506** | **3.896** | **36.014** | **1** | **100 %** |
+| 5 | new | TMP dynamic | 12.457 | 36.585 | 44.173 | 8 | 78 % |
+| 50 | new | OneText | 26.206 | **31.838** | **55.610** | **1** | **100 %** |
+| 50 | new | TMP dynamic | **4.421** | 189.850 | 225.708 | 18 | 79 % |
 
-The two warm rows are layout-bound and close. The novel rows are where the
-architectures diverge: at five rebuilds a frame OneText is 12x faster at the
-median and 23x at p99.
+The warm rows are layout-bound and TMP is now slightly ahead in both, while
+drawing about a fifth less. The novel rows are where the architectures diverge:
+at five rebuilds a frame OneText is 5x faster at the median and 9.4x at p99, in
+one draw call against eight and 4 MB against 14.
 
-**The last row needs reading with its footnotes.** TMP's median there is 62 %
-lower than OneText's, and it gets there by opening 32 atlas pages, spending
-20 MB against a fixed 4 MB, and still leaving one character in five undrawn
-(1,437 of 1,828 on the final frame). The frames where it grows the atlas cost
-191 ms at p99 and 254 ms at worst. OneText holds 4 MB and one draw call,
-evicting 79,589 tiles over the run to do it, and its worst frame is 16.7 ms.
-A median is not a comparison when the two runs drew different amounts of text.
+**The last row needs reading with its footnotes.** TMP's median there is lower
+than OneText's, and it gets there by opening 32 atlas pages, spending 20 MB
+against a fixed 4 MB, and still leaving one character in five undrawn. The
+frames where it grows the atlas cost 190 ms at p99 and 226 ms at worst. OneText
+holds 4 MB and one draw call, evicting 137,377 tiles over the run to do it, and
+its worst frame is 55.6 ms. A median is not a comparison when the two runs drew
+different amounts of text.
+
+### The same matrix with the system-font tier off
+
+The novel cells look far worse than v0.1.0's until the tier is switched off,
+and then they do not, which is the whole finding:
+
+| Cell | v0.1.0 | v0.3.2, tier off | v0.3.2, tier on |
+|---|---|---|---|
+| 5 rebuilds, warm | 0.146 | 0.213 | 0.238 |
+| 50 rebuilds, warm | 1.320 | 1.689 | 1.945 |
+| 5 rebuilds, new glyphs | 1.032 | **1.127** | 2.521 |
+| 50 rebuilds, new glyphs | 11.419 | **11.498** | 26.633 |
+
+The two novel cells return to their old numbers within noise. What the extra
+time buys is in the coverage column of the same run: 1,851 of 1,851 characters
+with the tier on, 1,448 of 1,851 without it. **Baking a glyph nobody predicted
+costs what it always cost; the tier's cost is finding the file it lives in.**
+
+The warm cells do not come back, and no tier explains them. They are the same
+regression C3 shows.
 
 ## UniText
 
@@ -149,7 +256,8 @@ notes that Project Settings defaults apply only when the component is added
 through the Inspector).
 
 > **These UniText numbers predate the Burst fix described under "What is
-> measured" and have not been re-run.** OneText's column was measured with its
+> measured", predate v0.3.2, and have not been re-run.** Every OneText figure
+> in this section is v0.1.0's; the tables above supersede them. OneText's column was measured with its
 > SDF job running as managed IL; UniText 1.0.0 uses no jobs, so its column is
 > unaffected. The comparison therefore understates OneText and must not be
 > quoted until the three-way run is repeated.
@@ -185,8 +293,9 @@ scenarios (1.2×, 1.3×, 1.7×) and at p99 in two of three. UniText is still ahe
 on the worst single frame everywhere; its glyph baking is native and threaded,
 so it has no equivalent of our 6.4 ms language-switch frame in C1, and that is
 the next thing to fix. Allocation was our clearest loss in the first version of
-this table at 10 to 38 KB a frame; it is now 0.9 to 1.2 KB, slightly under
-UniText's 1.3 to 1.7 KB. Both hold one material+texture pair. UniText's atlas grows with the
+this table at 10 to 38 KB a frame; it was 0.9 to 1.2 KB when this comparison
+was run, against UniText's 1.3 to 1.7 KB, and at v0.3.2 the rebuild path
+allocates nothing measurable — see "What allocation costs". Both hold one material+texture pair. UniText's atlas grows with the
 charset (9 MB in C2 and climbing); OneText's stays at the budget it was
 given.
 
@@ -201,49 +310,83 @@ per-character cost under an atlas upload.
 
 | Rules on | chars/ms | µs per 1,000 chars | vs. off |
 |---|---|---|---|
-| none | 1,357 | 737 | baseline |
-| kinsoku (normal) | 1,193 | 838 | +14 % |
-| + punctuation compression | 1,045 | 957 | +30 % |
-| + CJK-Latin spacing | 1,021 | 979 | +33 % |
+| none | 755 | 1,324 | baseline |
+| kinsoku (normal) | 718 | 1,392 | +5 % |
+| + punctuation compression | 639 | 1,566 | +18 % |
+| + CJK-Latin spacing | 655 | 1,528 | +15 % |
 
-Two things worth saying plainly. The first row is the one that matters to a
-project that never ships Japanese: costing line edges is behind a flag set once
-per layout, so text laid out with compression off does not touch the code at
-all: 1,351 chars/ms before the line-edge rule existed, 1,357 after, which is
-noise.
+The rules are cheaper relative to the baseline than they were at v0.1.0
+(+33 % then, +15 % now) and that is not good news: the baseline is what got
+slower. In absolute terms every row here costs more µs per 1,000 characters
+than the same row did at v0.1.0.
 
-The second is that adding the line-edge half of 約物詰め made compression
-*faster*, not slower: 959 chars/ms before, 1,045 now, for a rule that does
-strictly more work. The naive version of the new code was 841 (a 12 %
-regression) because it asked two binary searches per glyph whether a character
-was a full-width mark, on text where nineteen characters in twenty are kana and
-Han. A three-comparison range test in front of the lists paid for the new rule
-and part of the old one. The prefilter is a hand-written duplicate of data that
-lives elsewhere, so a test walks all 65,536 characters asserting it never
-rejects a mark the lists accept.
+What has not changed is that a project which never ships Japanese does not pay
+for them. Costing line edges is behind a flag set once per layout, and the last
+two rows differ by less than the run-to-run noise on this bench.
+
+## What moved since v0.1.0
+
+Three tables here were measured at v0.1.0 and re-measured at v0.3.2 on the same
+machine and the same corpus. Two of the differences are the price of features
+that draw more text. One is not.
+
+**Layout got slower, by roughly a third to a half.** Three independent
+measurements agree, and none of them touches the atlas, the system-font tier or
+the mesh:
+
+| Measurement | v0.1.0 | v0.3.2 |
+|---|---|---|
+| C3 median (short ASCII, warm atlas) | 0.630 ms | 0.846 ms |
+| Matrix, 5 rebuilds warm, tier off | 0.146 ms | 0.213 ms |
+| Matrix, 50 rebuilds warm, tier off | 1.320 ms | 1.689 ms |
+| `AsianLayout`, every rule off | 1,357 chars/ms | 755 chars/ms |
+
+A bisect over 106 commits found no single cause: it is a staircase, and the
+largest identified step is the per-frame ppem measurement (+84 µs of the C3
+move; `OneTextLabel.DynamicPpem = false` recovers about that much). The rest is
+spread evenly across itemize, wrap, lookup and emit, while the HarfBuzz shaping
+call underneath is unchanged to the microsecond. `TextLayoutEngine.cs` went
+from 1,214 lines to 2,162 over the same range, `TextRun` gained three fields
+and `TextQuad` went from 16 to 18: a label that uses none of the new features
+still pays for the branches and the state that serve them. The fix is not a
+single revert; it is measuring ppem only when a transform or camera changed,
+and hoisting feature tests to one flag per layout — the pattern the kinsoku
+work already uses.
+
+**The p99 multiple against TMP shrank because we draw more.** At five rebuilds
+a frame of novel glyphs, v0.1.0 published 12x at the median and 23x at p99;
+v0.3.2 reads 5x and 9.4x. The tier-off column above shows why: the engine did
+not get slower at that workload, it started drawing the 22 % of characters it
+used to skip.
+
+**Allocation moved the other way, and by more than the tables above show.** The
+v0.1.0 rows read 0.9 to 1.2 KB a frame; the rebuild path now allocates nothing
+measurable at any label count, and what remains in a compound row is the
+scenario's own strings.
 
 ## What the numbers say
 
 **Where OneText wins.** A charset nobody can enumerate ahead of time. In C2,
-TMP's dynamic atlas costs a 10 to 16 ms hitch at p99 against 0.5 ms, and its
-texture memory grows to between 9 and 20 MB and keeps going, while OneText
-holds the budget it was configured with. In C1 the language switch produces a
-351.8 ms frame in TMP and a 6.9 ms one here: **51x**, and twenty-one frames a
-player watches disappear. The workload matrix isolates why: with unseen glyphs arriving at
-five labels a frame, OneText is 12x faster at the median and 23x at p99, in one
-draw call against eight. Everything draws in one material+texture pair however
-many faces and sizes are on screen.
+TMP's dynamic atlas costs a 10 to 16 ms hitch at p99 against 1.3 ms, its
+texture memory grows to between 9 and 20 MB and keeps going while OneText holds
+the budget it was configured with, and OneText draws every character in the
+frame where TMP draws 78 % of them. In C1 the language switch produces a
+340.9 ms frame in TMP against 6.8 ms here with the tier off — **50x**, and
+twenty frames a player watches disappear. The workload matrix isolates why:
+with unseen glyphs arriving at five labels a frame, OneText is 5x faster at the
+median and 9.4x at p99, in one draw call against eight. Everything draws in one
+material+texture pair however many faces and sizes are on screen, and a label
+that changes its text allocates nothing.
 
-**Where TMP wins.** A charset known ahead of time and fully baked. TMP static is
-2.4x faster than OneText at the median in C2, while drawing 60 % of the text.
-At fifty rebuilds a frame of entirely new glyphs its dynamic atlas posts a lower
-median than OneText by giving up: 32 atlas pages, 20 MB, and 21 % of characters
-undrawn. C3 (short ASCII over a warm atlas, where there is no shaping to do and
-no glyph to bake) is a tie, and it is the shape where doing the full Unicode
-pipeline cannot pay for itself. If a project's text is a fixed Latin charset
-known at build time, prebaked TMP is a good answer and this table says so.
+**Where TMP wins.** A charset known ahead of time and fully baked — TMP static
+is 5x faster than OneText at the C2 median while drawing 60 % of the text — and,
+now, layout on a warm atlas. C3 and both warm cells of the matrix are losses of
+15 to 28 %, and they are losses against a system drawing about a fifth less. At
+fifty rebuilds a frame of entirely new glyphs TMP's dynamic atlas posts a lower
+median by giving up: 32 atlas pages, 20 MB, and 21 % of characters undrawn.
 
-The claim is therefore not "faster than TMP". It is: **at the same rasterization
-density and with the same text actually drawn, OneText's worst frames are
-3 to 51x cheaper in dynamic-charset workloads, in a fixed memory budget that does
-not grow and one draw call that does not split.**
+**The claim.** At the same rasterization density, **OneText's worst frames are
+8 to 50x cheaper in dynamic-charset workloads, in a fixed memory budget that
+does not grow and one draw call that does not split, while drawing characters
+TMP has no glyph for.** It is not "faster than TMP": on a warm atlas with a
+known charset, TMP is faster than this, and by more than it was at v0.1.0.
