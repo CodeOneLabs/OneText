@@ -1,0 +1,21 @@
+flowchart TD
+    A["OneFontAsset.Font getter"] --> B{"_font valid?"}
+    B -- yes --> Z["return cached FontData"]
+    B -- no --> C["Unpacked()"]
+    C --> D{"_unpacked != null?"}
+    D -- yes --> H
+    D -- no --> E{"_data empty?"}
+    E -- yes --> F{"_awaitingSource?"}
+    F -- yes --> G["StandIn(): borrow OneTextSettings.DefaultFont.Font, warn once"]
+    F -- no --> N["return null"]
+    E -- no --> I{"_compressed?"}
+    I -- no --> H["bytes = _data or _unpacked"]
+    I -- yes --> J["BrotliStream or DeflateStream by _codec into byte[_uncompressedLength]"]
+    J --> K["_unpacked = output"]
+    K --> L{"player build?"}
+    L -- yes --> M["DropPackedData(): _data = null"]
+    L -- no --> H
+    M --> H
+    H --> O["FontData.Load(bytes): pin, hb_blob_create, hb_face_create, hb_font_create, hb_face_make_immutable, ReadMetrics"]
+    O --> P["_font = face"]
+    P --> Q["GetVariant(axes): Applied() merges BaseVariations, VariationKey, _variants cache, CreateVariant"]

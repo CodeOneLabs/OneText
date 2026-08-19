@@ -1,0 +1,31 @@
+flowchart TD
+    A["RichTextParser.Parse(source, result, resolvers)"] --> B{"source has no less-than sign?"}
+    B -->|yes| B1["result.SetPlain: one default span"]
+    B -->|no| C["loop over source chars"]
+    C --> D{"char is a less-than sign?"}
+    D -->|no| D1["Write(char)"]
+    D1 --> C
+    D -->|yes| E["TryReadTag: name, argument, closing, after"]
+    E -->|malformed| D1
+    E -->|ok| F{"noparse or br?"}
+    F -->|noparse| F1["copy literally up to /noparse"]
+    F -->|br| F2["Write newline"]
+    F1 --> C
+    F2 --> C
+    F -->|other| G{"closing?"}
+    G -->|yes| G1["ApplyClose: pop to matching tag, restore style"]
+    G -->|no| G2["ApplyOpen: switch on name, push Open"]
+    G1 --> H{"consumed?"}
+    G2 --> H
+    H -->|no| D1
+    H -->|yes| I{"josa?"}
+    I -->|yes| I1["Write(KoreanJosa.Resolve)"]
+    I1 --> C
+    I -->|no| J{"style changed?"}
+    J -->|yes| J1["close current TextStyleSpan, open new"]
+    J -->|no| K
+    J1 --> K{"sprite?"}
+    K -->|yes| K1["write placeholder U+FFFC in its own span"]
+    K -->|no| C
+    K1 --> C
+    C -->|end of source| L["flush last span, close open link/ruby/decoration/effect at end"]

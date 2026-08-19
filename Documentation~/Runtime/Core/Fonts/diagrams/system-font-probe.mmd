@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant S as FontStack
+    participant SF as SystemFonts
+    participant IX as SystemFontIndex
+    participant FD as FontData
+    S->>SF: Resolve(codepoint)
+    SF->>SF: Enabled? (override or OneTextSettings.SystemFontFallback)
+    SF->>SF: lock s_sync, s_resolved lookup (negatives cached too)
+    SF->>IX: Files()
+    IX-->>SF: sorted font paths for this platform (Directories, Excluded lastresort/adobeblank)
+    SF->>SF: ScriptOf(codepoint), s_answered memory first
+    SF->>IX: Stems()
+    SF->>SF: PreferredThenGeneric(codepoint) name fragments, then every file
+    loop TryFile(path) per candidate, FilesProbed++
+        SF->>IX: Coverage(path)
+        IX->>IX: ReadCoverage: FaceOffsets (ttcf), ReadFace, ParseCmap (12 over 4 over 6 over 0)
+        IX-->>SF: FaceCoverage[] ranges
+        SF->>SF: face.Covers(codepoint) binary search
+        SF->>FD: Load(File.ReadAllBytes(path), faceIndex)
+        FD-->>SF: face, kept in s_faces keyed by path and face index
+        SF->>IX: FamilyName(path, face) for s_names
+        SF->>FD: HasGlyph(codepoint) confirms the cmap estimate
+    end
+    SF->>SF: Remember(script, path), s_resolved[codepoint] = face or null
+    SF-->>S: FontData or null
+    S->>S: _system[codepoint] = answer, then Primary if null

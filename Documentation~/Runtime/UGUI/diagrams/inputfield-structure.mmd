@@ -1,0 +1,71 @@
+classDiagram
+    class OneTextInputField {
+        +string text
+        +int caretPosition
+        +bool isFocused
+        +bool isComposing
+        +TextEditingModel editingModel
+        +RectTransform textViewport
+        +UnityEvent onValueChanged
+        +UnityEvent onSubmit
+        +UnityEvent onEndEdit
+        +ActivateInputField()
+        +DeactivateInputField()
+        +UpdateEditing()
+        +ProcessKeyEvent(Event)
+        +UpdateVisuals()
+    }
+    class OneTextLabel {
+        +string Text
+        +Vector2 ScrollOffset
+        +GetCaretRect(index, width)
+        +GetSelectionRects(start, end, rects)
+        +GetIndexAtScreenPoint(point, camera)
+        +EnsureLayout()
+    }
+    class OneTextCaret {
+        +Color SelectionColor
+        +Color CompositionColor
+        +Color ClauseColor
+        +SetGeometry(caret, visible, selection)
+        +SetComposition(underlines, clause)
+    }
+    class TextEditingModel {
+        +string Text
+        +int Caret
+        +int Anchor
+        +ImeComposition Composition
+        +string DisplayText
+        +SetComposition(text, caret, clauseStart, clauseLength)
+        +AcceptCharacter(char, out changed)
+        +Tick()
+        +CommitComposition()
+    }
+    class ImeCommitArbiter {
+        +Shared
+        +NoteComposing(text)
+        +NotePlatformReleased()
+        +ReclaimedInto(text, out certain)
+    }
+    class IImeInput {
+        <<interface>>
+        +bool ReportsPlatformState
+        +Begin()
+        +End()
+        +SetCursorScreenPosition(Vector2)
+        +TryGetComposition(out text, out caret, out clauseStart, out clauseLength)
+    }
+    class MobileTextInput {
+        +IsSupported
+        +Open(text, multiline, limit)
+        +Poll(model, out changed)
+        +Close()
+    }
+    OneTextInputField --> OneTextLabel : _textComponent, _placeholder
+    OneTextInputField --> OneTextCaret : _caret, created at runtime
+    OneTextInputField --> TextEditingModel : _model, one per field
+    OneTextInputField --> IImeInput : _ime, from ImeInput.Create
+    OneTextInputField --> MobileTextInput : _mobile, soft keyboard only
+    TextEditingModel --> ImeCommitArbiter : Arbiter, process-wide
+    OneTextCaret --|> MaskableGraphic
+    OneTextInputField --|> Selectable

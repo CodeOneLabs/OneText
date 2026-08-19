@@ -1,0 +1,18 @@
+flowchart LR
+    subgraph HB["HarfBuzz TTB answer (y grows upward)"]
+        H1["XAdvance = 0"]
+        H2["YAdvance negative (downward step)"]
+        H3["XOffset across column (VORG/vmtx centring)"]
+        H4["YOffset along column (below the pen)"]
+    end
+    subgraph FS["ShapedGlyph in flow space (what layout walks)"]
+        F1["XAdvance = -YAdvance (positive, along the column)"]
+        F2["YAdvance = 0"]
+        F3["XOffset = -YOffset (along the column)"]
+        F4["YOffset = XOffset (across the column)"]
+    end
+    H2 --> F1
+    H4 --> F3
+    H3 --> F4
+    H1 --> F2
+    FS --> L["TextLayoutEngine wraps, tracks, justifies by walking XAdvance, same as horizontal"]

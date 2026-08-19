@@ -1,0 +1,32 @@
+sequenceDiagram
+    participant P as ComponentMigration.Process
+    participant Prov as IMigrationProvider
+    participant CF as ContainerFile
+    participant SO as SerializedObject
+    participant GO as GameObject
+    participant Cache as FontAssetCache
+    participant R as MigrationReport
+
+    P->>Prov: Collect: Inspect(component, container, path) for every Component
+    Prov-->>P: MigrationTarget (Kind, Values, Companions, Findings)
+    P->>SO: CollectReferences: every ObjectReference field naming a target
+    P->>CF: Severed: Read(container) for fields the file names and the object no longer holds
+    P->>P: Withhold: drop targets whose referrer is declared too narrow (reference-would-break), regather
+    P->>R: Add(target) for every target - if scan, return 0
+    P->>P: Sort convertible by Rank: labels and meshes, then input fields, then dropdowns
+    loop each convertible target
+        P->>GO: Replace: DestroyImmediate(old), EnsureGraphicParts/EnsureRect, AddComponent new
+        P->>Cache: Get(FontSourcePath) gives a OneFontAsset or a placeholder
+        P->>SO: ApplyValues: write _text, _fontSize, _decoration ... by property path
+        P->>P: replaced[oldInstanceId] = new component
+    end
+    loop each converted input field
+        P->>SO: WireInputField: _textComponent/_placeholder via replaced map, _textViewport by id, CarryListeners
+    end
+    P->>SO: Relink: property.objectReferenceValue = replaced[OldId] - Update() - read back
+    alt read-back holds the new component
+        P->>R: Relinked++
+    else field refused it
+        P->>R: error dangling-reference
+    end
+    P-->>R: Converted += made.Count

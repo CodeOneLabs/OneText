@@ -1,0 +1,29 @@
+sequenceDiagram
+    participant U as OneTextLabel.Update
+    participant L as OneTextLabel.EmitQuads
+    participant A as TextAnimator
+    participant E as ITextEffect
+    U->>U: AdvanceReveal(dt) if CharactersPerSecond > 0
+    U->>A: WorkEndsAt (via HasAnimationWorkLeft)
+    alt nothing left to animate
+        U-->>U: return, mesh untouched
+    else
+        U->>U: AnimationTime += dt, SetVerticesDirty
+    end
+    Note over L: canvas rebuild
+    L->>A: UnlatchFrozenStamps() if clock running
+    L->>A: NoteReveal(reveal, GraphemeCount, time or -inf)
+    loop each cached TextQuad
+        L->>L: skip quad if LastGrapheme >= reveal
+        L->>A: Modify(ref quad, context)
+        A->>A: TextEffectInput from _revealedAt[quad.FirstGrapheme]
+        loop each span covering the cluster
+            A->>A: weight = EnvelopeWeight(Duration, Time)
+            A->>E: Evaluate(input)
+            E-->>A: TextEffectOutput
+            A->>A: combined = combined.Combine(output.Faded(weight))
+        end
+        A->>A: Apply(ref quad, combined)
+        A-->>L: false if Color.a == 0 (quad dropped)
+        L->>L: user QuadModifier, label tint, emit
+    end

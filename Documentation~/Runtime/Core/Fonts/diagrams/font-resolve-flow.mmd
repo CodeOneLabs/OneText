@@ -1,0 +1,28 @@
+flowchart TD
+    A["FontStack.Resolve(cp, bold, italic, presentation, language)"] --> B["ResolveForLanguage(cp, language)"]
+    B --> C{"language set and cp is ideographic and a tagged entry covers it?"}
+    C -- yes --> R["regular = that entry's Regular"]
+    C -- no --> D{"presentation == Any?"}
+    D -- yes --> E["Resolve(cp): _coverage cache, else first font with HasGlyph, else -1"]
+    E --> F{"index >= 0?"}
+    F -- yes --> R
+    F -- no --> G["ResolveFromSystem(cp) via SystemFonts.Resolve"]
+    G --> H{"system face found?"}
+    H -- yes --> R
+    H -- no --> I["Primary (head of stack, or SystemPrimary probed with 'A')"]
+    I --> R
+    D -- no --> J["ResolveForPresentation: first font with HasGlyph and ColorGlyphs.IsColorFont == wantColor"]
+    J --> K{"found?"}
+    K -- yes --> R
+    K -- no --> E
+    R --> L{"bold or italic?"}
+    L -- no --> Z["return regular"]
+    L -- yes --> M["TryGetStyled(regular, face)"]
+    M --> N{"Explicit face, or a BoldItalic half, or a cached Instanced face?"}
+    N -- yes --> Y["return styled face"]
+    N -- no --> O{"Attempted before?"}
+    O -- yes --> Z
+    O -- no --> P["Instance(): wght = BoldWeight, ital = 1 or slnt = ItalicSlant"]
+    P --> Q{"variable with a matching axis?"}
+    Q -- yes --> S["regular.CreateVariant, cache in Instanced"] --> Y
+    Q -- no --> Z

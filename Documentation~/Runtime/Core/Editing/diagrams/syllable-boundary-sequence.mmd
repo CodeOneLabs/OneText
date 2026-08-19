@@ -1,0 +1,29 @@
+sequenceDiagram
+    participant P as Platform IME
+    participant F as OneTextInputField
+    participant M as TextEditingModel
+    participant A as ImeCommitArbiter.Shared
+    Note over P,A: value "안녕", composing 한, user presses ㄱ. macOS commits 한 as a char and starts composing ㄱ in one keystroke.
+    Note over F: UpdateEditing polls the IME BEFORE the key queue is drained
+    P->>F: composition report "ㄱ"
+    F->>M: SetComposition("ㄱ")
+    M->>M: report changed: _replaced = "한", _replacedThisUpdate = true, _handedOver = ""
+    Note over M: composition is now ㄱ at Start = caret - 한 is not in the value yet
+    F->>M: Tick()
+    M->>M: _replacedThisUpdate -> false (register survives this Tick)
+    M->>A: Tick() (Idle, returns null)
+    Note over F: key queue drained
+    P->>F: key event char '한' (no keycode)
+    F->>F: composing, printable char: not the IME's key
+    F->>M: AcceptCharacter('한')
+    M->>A: ShouldSwallow('한')
+    A-->>M: false (Idle, no platform commit registered)
+    M->>M: Insert("한"): InsertAtCaret moves _composition.Start past 한
+    M->>M: NoteHandedOver('한')
+    alt _replaced == "한" and "한" TextStartsWith the payment so far
+        M->>M: _paidTheReplaced = "한", return. Composition ㄱ stays owed.
+    else register already aged out (char arrived a poll late)
+        M->>M: _handedOver = "한" is not a prefix of "ㄱ": dropped, composition ㄱ stays
+    end
+    Note over M: Text = 안녕한, DisplayText = 안녕한ㄱ, Composition = ㄱ
+    Note over M: if instead the char had equalled the live composition (SameText), NoteHandedOver ends it, IgnoreReplayOf + NotePlatformCommitted

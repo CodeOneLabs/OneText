@@ -1,0 +1,21 @@
+flowchart LR
+    subgraph parse["Parse (once per text change)"]
+        A["source string with tags"] --> B["RichTextParser"]
+        B --> C["RichTextResult.Effects (name, params, start, end)"]
+        B --> W["RichTextResult.Waits (index, seconds)"]
+    end
+    subgraph build["Build spans (OneTextLabel.EnsureAnimator)"]
+        C --> D["BuiltInEffects.Create(name, params)"]
+        D --> E["TextEffectSpan first..last cluster via layout.GraphemeAt"]
+        E --> F["TextAnimator.Add"]
+    end
+    subgraph frame["Every animated frame (OneTextLabel.EmitQuads)"]
+        G["AnimationTime advances"] --> H["TextAnimator.NoteReveal"]
+        H --> I["for each cached TextQuad"]
+        I --> J["TextAnimator.Modify"]
+        J --> K["EnvelopeWeight x Effect.Evaluate, Combine"]
+        K --> L["TextAnimator.Apply: position, size, rotation, color"]
+        L --> M["user ITextQuadModifier (optional)"]
+        M --> N["mesh vertices"]
+    end
+    F -.-> J

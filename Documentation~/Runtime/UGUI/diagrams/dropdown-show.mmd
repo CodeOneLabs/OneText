@@ -1,0 +1,17 @@
+flowchart TD
+    CLICK["OnPointerClick or OnSubmit"] --> SHOW["Show()"]
+    SHOW --> GUARD{"IsActive, IsInteractable, not open, Template set, Validate()"}
+    GUARD -- fails --> ERR["Debug.LogError and return"]
+    GUARD -- ok --> ROOT["Canvas(): outermost root canvas, or nearest with overrideSorting"]
+    ROOT --> INST["Instantiate m_Template as Dropdown List"]
+    INST --> LIFT["Lift: add Canvas, overrideSorting, sortingOrder 30000, copy raycaster kinds"]
+    LIFT --> MEASURE["Measure template item: padMin, padMax, itemSize"]
+    MEASURE --> ITEMS["AddItem per option: Instantiate, set label text, image, Toggle.isOn"]
+    ITEMS --> WALK["Walk: explicit up/down/left/right navigation between rows"]
+    WALK --> LAY["Lay: size content, shrink list, Flip off-canvas edges, place rows bottom-anchored"]
+    LAY --> BLOCK["Blocker: full-screen clear Image, Canvas one order under the list, Button.onClick = Hide"]
+    BLOCK --> TRANS["Transient: HideFlags.DontSave in edit mode"]
+    TRANS --> SEL["Select(m_Value, notify false)"]
+    ROW["Row toggled, blocker clicked, OnCancel, Row.OnCancel, OnDisable"] --> HIDE["Hide() or Close(deferred)"]
+    HIDE --> DISCARD["Discard: DestroyImmediate, or queued on EditorApplication.update, or Destroy"]
+    DISCARD --> FOCUS["base.Select() returns keyboard focus to the dropdown"]

@@ -1,0 +1,12 @@
+flowchart TD
+    dispatch["gh workflow run Tests --ref branch  (workflow_dispatch only)"] --> checkout["checkout to package/  (lfs)"]
+    checkout --> host["Create host project CI/ beside the package"]
+    host --> manifest["CI/Packages/manifest.json: com.onetext.core file:../../package, testables"]
+    manifest --> editmode["game-ci/unity-test-runner testMode=editmode"]
+    manifest --> playmode["game-ci/unity-test-runner testMode=playmode  (continue-on-error)"]
+    editmode --> m1["2022.3.62f1 ubuntu  required"]
+    editmode --> m2["6000.0.77f1 ubuntu  required"]
+    editmode --> m3["6000.0.77f1 windows-2022  allowed to fail"]
+    checkout --> smokebuild["windows-smoke-build: SmokeBuildCI.Windows via game-ci/unity-builder"]
+    smokebuild --> artifact["artifact windows-smoke-player"]
+    artifact --> smokerun["windows-smoke-run on windows-2022: run player, grep ONETEXT-SMOKE:"]

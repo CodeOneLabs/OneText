@@ -1,0 +1,50 @@
+flowchart LR
+  subgraph runtime["Runtime/ (ships in the package)"]
+    direction TB
+    core["Core/ - the OneText assembly"]
+    unicode["Core/Unicode - analyze"]
+    shaping["Core/Shaping - shape"]
+    layout["Core/Layout - parse + layout"]
+    rendering["Core/Rendering - rasterize + atlas"]
+    fonts["Core/Fonts - faces + fallback"]
+    native["Core/Native - HarfBuzz P/Invoke"]
+    animation["Core/Animation - effects + typewriter"]
+    editing["Core/Editing - editing model + IME arbiter"]
+    ugui["UGUI/ - canvas label, input field, IME"]
+    mesh["Mesh/ - world-space text"]
+    shaders["Shaders/ - OneText/SDF"]
+    integ["Integrations/DOTween"]
+  end
+  subgraph editor["Editor/ (editor only)"]
+    direction TB
+    ed["inspectors, creator, menus, settings"]
+    hub["Hub/ - Project Settings page + Doctor"]
+    onb["Onboarding/ - TMP migration"]
+    dev["Dev/ - golden, benchmarks, proofs"]
+  end
+  subgraph harness["Repository only"]
+    direction TB
+    tests["Tests/ - EditMode, PlayMode, fixtures"]
+    tools["Tools/ - generators, native builds, smoke"]
+  end
+  layout --> unicode
+  layout --> shaping
+  layout --> fonts
+  shaping --> native
+  fonts --> native
+  rendering --> native
+  ugui --> layout
+  ugui --> rendering
+  ugui --> animation
+  ugui --> editing
+  mesh --> layout
+  mesh --> rendering
+  shaders -.-> rendering
+  integ --> ugui
+  integ --> mesh
+  ed --> ugui
+  hub --> ed
+  onb --> ed
+  dev --> ed
+  tests --> dev
+  tools -.-> unicode

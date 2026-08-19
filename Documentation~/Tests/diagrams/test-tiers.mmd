@@ -1,0 +1,23 @@
+flowchart TD
+    subgraph edit["Tier 1: EditMode  (Tests/Editor, OneText.Tests)"]
+        conf["UCD conformance: Bidi, Segmentation, BidiClass"]
+        unit["Unit and integration: layout, shaping, atlas, labels, migration, Hub"]
+        perf["PerformanceTests, perf log lines"]
+        alloc["AllocationTests  GC.Alloc recorder"]
+        golden["GoldenImageTests  27 PNG baselines"]
+        cover["CodepointCoverageTests, EmojiSequenceTests  (need CoverageFonts~)"]
+    end
+    subgraph tmp["Tier 1b: Tests/Editor/Tmp  (OneText.Tests.Tmp, ONETEXT_TMPRO)"]
+        tmpt["TmpMigrationTests, MaterialEffectTests, TmpEnumParityTests"]
+    end
+    subgraph play["Tier 2: PlayMode  (Tests/Runtime, OneText.Tests.Runtime)"]
+        harness["PlayHarness"]
+        playt["Label lifecycle, input field, typewriter, atlas pressure, dropdown, click bubbling"]
+    end
+    subgraph smoke["Tier 3: player smoke  (Tools/Smoke~, Tools/run_*_smoke.sh)"]
+        smoket["SmokeSelfTest in a real player build"]
+    end
+    fixtures["Fixtures: Fonts~, CoverageFonts~, Golden~, UnicodeData~"]
+    fixtures --> edit
+    fixtures --> play
+    harness --> playt

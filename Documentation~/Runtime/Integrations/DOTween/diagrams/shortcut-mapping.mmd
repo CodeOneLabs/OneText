@@ -1,0 +1,23 @@
+flowchart LR
+    subgraph gate["Assembly gate"]
+        V["asmdef versionDefines: com.demigiant.dotween >= 1.0.0 defines ONETEXT_DOTWEEN"] --> S
+        H["Editor/Onboarding/DOTweenPresence: adds or removes ONETEXT_DOTWEEN by DG.Tweening.DOTween type presence"] --> S
+        S{"defineConstraints ONETEXT_DOTWEEN"} -->|defined| X["OneText.Integrations.DOTween compiles, namespace DG.Tweening"]
+        S -->|not defined| Y["assembly compiles to nothing"]
+    end
+    subgraph label["ShortcutExtensionsOneText on OneTextLabel"]
+        X --> C1["DOColor / DOFade -> label.color"]
+        X --> C2["DOFontSize -> label.FontSize"]
+        X --> C3["DOScale -> transform.localScale"]
+        X --> C4["DOCounter -> label.Text every step (re-layout)"]
+        X --> C5["DOMaxVisibleCharacters -> label.MaxVisibleGraphemes"]
+        X --> C6["DOText -> first step: CharactersPerSecond = 0, Text once, then MaxVisibleGraphemes via GraphemeOfRevealUnit"]
+        X --> C7["DOFaceColor / DOFaceFade / DOOutlineColor / DOGlowColor -> faceColor / outlineColor / glowColor"]
+    end
+    subgraph mesh["ShortcutExtensionsOneText on OneTextMesh"]
+        X --> M1["DOColor / DOFade -> mesh.Color"]
+        X --> M2["DOFontSize -> mesh.FontSize"]
+        X --> M3["DOScale -> transform.localScale"]
+        X --> M4["DOCounter -> mesh.Text"]
+        X --> M5["DOText -> mesh.Text every step (DOTween's own behaviour)"]
+    end

@@ -1,0 +1,7 @@
+flowchart LR
+    cli["-executeMethod OneText.Editor.MNProofGenerator.Generate -oneOut dir"] --> gen["Generate()"]
+    gen --> scene["private Scene(w, h): camera + ScreenSpaceCamera canvas + RenderTexture"]
+    scene --> build["Label / Field / Caption / Box helpers build OneText components"]
+    build --> save["Scene.Save: ForceUpdateCanvases, camera.Render, ReadPixels, EncodeToPNG"]
+    save --> out["outDir/onetext-mN-*.png"]
+    gen --> log["Debug.Log measurements (m6 capacity, m11 doctor summary ...)"]

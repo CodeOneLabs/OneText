@@ -20,6 +20,17 @@ when contributing. If you have studied such code in depth, please say so in
 your PR so we can review accordingly. Feature-level inspiration ("X can do
 this, we should too") is fine; implementation-level reference is not.
 
+## Finding your way around
+
+`Documentation~/` holds one document per source folder — what the module does,
+diagrams of its structure and behaviour, the invariants a change must keep, where
+a new feature plugs in, and which tests cover it. Start at
+[Documentation~/README.md](Documentation~/README.md). The folder mirrors the
+source tree, so the doc for `Runtime/Core/Layout/` is
+`Documentation~/Runtime/Core/Layout/README.md`. When you change a module, update
+its doc in the same PR; diagrams are Mermaid sources with committed PNGs, and
+`Documentation~/render-diagrams.sh --changed` re-renders what you edited.
+
 ## Testing
 
 Unicode algorithm implementations must pass the official Unicode test files

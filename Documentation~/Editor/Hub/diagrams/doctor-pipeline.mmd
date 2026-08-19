@@ -1,0 +1,21 @@
+flowchart TD
+    UI["HubDoctorTab: Run Doctor button"] --> RunF["TextDoctor.Run(folders)"]
+    CLI["Unity -batchmode -executeMethod OneText.Editor.TextDoctor.RunFromCommandLine"] --> Args{"-oneStrings a,b given?"}
+    Args -->|yes| RunF
+    Args -->|no| Auto["CharsetFolderScan.AutoRescanning(), union of charset.SourceFolders"]
+    Auto -->|none| Exit2["LogError, EditorApplication.Exit(2)"]
+    Auto --> RunF
+    RunF --> Scan["TextSourceScanner.Scan(folders) gives TextScanResult"]
+    RunF --> Stack["TextDoctor.ProjectFontStack(): DefaultFont + FallbackFonts with language tags"]
+    Scan --> Core["TextDoctor.Run(strings, fonts)"]
+    Stack --> Core
+    Core --> R0["CheckShader: Resources.Load(OneText-SDF) or Always Included, else sdf-shader error"]
+    Core --> R1["unreadable-source warning per Skipped file"]
+    Core --> R2{"fonts.Primary null?"}
+    R2 -->|yes| NoFont["no-font error, return"]
+    R2 -->|no| R3["CheckRenderable: per codepoint fonts.Covers, else tofu error or system-fallback warning"]
+    R3 --> R4["CheckHanUnification: ja, zh, ko strings through fonts.Resolve and LanguageOf, han-unification warning"]
+    R4 --> R5["CheckDictionaries: DictionaryLineBreaker.ScriptOf sample, Coverage at least 0.9, else missing-dictionary error or dictionary-coverage warning"]
+    R5 --> Report["DoctorReport: Findings, Errors, Warnings, Passed when Errors is 0"]
+    Report --> Tab["HubDoctorTab: cards per finding, badge PASS or error count"]
+    Report --> ExitCode["RunFromCommandLine: log each finding, Exit 0 when Passed else 1"]

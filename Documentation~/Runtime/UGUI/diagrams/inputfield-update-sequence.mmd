@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant ES as EventSystem
+    participant F as OneTextInputField
+    participant I as IImeInput
+    participant M as TextEditingModel
+    participant A as ImeCommitArbiter
+    participant V as OneTextLabel and OneTextCaret
+    ES->>F: OnUpdateSelected (every frame while selected)
+    F->>F: UpdateEditing
+    F->>F: ReleaseHeldBackspace (from the last update)
+    F->>F: settle _reclaimIfNoKeyFollows
+    F->>A: NoteComposing(live composition) if composing
+    F->>I: TryGetComposition
+    I-->>F: text, caret, clauseStart, clauseLength
+    F->>M: SetComposition(...) only if the report differs
+    F->>A: ReclaimedInto / NotePlatformReleased as the case requires
+    F->>I: SetCursorScreenPosition(caret in screen px) if composing
+    F->>M: Tick (grace window advances by one)
+    loop Event.PopEvent until empty
+        F->>F: ProcessKeyEvent(KeyDown)
+        F->>M: Backspace / Insert / AcceptCharacter / SetCaret ...
+    end
+    F->>F: ReleaseHeldBackspace (end of update)
+    F->>ES: eventData.Use
+    Note over F,V: later the same frame
+    F->>F: LateUpdate
+    F->>V: UpdateVisuals if _visualsDirty, else UpdateCaretGeometry (blink)

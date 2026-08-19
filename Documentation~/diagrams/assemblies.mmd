@@ -1,0 +1,35 @@
+flowchart BT
+  subgraph unity["Unity packages"]
+    burst["Unity.Burst / Collections / Mathematics"]
+    ugui["UnityEngine.UI (com.unity.ugui)"]
+    inputsys["Unity.InputSystem (optional)"]
+    dotween["DOTween (optional)"]
+    tmp["Unity.TextMeshPro (optional)"]
+  end
+
+  core["OneText (Runtime/Core)"]
+  uguiAsm["OneText.UGUI (Runtime/UGUI)"]
+  meshAsm["OneText.Mesh (Runtime/Mesh)"]
+  inputAsm["OneText.UGUI.InputSystem - ONETEXT_INPUT_SYSTEM"]
+  dotAsm["OneText.Integrations.DOTween - ONETEXT_DOTWEEN"]
+  editor["OneText.Editor (Editor/)"]
+  onbTmp["OneText.Editor.Onboarding.Tmp - ONETEXT_TMPRO"]
+  dev["OneText.Editor.Dev - UNITY_INCLUDE_TESTS"]
+  tests["OneText.Tests / Tests.Runtime / Tests.Tmp - UNITY_INCLUDE_TESTS"]
+
+  core --> burst
+  uguiAsm --> core
+  uguiAsm --> ugui
+  meshAsm --> core
+  inputAsm --> uguiAsm
+  inputAsm --> inputsys
+  dotAsm --> uguiAsm
+  dotAsm --> meshAsm
+  dotAsm --> dotween
+  editor --> uguiAsm
+  editor --> meshAsm
+  onbTmp --> editor
+  onbTmp --> tmp
+  dev --> editor
+  tests --> dev
+  tests --> onbTmp

@@ -1,0 +1,32 @@
+sequenceDiagram
+  participant L as OneTextLabel.OnPopulateMesh
+  participant C as GlyphClusters
+  participant A as GlyphAtlas
+  participant O as OutlineExtractor
+  participant R as GlyphRasterizer
+  participant J as Burst jobs
+  participant S as AtlasFlushScheduler
+
+  L->>A: SharedGlyphAtlas.Atlas or PreciseAtlas
+  loop per TextRun
+    L->>C: Split(font, glyphs, start, count, ...)
+    C-->>L: clusters, positioned
+    L->>A: PrepareClusters(font, density, positioned, clusters)
+    loop per cluster not in _entries
+      A->>O: Extract(font, glyphId, scratch, pixelsPerUnit)
+      O-->>A: contours (font units)
+    end
+    A->>R: RasterizeBatch(requests, results, Precise)
+    R->>J: Schedule(totalTexels, 128).Complete()
+    J-->>R: Output bytes
+    R-->>A: RasterizedGlyph per request
+    A->>A: Commit, Allocate, WriteSlot, MarkTileDirty
+    loop per cluster
+      L->>A: GetOrAddCluster(font, density, positioned, start, count, hash)
+      A-->>L: GlyphLocation (cache hit, LRU touched)
+      L->>L: _quads.Add(TextQuad)
+    end
+  end
+  L->>L: EmitQuads, AddVert x4 per quad
+  L->>S: AtlasFlushScheduler.Request()
+  S->>A: Flush() once at CanvasUpdate.LatePreRender

@@ -1,0 +1,23 @@
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> AwaitingPlatform : AwaitPlatformCommit(text) composition emptied by the IME
+    Idle --> SuppressingEcho : SuppressEchoOf(text) field committed or abandoned it
+    AwaitingPlatform --> SuppressingEcho : SuppressEchoOf(text)
+    AwaitingPlatform --> Idle : ShouldSwallow(char) any char passes, remember it as platform commit
+    AwaitingPlatform --> Idle : Tick() after GraceUpdates, Flush returns owed text to insert
+    AwaitingPlatform --> SuppressingEcho : TakeOwedNow() returns owed text, no replay registered
+    AwaitingPlatform --> Idle : Flush() or Cancel()
+    SuppressingEcho --> SuppressingEcho : ShouldSwallow(char) echo prefix so far, swallowed
+    SuppressingEcho --> Idle : ShouldSwallow(char) whole echo matched, swallowed
+    SuppressingEcho --> Idle : ShouldSwallow(char) mismatch, char passes
+    SuppressingEcho --> SuppressingEcho : Tick() frozen while ReplayedComposition != null
+    SuppressingEcho --> Idle : Tick() after GraceUpdates, or Flush(), or Cancel()
+    Idle --> Idle : ShouldSwallow(char) IsThePlatformSayingItAgain
+    note right of Idle
+        Two registers live outside the mode and survive Reset:
+        _replay (set by SuppressEchoOf/IgnoreReplayOf, cleared by a differing
+        composition, NotePlatformReleased while Idle, or Forget)
+        _platformCommit (set by ShouldSwallow in AwaitingPlatform, NotePlatformCommitted,
+        Flush - cleared by AwaitPlatformCommit, NoteComposing on an unrelated
+        composition, a non-matching char, ForgetPlatformCommit, Forget)
+    end note

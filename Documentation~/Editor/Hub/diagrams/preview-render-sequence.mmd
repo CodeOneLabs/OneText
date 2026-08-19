@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant G as HubGalleryTab / HubForensicsTab
+    participant R as TextPreviewRenderer
+    participant L as OneTextLabel (hidden)
+    participant C as Camera (hidden, disabled)
+    participant A as AtlasFlushScheduler
+
+    G->>R: Render(text, font, language, size, width, height, wrap, alignment)
+    R->>R: EnsureScene(width, height): Camera + RenderTexture + Canvas (ScreenSpaceCamera) + label, all HideAndDontSave
+    R->>L: Font, Text, FontSize, Wrap, Alignment, Overflow=Overflow, Language, Kinsoku, color
+    alt label.Font is null
+        R-->>G: null (no font to draw with)
+    end
+    R->>L: rectTransform.sizeDelta = (width, height)
+    R->>R: Canvas.ForceUpdateCanvases()
+    R->>A: FlushNow() (upload tiles baked during this repaint)
+    R->>C: Render() into the RenderTexture
+    R->>R: ReadPixels into a new Texture2D (HideAndDontSave)
+    R-->>G: Texture2D (caller owns it)
+    G->>G: cache by key - DestroyImmediate on ClearPreviews / Dispose

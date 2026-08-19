@@ -1,0 +1,81 @@
+classDiagram
+    class MaskableGraphic
+    class OneTextLabel {
+        +Text
+        +FontSize
+        +SetText(ReadOnlySpan)
+        +EnsureLayout() TextLayoutResult
+        +Quads
+        +DrawnQuads
+        +textInfo
+        +OnPopulateMesh(VertexHelper)
+        -PopulateMesh(VertexHelper)
+        -EmitQuads(VertexHelper)
+        -RefreshPpemScale()
+    }
+    class ILayoutElement
+    class IPointerClickHandler
+    class IStyleUser {
+        +UsesStyle(OneTextStyle)
+        +OnStyleChanged()
+    }
+    class OneTextTextInfo {
+        +characterInfo
+        +lineInfo
+        +meshInfo
+        +CopyMeshInfoVertexData()
+    }
+    class OneTextTextInfoBuilder {
+        +Build(label, info)
+    }
+    class TmpCompat {
+        +SplitAlignment()
+        +CombineAlignment()
+        +LineSpacingFromTmp()
+        +OverflowFromTmp()
+    }
+    class OneTextDropdown {
+        +options
+        +value
+        +Show()
+        +Hide()
+    }
+    class AtlasInvalidation {
+        +Register(Graphic)
+        +Poll()
+    }
+    class AtlasFlushScheduler {
+        +Request()
+        +FlushNow()
+    }
+    class StyleInvalidation {
+        +Register(IStyleUser)
+    }
+    class ScreenPpem {
+        +Compute(label) float
+        +Register(label)
+        +PollNow()
+    }
+    class OneTextEvents {
+        +TextChanged
+        +TEXT_CHANGED_EVENT
+    }
+    class OneTextDiagnostics
+    class ShapedTextDebugView
+
+    MaskableGraphic <|-- OneTextLabel
+    MaskableGraphic <|-- ShapedTextDebugView
+    OneTextLabel ..|> ILayoutElement
+    OneTextLabel ..|> IPointerClickHandler
+    OneTextLabel ..|> IStyleUser
+    OneTextLabel --> OneTextTextInfo : textInfo
+    OneTextTextInfoBuilder ..> OneTextTextInfo : fills
+    OneTextTextInfoBuilder ..> OneTextLabel : reads DrawnQuads
+    OneTextLabel ..> TmpCompat : alignment aliases
+    OneTextDropdown --> OneTextLabel : captionText, itemText
+    OneTextLabel ..> AtlasInvalidation : Register in OnEnable
+    OneTextLabel ..> StyleInvalidation : Register in OnEnable
+    OneTextLabel ..> ScreenPpem : Register in OnEnable
+    OneTextLabel ..> AtlasFlushScheduler : Request after mesh
+    OneTextLabel ..> OneTextEvents : RaiseTextChanged
+    OneTextDiagnostics ..> OneTextLabel : lists ResolvedFonts

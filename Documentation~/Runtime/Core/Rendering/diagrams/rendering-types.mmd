@@ -1,0 +1,93 @@
+classDiagram
+  class SharedGlyphAtlas {
+    <<static>>
+    +Atlas GlyphAtlas
+    +PreciseAtlas GlyphAtlas
+    +ColorAtlas ColorGlyphAtlas
+    +Material Material
+    +Acquire() GlyphAtlas
+    +Release()
+    +Reconfigure(force)
+    +LoadShader() Shader
+  }
+  class GlyphAtlas {
+    +Texture Texture2DArray
+    +Precise bool
+    +Version int
+    +GetOrAdd(font, glyphId, ppem) GlyphLocation
+    +GetOrAddCluster(font, ppem, positioned, ...) GlyphLocation
+    +PrepareClusters(font, ppem, positioned, clusters)
+    +Flush()
+    +QuantizePixelsPerEm(ppem)$ int
+  }
+  class GlyphLocation {
+    +HasPixels bool
+    +OriginUnits Vector2
+    +SizeUnits Vector2
+    +UvRect Rect
+    +Layer int
+  }
+  class GlyphRasterizer {
+    <<static>>
+    +Padding 4
+    +SpreadPixels 4
+    +MaxTileEdge 512
+    +Generation int
+    +Rasterize(font, glyphId, ppu, precise) RasterizedGlyph
+    +RasterizeContours(contours, groups, ppu, precise) RasterizedGlyph
+    +RasterizeBatch(requests, results, precise)
+  }
+  class OutlineExtractor {
+    <<static>>
+    +FlatnessPixels float
+    +Generation int
+    +Extract(font, glyphId, output, ppu)
+  }
+  class GlyphClusters {
+    <<static>>
+    +Split(font, glyphs, start, count, clusters, positioned, ...)
+    +SplitUpright(font, glyphs, start, count, ...)
+    +HashOf(positioned, start, count) long
+    +DefaultMergeGapUnits(font) float
+  }
+  class ColorGlyphAtlas {
+    +Texture Texture2DArray
+    +Version int
+    +GetOrAdd(key, glyph) ColorLocation
+    +Contains(key) bool
+    +Flush()
+  }
+  class ColorGlyphs {
+    <<static>>
+    +SupportedBy(font) Support
+    +IsColorFont(font) bool
+    +UsesTextColor(font, glyphId) bool
+    +TryDecode(font, glyphId, ppu, textColor, out result) bool
+  }
+  class AtlasPrewarm {
+    <<static>>
+    +Warm(atlas, fonts, codepoints, sizes, fillLimit) PrewarmReport
+  }
+  class CharsetRecorder {
+    <<static>>
+    +Enabled bool
+    +Record(text, ppem)
+  }
+  class AtlasDiagnostics {
+    <<static>>
+    +Enabled bool
+    +Report(frames) string
+  }
+
+  SharedGlyphAtlas --> GlyphAtlas : owns plain and precise
+  SharedGlyphAtlas --> ColorGlyphAtlas : owns
+  GlyphAtlas --> GlyphLocation : returns
+  GlyphAtlas --> GlyphRasterizer : bakes through
+  GlyphAtlas --> OutlineExtractor : cluster contours
+  GlyphRasterizer --> OutlineExtractor : single glyph
+  GlyphClusters ..> GlyphAtlas : cluster hash is the key
+  AtlasPrewarm --> GlyphAtlas : GetOrAddCluster
+  AtlasPrewarm --> GlyphClusters : Split
+  CharsetRecorder --> GlyphAtlas : QuantizePixelsPerEm
+  ColorGlyphs --> OutlineExtractor : COLR layers
+  ColorGlyphAtlas ..> ColorGlyphs : stores ColorGlyph

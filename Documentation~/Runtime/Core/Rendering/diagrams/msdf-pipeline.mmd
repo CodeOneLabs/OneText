@@ -1,0 +1,17 @@
+flowchart TD
+  contours["Flattened contours per request (managed lists)"]
+  color["MsdfEdgeColoring.Assign: one flag byte per segment"]
+  flags["Flags: R=1 G=2 B=4, RunStart=8, RunEnd=16; corner angle 30 deg"]
+  orient["WriteOrientation: signed area per source glyph group, +1 CCW / -1 CW"]
+  batch["MsdfBatchJob (per texel): pseudo-distance per channel, true distance, winding"]
+  fold["Fold: nearest group by true distance wins all three channels"]
+  correct["Correct: wrongSide or sagging beyond ErrorCorrectionTexels: all three channels = true distance"]
+  out["Output RGBA: R,G,B = channel fields, A = true single-channel field; WinningGroup byte per texel"]
+  mark["MsdfMarkJob: for each neighbour pair, solve channel crossings; mark where median dives while truth says solid ink, or winner differs"]
+  flatten["MsdfFlattenJob: marked texel R,G,B = median; alpha untouched"]
+  copy["Copied into pooled s_pixels, handed to GlyphAtlas.Commit (precise atlas, RGBA32)"]
+
+  contours --> color --> flags --> batch
+  contours --> orient --> batch
+  batch --> fold --> correct --> out
+  out --> mark --> flatten --> copy

@@ -1,0 +1,32 @@
+flowchart LR
+%% Declared bottom-to-top on purpose: with no edges, mermaid stacks these subgraphs in reverse declaration order.
+  subgraph t3["TEXCOORD3 (decoB = DecorationChannels.Shape)"]
+    t3x["x: Pack(glow R, glow G)"]
+    t3y["y: Pack(glow B, glow alpha)"]
+    t3z["z: Pack(shadow dx signed, shadow dy signed)"]
+    t3w["w: Pack(shadow softness, PackNibbles(glowInner, glowRadius))"]
+  end
+  subgraph t2["TEXCOORD2 (bounds = vmax)"]
+    t2x["x: tile v-max"]
+    t2y["y: tile u-min"]
+    t2z["z: tile u-max"]
+    t2w["w: Pack(atlasKind 0..3, faceDilate signed, 128 = zero)"]
+  end
+  subgraph t1["TEXCOORD1 (decoA = DecorationChannels.Colors)"]
+    t1x["x: Pack(outline R, outline G)"]
+    t1y["y: Pack(outline B, outline width)"]
+    t1z["z: Pack(shadow R, shadow G)"]
+    t1w["w: Pack(shadow B, shadow alpha)"]
+  end
+  subgraph t0["TEXCOORD0 (uv)"]
+    t0x["x: tile u"]
+    t0y["y: tile v"]
+    t0z["z: Pack(layer, outlineSoftness)"]
+    t0w["w: tile v-min"]
+  end
+  subgraph c["COLOR"]
+    color["rgba: vertex colour (label x tag); alpha fades every layer"]
+  end
+  subgraph p["POSITION"]
+    pos["xyz: quad corner in canvas space"]
+  end

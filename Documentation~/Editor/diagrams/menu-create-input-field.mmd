@@ -1,0 +1,13 @@
+flowchart TD
+    Start["GameObject > UI > OneText > Input Field"] --> EC["EnsureCanvas(command)"]
+    EC -->|"no Canvas in parents or scene"| NC["new Canvas + CanvasScaler + GraphicRaycaster"]
+    EC --> ES["EnsureEventSystem()"]
+    ES -->|"no EventSystem"| EF["OneTextEventSystemFactory.AddInputModule"]
+    EF -->|"ENABLE_INPUT_SYSTEM and type found"| ISM["InputSystemUIInputModule (by name)"]
+    EF -->|"otherwise"| SIM["StandaloneInputModule (warn if no legacy backend)"]
+    EC --> Root["root: RectTransform + CanvasRenderer + Image"]
+    Root --> VP["Text Area: RectTransform + RectMask2D (Stretch 10)"]
+    VP --> TL["Text: OneTextLabel NoWrap, Start, Middle"]
+    VP --> PH["Placeholder: OneTextLabel alpha 0.4"]
+    Root --> IF["OneTextInputField via SerializedObject: _textComponent, _placeholder, _textViewport"]
+    IF --> Reg["Register: Undo.RegisterCreatedObjectUndo + Selection"]

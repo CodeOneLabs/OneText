@@ -1,0 +1,14 @@
+flowchart TD
+    api["Runtime/Core/Native/HarfBuzzApi.cs  EntryPoint list"] --> lin["build_linux_natives.sh"]
+    api --> web["build_webgl_natives.sh"]
+    hb["harfbuzz 14.2.1 checkout  src/harfbuzz-subset.cc"] --> lin
+    hb --> web
+    lin --> map["hb-exports.map version script + -Bsymbolic + --no-undefined"]
+    map --> so["Runtime/Plugins/Linux/x86_64/libHarfBuzzSharp.so"]
+    so --> chk["readelf / nm checks + dlopen smoke with a fake second HarfBuzz"]
+    web --> pass1["pass 1: compile, llvm-nm symbol list"]
+    pass1 --> rename["rename header: hb_* and C++ identifiers to onetext_*"]
+    rename --> pass2["pass 2: compile with the rename header"]
+    pass2 --> a["Runtime/Plugins/WebGL/libHarfBuzzSharp.a"]
+    a --> dup["duplicate-symbol check against Unity's TextRenderingModule"]
+    pass1 --> harness["Web~/onetext-hb.js + .wasm  (MODULARIZE, unrenamed)"]

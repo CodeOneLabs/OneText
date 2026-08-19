@@ -1,0 +1,19 @@
+flowchart TD
+    start["Tools/run_android_smoke.sh or run_ios_smoke.sh"] --> pre["preconditions: Unity 6000.0.77f1, HappyTextDev project, SDK or Xcode, project not open"]
+    pre --> backup["back up ProjectSettings.asset"]
+    backup --> build["Unity -batchmode -executeMethod SmokeBuild.Android / SmokeBuild.IOSSimulator -smokeOut ..."]
+    build --> device["boot emulator OneTextSmoke or newest iPhone simulator"]
+    device --> install["adb install / simctl install"]
+    install --> launch["launch com.onetext.smoke, tail logcat / log stream"]
+    launch --> wait["wait for ONETEXT-SMOKE: marker"]
+    wait --> shot["device screenshot while the verdict is on screen"]
+    shot --> verdict["PASS exit 0 / FAIL exit 1 / no marker exit 2"]
+    verdict --> restore["restore ProjectSettings.asset, shut down the device this run booted"]
+    subgraph app["SmokeSelfTest in the player"]
+        c1["native-alive: Shaper.HarfBuzzVersion + Latin shaping"]
+        c2["script-arabic / devanagari / thai / korean / emoji"]
+        c3["sdf-shader-present: SharedGlyphAtlas.LoadShader"]
+        c4["live-render: RenderTexture readback + DrawnQuads"]
+    end
+    launch --> app
+    app --> wait

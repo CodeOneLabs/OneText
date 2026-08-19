@@ -1,0 +1,23 @@
+flowchart LR
+    subgraph Unicode["Runtime/Core/Unicode"]
+        LB["LineBreaker.Analyze"]
+        DL["DictionaryLineBreaker.Apply (WordList per script)"]
+        AT["AsianTypography: ApplyKoreanWordWrap, ApplyKinsoku, CompressionFor, WantsLatinGap, RubyOverhang"]
+        TS["TextSegmenter.GraphemeBoundaries, WordBoundaries"]
+        BR["BidiRuns.GetLogicalRuns"]
+        VL["VerticalOrientationLookup"]
+        KJ["KoreanJosa.Resolve, IsJosa"]
+        OD["OneTextDictionary.Install"]
+    end
+    OD --> DL
+    ST["OneTextSettings.InstallDictionaries (startup)"] --> OD
+    LB --> E["Layout/TextLayoutEngine.Layout"]
+    DL --> E
+    AT --> E
+    TS --> E
+    BR --> E["Layout/TextLayoutEngine.Layout and BuildItems"]
+    VL --> E
+    TS --> H["Layout/TextHitTest (caret, double-click)"]
+    KJ --> P["Layout/RichTextParser (josa tag)"]
+    LB --> F["Editor/Hub/GlyphForensics (RuleAt)"]
+    DL --> D["Editor/Hub: HubDictionariesTab, TextDoctor (WordList.Coverage)"]

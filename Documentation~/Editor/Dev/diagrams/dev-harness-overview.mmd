@@ -1,0 +1,20 @@
+flowchart TD
+    subgraph asm["OneText.Editor.Dev  (defineConstraints: UNITY_INCLUDE_TESTS)"]
+        golden["Golden/  GoldenCases, GoldenScene, GoldenComparer, GoldenRegen"]
+        bench["Benchmarks/  BenchSuite, BenchScenarios, BenchScene, OneTextSubject"]
+        proofs["M*ProofGenerator, OnboardingProofGenerator"]
+        probes["BucketProbe, CornerProbe, SizeSweepProbe, SdfDumpProbe, ClusterDebug"]
+        natives["NativePluginSettings"]
+    end
+    tests["Tests/Editor/GoldenImageTests.cs  (OneText.Tests)"] --> golden
+    cli["Unity -batchmode -executeMethod ..."] --> bench
+    cli --> proofs
+    cli --> probes
+    cli --> golden
+    menu["Tools > OneText menu"] --> golden
+    menu --> natives
+    golden --> baselines["Tests/Golden~/*.png + renderer.txt"]
+    bench --> report["bench-report.md + per-run CSV"]
+    proofs --> pngs["onetext-m*.png proof pictures"]
+    natives --> metas["Runtime/Plugins/**/*.meta"]
+    probes --> scene["GoldenScene (shared render rig)"]

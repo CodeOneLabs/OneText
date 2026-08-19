@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant U as User
+    participant M as OneFontAssetCreator.Create
+    participant C as CreateFromFontFile
+    participant F as FillFromFontFile
+    participant A as OneFontAsset
+    participant DB as AssetDatabase
+
+    U->>M: Assets > OneText > Create Font Asset
+    M->>M: SelectedFontPaths() (.ttf .otf .ttc)
+    loop each font path
+        M->>C: CreateFromFontFile(path)
+        C->>DB: LoadAssetAtPath(dir/Name Font.asset)
+        alt asset missing
+            C->>A: CreateInstance
+        end
+        C->>F: FillFromFontFile(asset, path)
+        F->>F: File.ReadAllBytes + ReadFamilyName (name table id 1)
+        F->>A: Initialize(bytes, familyName, path)
+        F-->>C: true / false
+        alt new asset
+            C->>DB: CreateAsset(asset, assetPath)
+        end
+        C->>DB: SetDirty(asset)
+    end
+    M->>DB: SaveAssets
+    M->>U: Selection + PingObject(last)

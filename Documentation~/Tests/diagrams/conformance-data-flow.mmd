@@ -1,0 +1,27 @@
+flowchart LR
+    subgraph ucd["Tests/UnicodeData~"]
+        bct["BidiCharacterTest.txt  91,707 lines"]
+        bt["BidiTest.txt  493,501 lines"]
+        lbt["LineBreakTest.txt"]
+        gbt["GraphemeBreakTest.txt"]
+        wbt["WordBreakTest.txt"]
+        sbt["SentenceBreakTest.txt"]
+        ud["UnicodeData.txt"]
+        et["emoji-test.txt"]
+    end
+    bct --> BidiTests["BidiTests.Passes_Complete_BidiCharacterTest"]
+    bt --> BidiClass["BidiClassConformanceTests.Passes_Complete_BidiTest  (770,241 cases)"]
+    lbt --> Seg1["SegmentationTests.Passes_Complete_LineBreakTest"]
+    gbt --> Seg2["SegmentationTests.Passes_Complete_GraphemeBreakTest"]
+    wbt --> Seg3["SegmentationTests.Passes_Complete_WordBreakTest"]
+    sbt --> Seg4["SegmentationTests.Passes_Complete_SentenceBreakTest"]
+    ud --> Cov["CodepointCoverageTests  (renderable codepoints)"]
+    et --> Emoji["EmojiSequenceTests  (fully-qualified sequences)"]
+    BidiTests --> BA["BidiAlgorithm.Resolve"]
+    BidiClass --> BA
+    Seg1 --> LB["LineBreaker.Analyze"]
+    Seg2 --> TS["TextSegmenter.GraphemeBoundaries / WordBoundaries / SentenceBoundaries"]
+    Seg3 --> TS
+    Seg4 --> TS
+    Cov --> Pipe["FontData, Shaper, GlyphAtlas"]
+    Emoji --> Sh["Shaper"]

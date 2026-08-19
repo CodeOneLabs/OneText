@@ -1,0 +1,22 @@
+flowchart TD
+    Cand["Candidates(covered, everywhere): assets whose GetDependencies name a covered container, plus every ScriptableObject"]
+    Census["Census: open each candidate once, before anything is destroyed"]
+    Rec["Record: walk every SerializedObject; Identify target via Origin (GetCorrespondingObjectFromSource to the last hop)"]
+    Sev["RecordSevered: ContainerFile.Read for fields the loaded object no longer holds (Severed=true)"]
+    Key["CrossReference = Referrer path, ReferrerPath, ReferrerType, ReferrerIndex, PropertyPath, Target container, TargetPath, TargetKind, Nested"]
+    Convert["Main pass converts prefabs then scenes; Changed(container) only after a successful save"]
+    Visit["Relink on each visited container: FindComponent, Broken? (field empty, or Severed), Resolve via Instances or FromAsset, Write + read back"]
+    Refused["Refused: container with a missing script is read, not written; Trouble recorded"]
+    Out["Outsiders(covered): referrers not in the run whose target was Changed and is not Settled"]
+    Mend["Mend: open each outsider once, Relink, save only if something was re-pointed"]
+    Assets["RelinkAssets: ScriptableObjects, after every container"]
+    Unwind["Unwind(container) when a save fails: re-points taken back, references unsettled"]
+    Settle["Settle: unsettled and (Broken or target Changed) becomes an error with Trouble or Severance text"]
+
+    Cand --> Census --> Rec --> Key
+    Census --> Sev --> Key
+    Key --> Convert --> Visit
+    Convert --> Refused
+    Visit --> Unwind
+    Convert --> Out --> Mend --> Assets --> Settle
+    Refused --> Settle

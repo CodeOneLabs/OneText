@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant T as UnityTest method
+    participant H as PlayHarness
+    participant U as Unity player loop
+    participant L as OneTextLabel
+    T->>H: Setup(): camera + ScreenSpaceCamera canvas 800x600
+    T->>H: Label(text, size, fontPath) or InputField(initial, out label)
+    H->>L: SetFont(bytes), FontSize, Text
+    T->>U: yield return PlayHarness.Frame()
+    U->>L: OnEnable / Update / canvas rebuild
+    U-->>T: next frame, then Canvas.ForceUpdateCanvases()
+    T->>H: DrawnQuads(label): canvasRenderer.GetMesh().vertexCount / 4
+    T->>H: ExpectNoErrors(): LogAssert.NoUnexpectedReceived()
+    T->>H: Teardown(): DestroyImmediate everything tracked

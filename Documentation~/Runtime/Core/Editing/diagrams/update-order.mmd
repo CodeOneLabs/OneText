@@ -1,0 +1,21 @@
+flowchart TD
+    A["OneTextInputField.UpdateEditing (once per focused frame)"] --> B["ReleaseHeldBackspace: backspace held last update"]
+    B --> C["pending reclaim with no key behind it: Reclaim"]
+    C --> D["if composing: Arbiter.NoteComposing(Composition.Text)"]
+    D --> E["PollInputMethod: IImeInput.TryGetComposition"]
+    E --> F{"report differs from model?"}
+    F -->|yes| G["model.SetComposition(text, caret, clause)"]
+    G --> H{"composition just started?"}
+    H -->|yes| I["Arbiter.ReclaimedInto: certain -> Reclaim now, else hold until next update"]
+    F -->|"no, both empty, backend ReportsPlatformState"| J["Arbiter.NotePlatformReleased"]
+    H -->|no| K
+    I --> K
+    J --> K["model.Tick: age _replaced, Arbiter.Tick may return owed text -> InsertAtCaret"]
+    K --> L["EventSystem drains key queue: ProcessKeyEvent per Event"]
+    L --> M{"model.IsComposing?"}
+    M -->|yes| N["Escape: CancelComposition. Backspace: hold. Printable char: AcceptCharacter. Others: IME's"]
+    M -->|no| O["Backspace with owed commit: DiscardOwedCommit. Control key: SettleOwedCommit first"]
+    O --> P["edit keys on model; printable char: AcceptCharacter"]
+    N --> S["ReleaseHeldBackspace again: a backspace held this update, judged now that the queue is drained"]
+    P --> S
+    Q["focus leaves: EndEditing"] --> R["model.FlushCommit then model.CommitComposition, then onEndEdit"]

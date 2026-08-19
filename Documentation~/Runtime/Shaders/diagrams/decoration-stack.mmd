@@ -1,0 +1,30 @@
+flowchart LR
+  subgraph inputs["Per-pixel inputs"]
+    d["d: median or single-channel field at uv"]
+    dt["field.y: true distance, gives aa = fwidth"]
+    ds["shadowD: field at uv minus offset (alpha for precise tiles)"]
+  end
+  subgraph layers["Layers, each alpha times i.color.a"]
+    shadow["shadow: smoothstep(0.5 +- soft) of shadowD"]
+    glow["glow: falloff on (0.5 - d) outside and (d - 0.5) inside"]
+    outline["outline: smoothstep(outlineT +- outlineSoft) of d, outlineT = 0.5 - 0.5 * width"]
+    face["face: smoothstep(faceT +- aa) of d, faceT = 0.5 - 0.5 * faceDilate"]
+  end
+  acc0["acc = premultiplied shadow"]
+  acc1["Over(glow)"]
+  acc2["Over(outline)"]
+  acc3["Over(face)"]
+  clip["acc *= clipA (RectMask2D)"]
+  out["straight alpha: (acc.rgb / acc.a, acc.a) under SrcAlpha OneMinusSrcAlpha"]
+
+  ds --> shadow
+  d --> glow
+  d --> outline
+  d --> face
+  dt --> face
+  dt --> outline
+  dt --> shadow
+  shadow --> acc0 --> acc1 --> acc2 --> acc3 --> clip --> out
+  glow --> acc1
+  outline --> acc2
+  face --> acc3

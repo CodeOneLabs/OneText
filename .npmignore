@@ -25,6 +25,7 @@ Editor/Onboarding/Tmp/Dev/
 page~/
 Web~/
 Docs/
+Documentation~/
 
 # Build and maintenance scripts, and the smoke-test projects they drive.
 Tools/

@@ -1,0 +1,84 @@
+classDiagram
+    class TextEditingModel {
+        +Text string
+        +Caret int
+        +Anchor int
+        +Composition ImeComposition
+        +DisplayText string
+        +DisplayCaret int
+        +ReadOnly bool
+        +CharacterLimit int
+        +Arbiter ImeCommitArbiter
+        +Insert(value) bool
+        +Backspace() bool
+        +ForwardDelete() bool
+        +MoveHorizontally(dir, byWord, extend)
+        +SetComposition(text, caret, clauseStart, clauseLength) bool
+        +CommitComposition() bool
+        +CancelComposition()
+        +Tick() bool
+        +AcceptCharacter(char, out changed) bool
+        +SettleOwedCommit() bool
+        +DiscardOwedCommit() bool
+        +TakeBackCommitted(text) bool
+        +FlushCommit() bool
+        +SetExternalText(text, start, length) bool
+    }
+    class ImeComposition {
+        +Active bool
+        +Start int
+        +Text string
+        +Caret int
+        +ClauseStart int
+        +ClauseLength int
+        +End int
+    }
+    class ImeCommitArbiter {
+        +Shared ImeCommitArbiter
+        +GraceUpdates int
+        +IsAwaitingPlatform bool
+        +IsSuppressingEcho bool
+        +ReplayedComposition string
+        +AcceptedPlatformCommit string
+        +AwaitPlatformCommit(text)
+        +SuppressEchoOf(text)
+        +IgnoreReplayOf(text)
+        +ShouldSwallow(char) bool
+        +ShouldSwallowComposition(text) bool
+        +NoteComposing(text)
+        +ReclaimedInto(text, out certain) string
+        +NotePlatformCommitted(text)
+        +NotePlatformReleased()
+        +Tick() string
+        +TakeOwedNow() string
+        +Flush() string
+        +Cancel()
+        +Forget()
+        +SameText(a, b) bool
+        +TextStartsWith(whole, prefix) bool
+    }
+    class OneTextInputField {
+        <<frontend>>
+        +UpdateEditing()
+        +ProcessKeyEvent(Event)
+        -PollInputMethod()
+        -EndEditing()
+    }
+    class IImeInput {
+        <<interface>>
+        +ReportsPlatformState bool
+        +TryGetComposition(out text, out caret, out clauseStart, out clauseLength) bool
+    }
+    class TextHitTest {
+        <<static>>
+        +PreviousCaret(text, i) int
+        +NextCaret(text, i) int
+        +PreviousWord(text, i) int
+        +NextWord(text, i) int
+    }
+    TextEditingModel *-- ImeComposition : _composition
+    TextEditingModel --> ImeCommitArbiter : Arbiter is Shared
+    TextEditingModel ..> TextHitTest : caret motion by cluster
+    OneTextInputField *-- TextEditingModel : _model
+    OneTextInputField --> IImeInput : polls
+    OneTextInputField ..> ImeCommitArbiter : NoteComposing, ReclaimedInto, NotePlatformReleased

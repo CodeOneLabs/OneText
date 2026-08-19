@@ -1,0 +1,16 @@
+flowchart TD
+    UV["UpdateVisuals (LateUpdate when _visualsDirty)"] --> CG["EnsureCaretGraphic: Caret child under the label, DontSave"]
+    UV --> CL["EnsureClipping: RectMask2D on the field if no viewport and no mask above the label"]
+    UV --> LT["label.RichText = false, ParseEscapes = false, WritingMode = Horizontal"]
+    UV --> TX["label.Text = model.DisplayText, placeholder.enabled = empty"]
+    UV --> SC{"_focused?"}
+    SC -- yes --> SV["ScrollCaretIntoView: move label.ScrollOffset until GetCaretRect fits CaretBox, two passes"]
+    SC -- no --> CS["ClampScrollToEndOfText: keep the view, never past the end"]
+    SV --> GEO["UpdateCaretGeometry"]
+    CS --> GEO
+    GEO --> SEL["label.GetSelectionRects(DisplaySelectionStart, DisplaySelectionEnd)"]
+    GEO --> CM["BuildCompositionMarks: underline rects squashed to FontSize x 0.06, clause rects"]
+    GEO --> BL["blink: unscaled time since _blinkStart, period 1 / _caretBlinkRate"]
+    SEL --> CARET["OneTextCaret.SetGeometry / SetComposition, then OnPopulateMesh"]
+    CM --> CARET
+    BL --> CARET

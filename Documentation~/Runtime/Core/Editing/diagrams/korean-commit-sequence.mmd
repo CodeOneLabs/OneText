@@ -1,0 +1,34 @@
+sequenceDiagram
+    participant P as Platform IME
+    participant F as OneTextInputField
+    participant M as TextEditingModel
+    participant A as ImeCommitArbiter.Shared
+    Note over P,A: user types ㅎ ㅏ ㄴ, then space
+    P->>F: composition "ㅎ" then "하" then "한" (one per update)
+    F->>M: SetComposition("한")
+    Note over M: _composition.Active, Start = caret, DisplayText splices 한 in
+    P->>F: composition "" (the IME let go)
+    F->>M: SetComposition("")
+    M->>M: EndComposition()
+    M->>A: AwaitPlatformCommit("한")
+    Note over M,A: mode = AwaitingPlatform, _pending = 한, _updatesLeft = 2, ForgetPlatformCommit
+    alt the platform delivers the syllable as a character (same or next update)
+        P->>F: key event char '한'
+        F->>M: AcceptCharacter('한')
+        M->>A: ShouldSwallow('한')
+        A->>A: _platformCommit = 한, Reset -> Idle
+        A-->>M: false (not an echo)
+        M->>M: Insert("한")
+        Note over M: value = ...한, the composition was never inserted twice
+    else nothing arrives for GraceUpdates updates
+        F->>M: Tick() (update 1)
+        M->>A: Tick()
+        A-->>M: null (_updatesLeft 2 -> 1)
+        F->>M: Tick() (update 2)
+        M->>A: Tick()
+        A->>A: _updatesLeft 1 -> 0, Flush()
+        A->>A: NotePlatformCommitted("한"), Reset -> Idle
+        A-->>M: "한" (owed)
+        M->>M: InsertAtCaret("한")
+    end
+    Note over M,A: _platformCommit = 한 either way, so a late repeat of 한 on the character channel is swallowed (IsThePlatformSayingItAgain)

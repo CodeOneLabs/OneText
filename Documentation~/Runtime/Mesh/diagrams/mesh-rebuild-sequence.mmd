@@ -1,0 +1,36 @@
+sequenceDiagram
+    participant Caller
+    participant Mesh as OneTextMesh
+    participant Engine as TextLayoutEngine
+    participant Atlas as GlyphAtlas
+    participant Unity as Mesh and MeshRenderer
+    participant Flush as MeshFlush
+
+    Caller->>Mesh: Text = value (or any setter)
+    Note over Mesh: _dirty = true, _parsedFrom = null
+    Note over Mesh: LateUpdate in play mode, EditorPoll in edit mode
+    Mesh->>Mesh: RebuildIfNeeded: compare _builtAtlas, Version, colour Version
+    alt _dirty or an atlas Version moved
+        Mesh->>Mesh: Rebuild: _mesh.Clear, EnsureNativeState (FontStack, Acquire atlas)
+        Mesh->>Mesh: EnsureDisplayText: RichTextParser.Parse with no resolvers
+        Mesh->>Mesh: FitFontSize if AutoSize, in points
+        Mesh->>Engine: Layout(_displayText, BuildSettings(w, h, UnitFontSize), _layout)
+        Engine-->>Mesh: runs, glyphs, lines
+        Mesh->>Mesh: _blockOrigin from rect and VerticalAlignment
+        loop per TextRun
+            Mesh->>Mesh: runPixelsPerEm = runSize / PointsToUnits * ForWorld(quality)
+            Mesh->>Mesh: GlyphClusters.Split or SplitUpright
+            Mesh->>Atlas: PrepareClusters, GetOrAddCluster
+            Atlas-->>Mesh: UvRect, Layer, OriginUnits, SizeUnits
+            Mesh->>Mesh: AddQuad: 4 vertices, uv0..uv3, 6 indices
+        end
+        Mesh->>Unity: SetVertices, SetColors, SetUVs 0..3, SetTriangles, RecalculateBounds
+        Mesh->>Unity: sharedMaterial = WorldMaterial, BindWorldMaterial(textures)
+        Mesh->>Mesh: record _builtAtlas, _builtAtlasVersion, _builtColorVersion
+        Mesh->>Flush: Request()
+        alt play mode
+            Flush->>Atlas: Flush() from Application.onBeforeRender
+        else edit mode
+            Flush->>Atlas: Flush() immediately
+        end
+    end

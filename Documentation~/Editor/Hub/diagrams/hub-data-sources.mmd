@@ -1,0 +1,43 @@
+flowchart LR
+    subgraph Sources["Where the data comes from"]
+        Settings["OneTextSettings asset (Assets/Resources/OneTextSettings.asset)"]
+        ADB["AssetDatabase.FindAssets t:OneFontAsset, t:OneTextStyle, t:OneTextCharset"]
+        Folders["Hub.StringFolders (EditorPrefs OneText.Hub.Folders)"]
+        Scanner["TextSourceScanner.Scan gives TextScanResult"]
+        Atlas["SharedGlyphAtlas.Atlas / PreciseAtlas .GetStats()"]
+        Recorder["CharsetRecorder (play-mode recording)"]
+        Breaker["DictionaryLineBreaker.GetWordList"]
+        Engine["TextLayoutEngine + TextPreviewRenderer"]
+    end
+    subgraph Pages["HubSection pages"]
+        Overview["HubOverviewTab"]
+        SettingsTab["HubSettingsTab"]
+        Fonts["HubFontsTab / HubStylesTab"]
+        Charsets["HubCharsetsTab"]
+        Dicts["HubDictionariesTab"]
+        AtlasTab["HubAtlasTab"]
+        Gallery["HubGalleryTab"]
+        Doctor["HubDoctorTab"]
+        Forensics["HubForensicsTab"]
+        Onboarding["HubOnboardingTab"]
+    end
+    Settings --> Overview
+    Settings --> SettingsTab
+    Settings --> Fonts
+    ADB --> Overview
+    ADB --> Fonts
+    ADB --> Charsets
+    Folders --> Scanner
+    Scanner --> Gallery
+    Scanner --> Doctor
+    Scanner --> Dicts
+    Scanner --> Charsets
+    Atlas --> AtlasTab
+    Atlas --> Overview
+    Recorder --> Charsets
+    Recorder --> AtlasTab
+    Breaker --> Dicts
+    Breaker --> Doctor
+    Engine --> Gallery
+    Engine --> Forensics
+    Onboarding --> Mig["Editor/Onboarding: ComponentMigration, TmpScriptRewriter, FontRecovery"]

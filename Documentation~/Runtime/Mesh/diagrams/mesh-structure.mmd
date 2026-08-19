@@ -1,0 +1,45 @@
+classDiagram
+    class MonoBehaviour
+    class OneTextMesh {
+        +Text
+        +FontSize
+        +Quality
+        +Precise
+        +Layout
+        +ForceRebuild()
+        +WorldMaterial
+        +PointsToUnits
+        -RebuildIfNeeded()
+        -Rebuild()
+        -BuildQuads(atlas, vertical)
+        -AddQuad()
+    }
+    class MeshFlush {
+        +Request()
+        -FlushNow()
+    }
+    class RunFrame {
+        +Place()
+    }
+    class MeshFilter
+    class MeshRenderer
+    class RectTransform
+    class FontStack
+    class TextLayoutEngine
+    class SharedGlyphAtlas
+    class GlyphAtlas
+    class GlyphClusters
+    class ColorGlyphAtlas
+
+    MonoBehaviour <|-- OneTextMesh
+    OneTextMesh *-- MeshFlush : nested static
+    OneTextMesh *-- RunFrame : nested struct, copy of the label's
+    OneTextMesh --> MeshFilter : sharedMesh = _mesh
+    OneTextMesh --> MeshRenderer : sharedMaterial = WorldMaterial
+    OneTextMesh --> RectTransform : rect drives wrap and alignment
+    OneTextMesh --> FontStack : BuildFontStack
+    OneTextMesh --> TextLayoutEngine : Layout(_displayText, settings, _layout)
+    OneTextMesh --> SharedGlyphAtlas : Acquire, Release, Material
+    OneTextMesh --> GlyphAtlas : PrepareClusters, GetOrAddCluster
+    OneTextMesh --> GlyphClusters : Split, SplitUpright
+    OneTextMesh --> ColorGlyphAtlas : emoji tiles

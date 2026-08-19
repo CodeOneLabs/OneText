@@ -1,0 +1,18 @@
+flowchart TD
+    A["TextLayoutResult.GraphemeStarts + display text"] --> B{"granularity"}
+    B -->|Grapheme or text mismatch| C["one unit per grapheme"]
+    B -->|Cluster or Syllable| D["BuildClusters"]
+    D --> D1["mark text indices claimed by glyph.Cluster"]
+    D1 --> D2["grapheme start claimed by no glyph, previous grapheme shaped: absorbed"]
+    D2 --> D3["AttachesToNext(prev char): Thai/Lao leading vowel, Khmer coeng, Myanmar virama"]
+    D3 --> D4["AttachesToPrevious(char): Thai/Lao sara am"]
+    D4 --> E["unitStarts (grapheme indices, terminated with count)"]
+    E -->|Syllable only| F["MergeIntoSyllables"]
+    F --> F1["drop boundary before AsianTypography.ForbiddenAtLineStart(c, Kinsoku.Strict)"]
+    F1 --> G["unitStarts coarsened"]
+    C --> H["consumers"]
+    E --> H
+    G --> H
+    H --> H1["RevealedBy(unitStarts, grapheme): units fully shown"]
+    H --> H2["FirstUnitAtOrAfter(unitStarts, grapheme): where a wait lands"]
+    H --> H3["OneTextLabel.AdvanceReveal steps unit by unit"]

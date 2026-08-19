@@ -1,0 +1,30 @@
+sequenceDiagram
+    participant C as Caller
+    participant F as FontData
+    participant A as HarfBuzzApi
+    participant S as Shaper
+    C->>F: FontData.Load(bytes, faceIndex)
+    F->>F: GCHandle.Alloc(bytes, Pinned)
+    F->>A: hb_blob_create(ptr, len, READONLY, 0, 0)
+    F->>A: hb_face_create(blob, faceIndex)
+    F->>A: hb_font_create(face)
+    F->>A: hb_face_get_upem(face)
+    F->>A: hb_face_make_immutable(face)
+    F-->>C: FontData (owns blob, face, font - _ownsFace = true)
+    C->>S: new Shaper()
+    S->>A: hb_buffer_create()
+    loop every Shape call
+        S->>A: hb_buffer_reset, hb_buffer_add_utf16, set language/direction
+        S->>A: hb_shape(font.Font, buffer, 0, 0)
+        S->>A: hb_buffer_get_glyph_infos / positions (pointers into buffer)
+        S-->>C: output.Add(ShapedGlyph ...) copied out before return
+    end
+    C->>S: Dispose()
+    S->>A: hb_buffer_destroy(buffer)
+    C->>F: Dispose()
+    F->>F: DisposeThreadHandles() - ColorGlyphs.Forget(CacheId)
+    F->>A: hb_font_destroy(font)
+    opt _ownsFace
+        F->>A: hb_face_destroy(face) - hb_blob_destroy(blob)
+        F->>F: GCHandle.Free()
+    end

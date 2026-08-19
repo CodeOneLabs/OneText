@@ -1,0 +1,38 @@
+sequenceDiagram
+    participant P as Platform IME (OS)
+    participant B as ImguiImeInput
+    participant F as OneTextInputField
+    participant M as TextEditingModel
+    participant A as ImeCommitArbiter
+    participant L as OneTextLabel / OneTextCaret
+    Note over P,L: value is 안녕, caret at 2, field focused, Begin already called
+    P->>P: key ㅎ, compositionString = ㅎ (U+314E)
+    F->>B: TryGetComposition
+    B->>P: read Input.compositionString
+    B-->>F: ㅎ, caret -1, clause 0 0
+    F->>M: SetComposition(ㅎ, -1, 0, 0)
+    M->>A: ShouldSwallowComposition(ㅎ) is false, composition starts at 2
+    F->>A: ReclaimedInto(ㅎ) returns null
+    F->>B: SetCursorScreenPosition(caret screen px)
+    F->>M: Tick (nothing owed)
+    F->>F: PopEvent: key with no character, dropped while composing
+    F->>L: LateUpdate, Text = 안녕ㅎ, underline under ㅎ
+    P->>P: key ㅏ, compositionString = 하
+    F->>B: TryGetComposition
+    B-->>F: 하
+    F->>M: SetComposition(하) replaces the text, _replaced = ㅎ
+    F->>L: Text = 안녕하
+    P->>P: key ㄴ, compositionString = 한
+    F->>M: SetComposition(한)
+    F->>L: Text = 안녕한
+    P->>P: key ㄱ: commit 한 as a character, compositionString = ㄱ
+    F->>B: TryGetComposition
+    B-->>F: ㄱ
+    F->>M: SetComposition(ㄱ), _replaced = 한
+    F->>M: Tick
+    F->>F: PopEvent: KeyDown with character 한
+    F->>M: AcceptCharacter(한) while composing
+    M->>A: ShouldSwallow(한) is false
+    M->>M: Insert 한 before the composition, NoteHandedOver pays for 한
+    F->>F: Changed, onValueChanged(안녕한)
+    F->>L: Text = 안녕한ㄱ, underline under ㄱ

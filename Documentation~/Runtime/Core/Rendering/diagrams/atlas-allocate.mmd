@@ -1,0 +1,31 @@
+flowchart TD
+  start["Commit(key, raster, ppem)"]
+  empty{"raster.IsEmpty?"}
+  noTile["Cache entry with HasSlot = false, return HasPixels = false"]
+  big{"w or h above TextureSize?"}
+  tryAlloc["TryAlloc: free span on a shelf of ShelfHeightFor(h), else shelf cursor, else new shelf"]
+  ok1{"placed?"}
+  compact["TryCompact: AutoCompact, not yet this flush cycle, used + tile under 85 percent of capacity"]
+  ok2{"placed after Compact?"}
+  evict["EvictForFit: oldest tile on a shelf of the same height (untouched since last Flush), else OldestOnColdestShelf, else recent fallback"]
+  evicted{"evicted one?"}
+  again["TryAlloc, then TryCompact + TryAlloc"]
+  ok3{"placed?"}
+  drop["_drops++, LogError once, return HasPixels = false (NOT cached)"]
+  write["WriteSlot: row copies into Texture.GetPixelData, MarkTileDirty"]
+  entry["New Entry at LRU tail, _usedPixels += w*h, demand tracked"]
+
+  start --> empty
+  empty -- yes --> noTile
+  empty -- no --> big
+  big -- yes --> drop
+  big -- no --> tryAlloc --> ok1
+  ok1 -- yes --> write
+  ok1 -- no --> compact --> ok2
+  ok2 -- yes --> write
+  ok2 -- no --> evict --> evicted
+  evicted -- no --> drop
+  evicted -- yes --> again --> ok3
+  ok3 -- yes --> write
+  ok3 -- no --> evict
+  write --> entry

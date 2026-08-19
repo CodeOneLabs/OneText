@@ -1,0 +1,19 @@
+stateDiagram-v2
+    [*] --> Idle : OnEnable, PreviewPref false
+    [*] --> Previewing : OnEnable, PreviewPref true, single target, edit mode
+    Idle --> Previewing : Preview animation toggle, StartPreview
+    Previewing --> Idle : Stop preview toggle, StopPreview
+    Previewing --> Idle : OnDisable or selection change
+    Previewing --> Idle : playModeStateChanged ExitingEditMode
+    state Previewing {
+        [*] --> Tick
+        Tick --> Tick : PreviewDriver.Update advances AnimationTime, ForceUpdateCanvases, Rebuild, MeshChecksum, QueuePlayerLoopUpdate
+    }
+    note right of Previewing
+        Hidden GameObject OneText Preview (HideAndDontSave)
+        carries PreviewDriver. Readouts: Ticks, MovedTicks, DirtiedTicks
+    end note
+    note right of Idle
+        StopPreview destroys the driver, resets AnimationTime to 0,
+        ForceUpdateCanvases, RepaintAllViews
+    end note

@@ -145,3 +145,5 @@ see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Contributions welcome: [CONTRIBUTING.md](CONTRIBUTING.md), including the
 clean-room policy (public specifications and open-source references only).
+Per-module contributor docs with diagrams live in
+[Documentation~/](Documentation~/README.md).

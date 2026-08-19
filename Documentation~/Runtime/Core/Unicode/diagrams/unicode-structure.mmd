@@ -1,0 +1,31 @@
+flowchart TD
+    subgraph Tables["Generated tables (internal, binary search over sorted ranges)"]
+        BD["BidiData.g.cs: GetClass, TryGetBracket, CanonicalBracket"]
+        BK["BreakData.g.cs: GetLineClass, GetGraphemeClass, GetWordClass, GetSentenceClass, GetIncb, GetFlags"]
+        VD["VerticalData.g.cs: GetOrientation"]
+    end
+    subgraph Enums["Property enums (member order = table index)"]
+        BC["BidiClass"]
+        BE["BreakClasses.cs: LineBreakClass, GraphemeBreakClass, WordBreakClass, SentenceBreakClass, IncbClass, CharFlags"]
+        VO["VerticalOrientation"]
+    end
+    subgraph Algorithms["Algorithms (public static, ThreadStatic scratch)"]
+        BA["BidiAlgorithm.Resolve (UAX 9)"]
+        BR["BidiRuns.GetLogicalRuns, GetVisualRuns"]
+        LB["LineBreaker.Analyze, RuleAt (UAX 14)"]
+        TS["TextSegmenter: GraphemeBoundaries, WordBoundaries, SentenceBoundaries (UAX 29)"]
+        VL["VerticalOrientationLookup: Get, NeedsFont, Resolve (UAX 50)"]
+    end
+    U16["Utf16.Codepoint"]
+    BD --> BA
+    BC --> BA
+    BA --> BR
+    BK --> LB
+    BK --> TS
+    BE --> LB
+    BE --> TS
+    VD --> VL
+    VO --> VL
+    U16 --> BR
+    U16 --> LB
+    U16 --> TS

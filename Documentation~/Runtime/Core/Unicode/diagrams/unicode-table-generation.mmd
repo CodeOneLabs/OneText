@@ -1,0 +1,15 @@
+flowchart LR
+    UCD["Unicode Character Database 17.0.0 (ucd-dir, not in the repo)"]
+    UCD --> G1["Tools/gen_bidi_tables.py: DerivedBidiClass.txt, BidiBrackets.txt"]
+    UCD --> G2["Tools/gen_break_tables.py: DerivedLineBreak, DerivedGeneralCategory, EastAsianWidth, Grapheme/Word/SentenceBreakProperty, DerivedCoreProperties, emoji-data"]
+    UCD --> G3["Tools/gen_vertical_tables.py: VerticalOrientation.txt"]
+    G1 --> F1["Runtime/Core/Unicode/BidiData.g.cs"]
+    G2 --> F2["Runtime/Core/Unicode/BreakData.g.cs (Line_Break pre-resolved per LB1)"]
+    G3 --> F3["Runtime/Core/Unicode/VerticalData.g.cs (R dropped as default)"]
+    F1 --> T1["Tests/Editor/BidiTests.cs, BidiClassConformanceTests.cs (BidiCharacterTest.txt, BidiTest.txt)"]
+    F2 --> T2["Tests/Editor/SegmentationTests.cs (LineBreakTest, GraphemeBreakTest, WordBreakTest, SentenceBreakTest)"]
+    F2 --> T3["Tests/Editor/EmojiSequenceTests.cs (emoji-test.txt)"]
+    F3 --> T4["Tests/Editor/VerticalTests.cs"]
+    TD["Tests/UnicodeData~ (the UCD test files, committed)"] --> T1
+    TD --> T2
+    TD --> T3

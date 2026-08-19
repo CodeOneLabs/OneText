@@ -1,0 +1,12 @@
+flowchart TD
+    T["text (UTF-16) and Opportunity[] of length n+1"] --> A["LineBreaker.Analyze: LB1 via tables, LB9/LB10 folding, Decide() per item boundary"]
+    A --> A2["index 0 = None (LB2), index n = Mandatory (LB3), newlines Mandatory (LB4/LB5)"]
+    A2 --> S1["TextLayoutEngine.SuppressNoBreakOpportunities (nobr spans)"]
+    S1 --> S2["TextLayoutEngine.SuppressRubyBreakOpportunities"]
+    S2 --> D["DictionaryLineBreaker.Apply: only ADDS Allowed inside Thai/Lao/Khmer/Myanmar runs, after longest-match words"]
+    D --> K{"settings.KoreanWordWrap"}
+    K -- yes --> KW["AsianTypography.ApplyKoreanWordWrap: REMOVES Allowed between two Hangul chars"]
+    K -- no --> KS
+    KW --> KS["AsianTypography.ApplyKinsoku(severity): REMOVES Allowed where text[i] may not start or text[i-1] may not end a line"]
+    KS --> G["TextSegmenter.GraphemeBoundaries: grapheme starts for emergency breaks, carets, reveal"]
+    G --> W["TextLayoutEngine wrapper: greedy, last Allowed that fits, emergency break at a grapheme boundary if none"]

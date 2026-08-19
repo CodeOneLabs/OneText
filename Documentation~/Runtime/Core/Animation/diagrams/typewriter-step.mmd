@@ -1,0 +1,22 @@
+flowchart TD
+    A["AdvanceReveal(dt)"] --> B{"CharactersPerSecond <= 0 or MaxVisibleGraphemes == -1?"}
+    B -->|yes| Z["return"]
+    B -->|no| C["EnsureUnits: RevealUnits.Build + BuildWaits"]
+    C --> D["revealed = RevealedBy(unitStarts, MaxVisibleGraphemes)"]
+    D --> E{"fresh or scrubbed by someone else?"}
+    E -->|yes| F["budget = 0, pause = WaitBefore(revealed)"]
+    E -->|no| G
+    F --> G["budget += dt"]
+    G --> H{"pause > 0?"}
+    H -->|yes| I["spend min(pause, budget) from both"]
+    I --> J{"pause still > 0?"}
+    J -->|yes| Y["MaxVisibleGraphemes = unitStarts[revealed]"]
+    J -->|no| K
+    H -->|no| K{"budget >= 1/cps?"}
+    K -->|no| Y
+    K -->|yes| L["budget -= 1/cps, revealed++"]
+    L --> M["pause = PunctuationDelayAfter(revealed-1) + WaitBefore(revealed)"]
+    M --> N{"revealed < units?"}
+    N -->|yes| H
+    N -->|no| Y
+    Y --> O["setter fires GraphemeRevealed / CharacterRevealed / RevealComplete"]

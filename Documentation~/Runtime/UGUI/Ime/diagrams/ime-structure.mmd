@@ -1,0 +1,52 @@
+classDiagram
+    class IImeInput {
+        <<interface>>
+        +bool IsAvailable
+        +bool ReportsPlatformState
+        +Begin()
+        +End()
+        +SetCursorScreenPosition(Vector2)
+        +TryGetComposition(out text, out caret, out clauseStart, out clauseLength)
+    }
+    class ImeInput {
+        <<static>>
+        +Register(factory)
+        +Unregister()
+        +Create() IImeInput
+        +Describe() string
+        +PlatformImeAnswers() bool
+    }
+    class ImguiImeInput {
+        ReportsPlatformState = true
+        one instance per field
+        UnityEngine.Input.imeCompositionMode
+        UnityEngine.Input.compositionString
+        UnityEngine.Input.compositionCursorPos
+    }
+    class InputSystemImeInput {
+        ReportsPlatformState = false
+        s_shared one per process
+        _sessions counter
+        _listeningTo Keyboard
+        Keyboard.onIMECompositionChange
+        Keyboard.SetIMEEnabled
+    }
+    class MobileTextInput {
+        +IsSupported
+        +IsOpen
+        +Open(text, multiline, limit)
+        +Poll(model, out changed)
+        +Close()
+        TouchScreenKeyboard
+    }
+    class OneTextInputField {
+        _ime IImeInput
+        _mobile MobileTextInput
+    }
+    IImeInput <|.. ImguiImeInput
+    IImeInput <|.. InputSystemImeInput
+    ImeInput ..> ImguiImeInput : built-in fallback
+    InputSystemImeInput ..> ImeInput : Register at SubsystemRegistration, only if the built-in cannot run
+    OneTextInputField ..> ImeInput : Create on first focus
+    OneTextInputField --> IImeInput
+    OneTextInputField --> MobileTextInput : when TouchScreenKeyboard applies

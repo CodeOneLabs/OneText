@@ -1,0 +1,14 @@
+flowchart TD
+    A["FontData.ForCurrentThread()"] --> B{"caller is owner thread, or this is a thread handle?"}
+    B -- yes --> C["return this (no allocation)"]
+    B -- no --> D["lock _sync, _threadHandles by ManagedThreadId"]
+    D --> E{"handle exists?"}
+    E -- yes --> F["return it"]
+    E -- no --> G["CreateVariant(_appliedVariations), mark _isThreadHandle, cache"]
+    G --> F
+    H["FontData.SetVariations(axes)"] --> I["RetireThreadHandles: move live handles to _retiredHandles, record axes"]
+    I --> J["hb_font_set_variations on this handle"]
+    J --> K["clear _inkBounds, ReadMetrics, Generation++"]
+    L["FontData.Dispose()"] --> M["ColorGlyphs.Forget(CacheId)"]
+    M --> N["DisposeThreadHandles: live and retired"]
+    N --> O["hb_font_destroy; if owner: hb_face_destroy, hb_blob_destroy, free pinned bytes"]

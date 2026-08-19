@@ -1,0 +1,49 @@
+classDiagram
+    class Shaper {
+        -IntPtr _buffer
+        +static string HarfBuzzVersion
+        +Shape(FontData, ReadOnlySpan, int start, int length, Direction, List output, string language)
+        +Shape(FontData, ReadOnlySpan, List output)
+        -static LanguageOf(string tag) IntPtr
+        +Dispose()
+    }
+    class Direction {
+        <<enumeration>>
+        Auto
+        LeftToRight
+        RightToLeft
+        TopToBottom
+    }
+    class ShapedGlyph {
+        +uint GlyphId
+        +int Cluster
+        +int XAdvance
+        +int YAdvance
+        +int XOffset
+        +int YOffset
+    }
+    class FontData {
+        +IntPtr Font
+        +bool IsValid
+        +uint UnitsPerEm
+        +ForCurrentThread() FontData
+    }
+    class HarfBuzzApi {
+        +hb_buffer_create()
+        +hb_buffer_add_utf16()
+        +hb_buffer_set_direction()
+        +hb_buffer_set_language()
+        +hb_shape()
+        +hb_buffer_get_glyph_infos()
+        +hb_buffer_get_glyph_positions()
+    }
+    class TextLayoutEngine {
+        -Shaper _shaper
+        -MeasureItems()
+        -DirectionOf()
+    }
+    Shaper *-- Direction
+    Shaper ..> ShapedGlyph : appends
+    Shaper ..> FontData : reads Font
+    Shaper ..> HarfBuzzApi : P/Invoke
+    TextLayoutEngine --> Shaper : owns one

@@ -1,0 +1,26 @@
+flowchart LR
+  subgraph csharp["Managed side (C sharp)"]
+    shared["SharedGlyphAtlas.Material: Resources.Load(OneText-SDF), one Material, HideAndDontSave"]
+    bind["BindGlyphTexture / BindPreciseTexture: _GlyphTex + _GlyphTexelSize, _MsdfTex + _MsdfTexelSize, _ColorTex"]
+    label["OneTextLabel.AddVert: POSITION, COLOR, TEXCOORD0..3 per vertex"]
+    canvas["Canvas.additionalShaderChannels adds TexCoord1, TexCoord2, TexCoord3"]
+    ugui["uGUI: StencilMaterial sets _Stencil* and UNITY_UI_ALPHACLIP; CanvasRenderer sets _ClipRect, _UIMaskSoftness*, UNITY_UI_CLIP_RECT"]
+    world["OneTextMesh.WorldMaterial: clone with unity_GUIZTestMode = LEqual"]
+  end
+  subgraph shader["OneText-SDF.shader"]
+    props["Properties: _GlyphTex, _ColorTex, _MsdfTex, texel sizes, stencil, _ColorMask, _ClipRect, _UseUIAlphaClip"]
+    kw["multi_compile_local: _ UNITY_UI_CLIP_RECT; _ UNITY_UI_ALPHACLIP"]
+    vert["vert: pass-through + optional mask interpolator (TEXCOORD4, derived)"]
+    frag["frag: unpack, pick atlas, field, decorations, clip, unpremultiply"]
+  end
+
+  shared --> props
+  bind --> props
+  label --> vert
+  canvas --> label
+  ugui --> kw
+  ugui --> props
+  world --> props
+  props --> frag
+  kw --> frag
+  vert --> frag

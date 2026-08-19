@@ -1,0 +1,20 @@
+flowchart TD
+    Entry["ComponentMigration.Scan / Apply"]
+    Run["Run(options, convert)"]
+    Widen["Widened: add the prefabs the selection nests (WithWhatTheyNest)"]
+    Lists["OrderedPrefabPaths (base before variant) + ScenePaths"]
+    Save["SaveCurrentModifiedScenesIfUserWantsTo (not in batch mode)"]
+    Watch["Watch: ContainerReferences.Candidates + Census (apply only)"]
+    Fonts["FontAssetCache; AdoptDefaults if asked"]
+    Prefabs["RunPrefabs: LoadPrefabContents, MissingScripts, Process, Record or Relink, SaveAsPrefabAsset"]
+    Scenes["RunScenes: OpenScene Single, MissingScripts, Process, Record or Relink, SaveScene"]
+    IsScan{"convert?"}
+    Report["references.Report: every cross-container field, as warnings"]
+    Mend["Mend: open the outsiders that point into a changed container and Relink them"]
+    Assets["RelinkAssets: ScriptableObjects last"]
+    Settle["Settle + Narrowed: what nobody could re-point, as errors"]
+    Done["AssetDatabase.SaveAssets + Refresh; return MigrationReport"]
+
+    Entry --> Run --> Widen --> Lists --> Save --> Watch --> Fonts --> Prefabs --> Scenes --> IsScan
+    IsScan -- Scan --> Report --> Done
+    IsScan -- Apply --> Mend --> Assets --> Settle --> Done

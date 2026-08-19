@@ -1,0 +1,28 @@
+flowchart TD
+    subgraph Inspectors["Custom inspectors (IMGUI)"]
+        LabelEd["OneTextLabelEditor : GraphicEditor"]
+        FieldEd["OneTextInputFieldEditor : SelectableEditor"]
+        FontEd["OneFontAssetEditor"]
+        CharsetEd["OneTextCharsetEditor"]
+    end
+    subgraph Helpers["Shared helpers"]
+        Rows["AlignmentRows (static)"]
+        Langs["FontLanguages (static)"]
+        Creator["OneFontAssetCreator (static)"]
+        ESF["OneTextEventSystemFactory (static)"]
+    end
+    subgraph Menus["Menu items"]
+        GOMenu["OneTextMenuItems (GameObject/UI/OneText/...)"]
+        AssetMenu["Assets/OneText/Create Font Asset, Set as Default Font, Save Recorded Charset"]
+    end
+    Provider["OneTextSettingsProvider (SettingsProvider)"]
+    Hub["OneTextHub (Editor/Hub)"]
+
+    LabelEd --> Rows
+    LabelEd --> Provider
+    FontEd --> Langs
+    FontEd --> Creator
+    GOMenu --> ESF
+    AssetMenu --> Creator
+    AssetMenu --> Provider
+    Provider --> Hub

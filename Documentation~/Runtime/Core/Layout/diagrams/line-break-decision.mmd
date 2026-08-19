@@ -1,0 +1,22 @@
+flowchart TD
+    A["FindLineEnd(lineStart, end)"] --> B{"Wrap is NoWrap, or InlineLimit is 0 or less?"}
+    B -->|yes| Z1["return end"]
+    B -->|no| C{"MeasureVisible(lineStart, end) fits the limit?"}
+    C -->|yes| Z1
+    C -->|no| D["walk i forward, summing _advances"]
+    D --> E{"opportunity at i is Allowed, and width minus trailing spaces minus EdgeGive fits?"}
+    E -->|yes| E1["best = i, keep walking"]
+    E1 --> D
+    E -->|too wide| F{"best is past lineStart?"}
+    F -->|yes| Z2["return best"]
+    F -->|no| G["emergency break: walk grapheme starts that fit"]
+    G --> G1["lastFit = last grapheme start that fits"]
+    G1 --> G2["lastLegalFit = last one LegalBreak allows (kinsoku)"]
+    G2 --> H{"lastLegalFit differs from lastFit and PushOutHelps is false?"}
+    H -->|yes| H1["discard lastLegalFit"]
+    H -->|no| I
+    H1 --> I{"lastLegalFit is past lineStart?"}
+    I -->|yes| Z3["return lastLegalFit"]
+    I -->|no| J{"lastFit is past lineStart?"}
+    J -->|yes| Z4["return lastFit"]
+    J -->|no| Z5["return first grapheme start after lineStart"]

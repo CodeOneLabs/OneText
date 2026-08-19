@@ -1,0 +1,73 @@
+classDiagram
+    class OneTextHub {
+        <<ScriptableObject>>
+        +string SettingsPath
+        +List~string~ StringFolders
+        +IReadOnlyList~HubSection~ Sections
+        +Mount() OneTextHub
+        +Unmount(hub)
+        +Open(tab)
+        +CreateUI() VisualElement
+        +Select(tab)
+        +Tick()
+        +Notify(message, bad)
+    }
+    class HubShell {
+        +VisualElement Root
+        +HubSection Current
+        +Select(section)
+        +RefreshNav()
+        +Notify(message, bad)
+    }
+    class HubSection {
+        <<abstract>>
+        +Tab Tab
+        +string Title
+        +string Lede
+        +string BadgeText
+        +Build(hub) VisualElement
+        +Rebuild()
+        #Compose(content)
+        +Tick()
+        +Dispose()
+        #StringSources(why) VisualElement
+    }
+    class HubUI {
+        <<static>>
+        +LoadTree(name) VisualTreeAsset
+        +LoadStyle(name) StyleSheet
+        +MakeCard(title, note) Card
+        +Field(label, control, hint)
+        +KeyValue(key, value, tone)
+        +Notice(text, tone)
+        +Empty(title, body, action)
+        +AssetPicker(get, set, emptyText)
+    }
+    class HubOverviewTab
+    class HubSettingsTab
+    class HubFontsTab
+    class HubStylesTab
+    class HubCharsetsTab
+    class HubDictionariesTab
+    class HubAtlasTab
+    class HubGalleryTab
+    class HubDoctorTab
+    class HubForensicsTab
+    class HubOnboardingTab
+
+    OneTextHub "1" --> "1" HubShell : CreateUI
+    OneTextHub "1" --> "11" HubSection : BuildSections
+    HubShell --> HubSection : Select builds and shows
+    HubSection <|-- HubOverviewTab
+    HubSection <|-- HubSettingsTab
+    HubSection <|-- HubFontsTab
+    HubSection <|-- HubStylesTab
+    HubSection <|-- HubCharsetsTab
+    HubSection <|-- HubDictionariesTab
+    HubSection <|-- HubAtlasTab
+    HubSection <|-- HubGalleryTab
+    HubSection <|-- HubDoctorTab
+    HubSection <|-- HubForensicsTab
+    HubSection <|-- HubOnboardingTab
+    HubSection ..> HubUI : composes with
+    HubShell ..> HubUI : LoadTree and LoadStyle

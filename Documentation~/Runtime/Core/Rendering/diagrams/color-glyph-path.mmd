@@ -1,0 +1,21 @@
+flowchart TD
+  run["Run whose font passes ColorGlyphs.IsColorFont"]
+  perGlyph["Per glyph: ColorGlyphs.UsesTextColor decides whether the key includes text colour or not"]
+  cached{"ColorGlyphAtlas.Contains(key)?"}
+  decode["ColorGlyphs.TryDecode(font, glyphId, pixelsPerUnit, textColor)"]
+  png["CBDT/CBLC: hb_ot_color_glyph_reference_png, Texture2D.LoadImage, GetPixels32"]
+  colr["COLRv0: hb_ot_color_glyph_get_layers + CPAL palette; per layer OutlineExtractor.Extract, scanline coverage (2x2, nonzero), Composite source-over"]
+  fail["false: glyph takes the ordinary SDF path (GlyphAtlas.GetOrAdd)"]
+  add["ColorGlyphAtlas.GetOrAdd(key, ColorGlyph): shelf pack, LRU evict, write RGBA32"]
+  loc["ColorLocation: UvRect inset half a texel, Layer"]
+  quad["TextQuad with IsColor = true, atlas discriminator 1 in TEXCOORD2.w"]
+
+  run --> perGlyph --> cached
+  cached -- yes --> loc
+  cached -- no --> decode
+  decode --> png
+  decode --> colr
+  decode -- no colour --> fail
+  png --> add
+  colr --> add
+  add --> loc --> quad

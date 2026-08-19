@@ -1,0 +1,88 @@
+classDiagram
+    class OneFontAsset {
+        +FontData Font
+        +FontData BoldFace
+        +string Language
+        +float LetterSpacingEm
+        +IReadOnlyList BaseVariations
+        +GetVariant(variations) FontData
+        +Initialize(bytes, familyName, sourcePath, packing)
+        +Repack(packing) bool
+        +IsPlaceholder bool
+    }
+    class FontData {
+        +Load(bytes, faceIndex)$ FontData
+        +UnitsPerEm, Ascender, Descender, LineGap
+        +CacheId, Generation, IsVariable
+        +HasGlyph(codepoint) bool
+        +TryGetInkBounds(glyphId, min, max) bool
+        +CreateVariant(variations) FontData
+        +SetVariations(variations)
+        +ForCurrentThread() FontData
+        +Dispose()
+    }
+    class FontStack {
+        +Add(regular, bold, language, letterSpacingEm)
+        +Resolve(cp, bold, italic, presentation, language) FontData
+        +ResolveFromSystem(cp) FontData
+        +TryGetStyled(regular, face, styled) bool
+        +HasBold(font) bool
+        +LetterSpacingOf(font) float
+        +Primary FontData
+        +BoldWeight, ItalicSlant
+    }
+    class SystemFonts {
+        +Enabled bool
+        +Resolve(codepoint)$ FontData
+        +IsSystemFont(font)$ bool
+        +NameOf(font)$ string
+        +Forget()$
+    }
+    class SystemFontIndex {
+        <<internal>>
+        +Files()$ string[]
+        +Directories()$
+        +Coverage(path)$ FaceCoverage[]
+        +FamilyName(path, face)$ string
+    }
+    class SharedFontBytes {
+        +Acquire(bytes, faceIndex)$ FontData
+        +Release(font)$
+        +LiveEntries int
+    }
+    class OneTextCharset {
+        +Codepoints() List
+        +BuildFontStack() FontStack
+        +Prewarm(atlas) PrewarmReport
+    }
+    class OneTextStyle {
+        +Fields Overrides
+        +OneTextStyle Extends
+        +OneFontAsset Font
+        +Apply(style) TextStyle
+        +Changed event
+    }
+    class FontSubsetter {
+        +TrySubset(bytes, codepoints, out subset, out report)$ bool
+        +IsAvailable bool
+    }
+    class MissingFonts {
+        +Warn(context, font, drawing)$
+    }
+    class OneTextSpriteSheet {
+        +TryRead(index, pixelHeight, out tile) bool
+        +AspectOf(index) float
+    }
+    OneFontAsset --> FontData : owns face and variants
+    OneFontAsset --> FontVariation : BaseVariations
+    FontStack --> FontData : entries Regular, Explicit, Instanced
+    FontStack --> SystemFonts : ResolveFromSystem
+    SystemFonts --> SystemFontIndex : Files, Coverage
+    SystemFonts --> FontData : loads winning face
+    SharedFontBytes --> FontData : refcounted
+    OneTextCharset --> FontStack : BuildFontStack
+    OneTextCharset --> OneFontAsset : Fonts
+    OneTextStyle --> OneFontAsset : Font
+    FontSubsetter --> HarfBuzzSubset : IsAvailable
+    FontSubsetter --> OneTextCharset : Codepoints
+    MissingFonts --> OneFontAsset : reads IsPlaceholder

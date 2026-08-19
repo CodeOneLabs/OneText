@@ -1,0 +1,19 @@
+flowchart TD
+    BAKE["Some label bakes a tile inside OnPopulateMesh"] --> EVICT["GlyphAtlas evicts or compacts, Version++"]
+    EVICT --> W1
+    EVICT --> W2
+    subgraph TICK["Next frame, outside the canvas rebuild"]
+        W1["AtlasWatcher.LateUpdate (play mode, HideAndDontSave object)"] --> POLL["AtlasInvalidation.Poll"]
+        W2["EditorApplication.update (editor)"] --> POLL
+    end
+    POLL --> CMP{"SDF, colour or precise Version moved?"}
+    CMP -- no --> RESET["s_consecutive = 0, nothing happens"]
+    CMP -- yes --> THRASH{"more than ThrashLimit (30) consecutive frames?"}
+    THRASH -- yes --> BACKOFF["back off BackoffFrames (120), warn once with atlas stats"]
+    THRASH -- no --> DIRTY["SetVerticesDirty on every registered Graphic"]
+    DIRTY --> NEXT["Next canvas pass: OneTextLabel.PopulateMesh"]
+    NEXT --> CHECK{"_quadsAtlasVersion == atlas.Version?"}
+    CHECK -- no --> REBUILD["Rebuild _quads: GetOrAddCluster again, fresh UvRect per tile"]
+    CHECK -- yes --> EMIT["EmitQuads from cached _quads"]
+    REBUILD --> EMIT
+    EMIT --> REQ["AtlasFlushScheduler.Request, then one Texture2DArray.Apply at LatePreRender"]

@@ -1,0 +1,19 @@
+stateDiagram-v2
+    [*] --> Unfocused
+    Unfocused --> Focused : OnSelect / ActivateInputField / OnPointerDown (Focus)
+    Focused --> Focused : keys, clicks, drags, IME polls
+    Focused --> Unfocused : OnDeselect / DeactivateInputField / OnDisable / Escape (EndEditing)
+    state Focused {
+        [*] --> Idle
+        Idle --> Composing : IME reports a non-empty composition
+        Composing --> Composing : composition text changes
+        Composing --> Idle : composition reported empty, or Escape, or a character pays for it
+    }
+    note right of Focused
+        Focus: StartInputMethod, select all unless a click placed the caret,
+        onSelect raised after Focus
+    end note
+    note right of Unfocused
+        EndEditing: FlushCommit, CommitComposition, StopInputMethod,
+        onValueChanged if changed, onEndEdit once, then onDeselect
+    end note

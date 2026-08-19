@@ -1,0 +1,31 @@
+sequenceDiagram
+    participant W as WrapParagraph
+    participant E as EmitLine
+    participant S as ShapeRun
+    participant H as Shaper
+    participant R as TextLayoutResult
+    W->>E: EmitLine(start, end, lastInParagraph, withEllipsis)
+    loop every Item overlapping [start, end)
+        E->>S: ShapeRun(item, s, e, lineStart, lineEnd)
+        alt whole item on this line
+            S->>R: copy glyphs from _measured
+        else item cut by the wrap
+            S->>H: Shape(font, text, s, e, direction, language)
+            H-->>R: ShapedGlyph appended
+        end
+        S->>S: ApplyAsianSpacing, tracking, mono, ApplyRubyPadding
+        S-->>E: TextRun (Width, Style, Rotated, SyntheticBold)
+    end
+    E->>E: line metrics: ascent, descent, gap per run, ruby height
+    alt block budget exceeded and not first line
+        E->>R: remove this line's runs and glyphs, Truncated = true
+        E->>E: ApplyEllipsis re-emits previous line
+        E-->>W: false
+    else fits
+        E->>E: Justify if Justified and not last line
+        E->>E: ReorderVisually (UAX 9 L2 on runs)
+        E->>R: Runs.Add with X and Baseline
+        E->>E: PlaceRubies as IsRuby runs
+        E->>R: Lines.Add(TextLine)
+        E-->>W: true
+    end

@@ -1,0 +1,43 @@
+classDiagram
+    class GoldenCases {
+        +LatinFont, ArabicFont, VariableFont, JapaneseFont...
+        +BaselineDirectory
+        +RendererStamp
+        +CommittedRendererStamp()
+        +All
+        +Find(name)
+    }
+    class GoldenCase {
+        +Name, Width, Height
+        +RequiredFonts
+        +BaselinePath
+        +MissingFont()
+        +Render()
+    }
+    class GoldenScene {
+        +Label(fontPath, text, size, rect, fallbacks)
+        +Mask(rect, softness)
+        +StencilMask(rect)
+        +CircleMask(rect)
+        +TextMask(fontPath, text, size, rect)
+        +Panel(rect, color)
+        +Render()
+        +Dispose()
+    }
+    class GoldenComparer {
+        +ChannelTolerance = 2
+        +DifferingPixelBudget = 0.001
+        +OutputDirectory
+        +Compare(caseName, actual, baselinePath)
+    }
+    class GoldenRegen {
+        +RegenerateAll()
+        +RenderAll()
+        +RevealBaselines()
+    }
+    GoldenCases "1" o-- "27" GoldenCase
+    GoldenCase ..> GoldenScene : builds one per Render
+    GoldenRegen ..> GoldenCases
+    GoldenRegen ..> GoldenComparer : OutputDirectory
+    GoldenImageTests ..> GoldenCases
+    GoldenImageTests ..> GoldenComparer

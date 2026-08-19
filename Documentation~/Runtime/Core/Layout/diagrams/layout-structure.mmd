@@ -1,0 +1,86 @@
+classDiagram
+    class RichTextParser {
+        <<static>>
+        +Parse(source, result, styleNames, fontNames, spriteNames)
+        +MightHaveMarkup(text) bool
+        +TryParseColor(arg, out color) bool
+        +TryParseDecoration(name, arg, out decoration) bool
+        +ParseEffectParameters(arg) TextEffectParameters
+    }
+    class RichTextResult {
+        +Text string
+        +TextSpan ReadOnlySpan
+        +Spans List~TextStyleSpan~
+        +Links List~TextLink~
+        +Alignments List
+        +Effects List
+        +Decorations List~TextDecorationSpan~
+        +Waits List
+        +Rubies List~TextRubySpan~
+        +StyleAt(index) TextStyle
+        +DecorationAt(index) TextDecoration
+    }
+    class TextStyle {
+        +SizeAbsolute float
+        +SizeScale float
+        +Color Color32
+        +BaselineShiftEm float
+        +LetterSpacingEm float
+        +MonoAdvanceEm float
+        +Flags Flag
+        +ResolveSize(inherited) float
+    }
+    class TextLayoutSettings {
+        +Fonts FontStack
+        +FontSize float
+        +MaxWidth float
+        +MaxHeight float
+        +WritingMode TextWritingMode
+        +Spans IReadOnlyList
+        +Rubies IReadOnlyList
+        +Kinsoku Kinsoku
+        +Language string
+    }
+    class TextLayoutEngine {
+        +Layout(text, settings, result)
+        +Layout(text, font, fontSize, result)
+        +Dispose()
+    }
+    class TextLayoutResult {
+        +Glyphs List~ShapedGlyph~
+        +Runs List~TextRun~
+        +Lines List~TextLine~
+        +GraphemeStarts List~int~
+        +Width float
+        +Height float
+        +Truncated bool
+        +GraphemeAt(textIndex) int
+    }
+    class TextHitTest {
+        <<static>>
+        +GetIndexAtPoint(layout, point) int
+        +GetCaretRect(layout, index, width) Rect
+        +GetSelectionRects(layout, start, end, rects)
+        +NextCaret(text, index) int
+    }
+    class TextQuad {
+        +Position Vector2
+        +Size Vector2
+        +FirstGrapheme int
+        +LastGrapheme int
+        +RunIndex int
+        +Style TextStyle
+        +Decoration int
+    }
+    class ITextQuadModifier {
+        <<interface>>
+        +Modify(ref quad, in context) bool
+    }
+    RichTextParser ..> RichTextResult : fills
+    RichTextResult o-- TextStyle : spans carry
+    RichTextResult ..> TextLayoutSettings : Spans, Rubies, Alignments feed
+    TextLayoutEngine ..> TextLayoutSettings : reads
+    TextLayoutEngine ..> TextLayoutResult : fills
+    TextHitTest ..> TextLayoutResult : queries
+    TextLayoutResult ..> TextQuad : frontend emits one per glyph
+    ITextQuadModifier ..> TextQuad : edits in place

@@ -1,0 +1,18 @@
+flowchart TD
+    Scan["TmpScriptRewriter.ScanProject(paths, assetsRoot)"]
+    Gate["MightMentionTmp: contains TMP, TextMeshPro or Dropdown?"]
+    RW["Rewrite(source)"]
+    Mask["CodeMask: lexer marks strings, char literals, comments as not-code"]
+    Enums["EnumBodies: spans between enum braces"]
+    Edits["TypeEdits: whole identifier chains against the Types map; Where() must answer Position.Type"]
+    Usings["using TMPro; becomes using OneText.UGUI; (+ using OneText; for OneTextMesh), trailing comment kept"]
+    Res["Residuals: TMP_*, TMPro_*, TMPro, TextMeshPro, TextMeshProUGUI still standing"]
+    Block["Blocker: using went but a Reference residual stays, or using unreadable with short names: original text back, Viable=false"]
+    Graph["TmpAssemblyGraph.Owner(path) + Missing(owner, RequiredAssemblies)"]
+    Groups["Groups: extension methods on mapped types and public members in TMP terms tie files together"]
+    Report["TmpScanReport: Files (TmpScriptFinding) + Groups (TmpFileGroup)"]
+    Apply["Hub Apply: re-Rewrite from disk, write file; Patch asmdef on request"]
+
+    Scan --> Gate -- yes --> RW
+    RW --> Mask --> Enums --> Edits --> Usings --> Res --> Block
+    Block --> Graph --> Groups --> Report --> Apply

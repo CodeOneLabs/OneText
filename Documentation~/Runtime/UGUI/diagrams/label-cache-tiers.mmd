@@ -1,0 +1,12 @@
+flowchart LR
+    SRC["_sourceBuffer and _text"] --> PARSE["_markup: RichTextResult, guarded by _parsedValid"]
+    PARSE --> LAYOUT["_layout: TextLayoutResult, guarded by LayoutKey"]
+    LAYOUT --> QUADS["_quads: List of TextQuad, guarded by _quadsValid and atlas versions"]
+    QUADS --> MESH["VertexHelper via EmitQuads, every OnPopulateMesh"]
+
+    T1["Text, SetText, RichText, Language, Sprites"] -. "InvalidateText" .-> PARSE
+    T2["FontSize, Wrap, rect size, Alignment, LineSpacing"] -. "LayoutKey differs" .-> LAYOUT
+    T3["Font, Style, SetVariations"] -. "ReleaseFonts bumps _layoutGeneration" .-> LAYOUT
+    T4["Precise, Quality, Decoration, RefreshPpemScale"] -. "_quadsValid = false" .-> QUADS
+    T5["GlyphAtlas.Version changes"] -. "AtlasInvalidation.Poll" .-> QUADS
+    T6["color, AnimationTime, MaxVisibleGraphemes, QuadModifier"] -. "SetVerticesDirty only" .-> MESH

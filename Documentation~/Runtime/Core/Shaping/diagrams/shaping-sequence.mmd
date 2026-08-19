@@ -1,0 +1,28 @@
+sequenceDiagram
+    participant E as TextLayoutEngine
+    participant S as Shaper
+    participant A as HarfBuzzApi
+    participant H as HarfBuzz
+    E->>S: Shape(item.Font, text, start, length, DirectionOf(item), output, settings.Language)
+    S->>S: validate font.IsValid, output not null - return if empty
+    S->>A: hb_buffer_reset(_buffer)
+    S->>A: hb_buffer_add_utf16(_buffer, text, text.Length, start, length)
+    S->>A: hb_buffer_guess_segment_properties(_buffer)
+    opt language not empty
+        S->>S: LanguageOf(tag) from s_languages cache
+        S->>A: hb_buffer_set_language(_buffer, language)
+    end
+    opt direction != Auto
+        S->>A: hb_buffer_set_direction(_buffer, LTR or RTL or TTB)
+    end
+    S->>A: hb_shape(font.Font, _buffer, 0, 0)
+    A->>H: GSUB, GPOS, vert when TTB, locl when language set
+    S->>A: hb_buffer_get_glyph_infos, hb_buffer_get_glyph_positions
+    loop each glyph i
+        alt TopToBottom
+            S->>S: ShapedGlyph(gid, cluster, -YAdvance, 0, -YOffset, XOffset)
+        else horizontal
+            S->>S: ShapedGlyph(gid, cluster, XAdvance, YAdvance, XOffset, YOffset)
+        end
+        S->>E: output.Add(glyph)
+    end

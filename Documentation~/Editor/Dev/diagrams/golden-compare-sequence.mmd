@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant T as GoldenImageTests
+    participant C as GoldenCases
+    participant S as GoldenScene
+    participant L as OneTextLabel
+    participant K as GoldenComparer
+    T->>C: CommittedRendererStamp() vs RendererStamp
+    Note over T: mismatch or missing font -> Assert.Ignore
+    T->>C: Find(name).Render()
+    C->>S: new GoldenScene(w, h)
+    Note over S: PrepareRendering: unity_GUIZTestMode, SharedGlyphAtlas.Reconfigure(force), DictionaryLineBreaker.ResetToDefaults
+    C->>S: build(scene): Label / Mask / StencilMask ...
+    S->>L: SetFont(bytes, fallbacks), Text, FontSize ...
+    S->>S: Render(): ForceUpdateCanvases + camera.Render, twice
+    S-->>T: Texture2D (RGBA32)
+    T->>K: Compare(name, actual, BaselinePath)
+    K-->>T: Result (Passed, DifferingPixels, WorstChannelDelta, Message)
+    Note over K: on failure writes name_actual.png and name_diff.png to OutputDirectory

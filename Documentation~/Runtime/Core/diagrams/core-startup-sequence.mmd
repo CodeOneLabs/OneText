@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant U as Unity player
+    participant S as OneTextSettings
+    participant R as Resources
+    participant D as OneTextDictionary
+    participant B as DictionaryLineBreaker
+    participant C as CharsetRecorder
+    U->>S: ApplyPlayModeOptions() [RuntimeInitializeOnLoadMethod BeforeSceneLoad]
+    S->>S: Instance getter
+    S->>R: Resources.Load("OneTextSettings") once
+    R-->>S: asset or null (s_searched = true either way)
+    alt asset found
+        S->>S: InstallDictionaries()
+        loop each non-null dictionary
+            S->>D: Install()
+            D->>D: Words (decompress, build WordList once)
+            D->>B: SetWordList(script, words)
+        end
+        opt _recordCharsetInPlayMode
+            S->>C: Clear(), Enabled = true
+        end
+    else no asset
+        S-->>U: return, labels use TextDefaults.Default
+    end

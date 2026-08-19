@@ -1,0 +1,36 @@
+sequenceDiagram
+    participant Caller
+    participant Label as OneTextLabel
+    participant Registry as CanvasUpdateRegistry
+    participant Engine as TextLayoutEngine
+    participant Atlas as GlyphAtlas
+    participant Flush as AtlasFlushScheduler
+    participant Canvas
+
+    Caller->>Label: Text = new string
+    Label->>Label: CopyIntoSource, InvalidateText
+    Note over Label: _parsedValid = false, _layoutGeneration++
+    Label->>Registry: SetVerticesDirty, SetLayoutDirty
+    Registry-->>Label: OnPopulateMesh(vh) during the canvas rebuild
+    Label->>Label: PopulateMesh: EnsureNativeState (FontStack, atlas hold, material)
+    Label->>Label: EnsureLayout: EnsureDisplayText (escapes, RichTextParser)
+    Label->>Label: build LayoutKey and compare
+    alt key differs
+        Label->>Engine: Layout(_markup.TextSpan, BuildSettings, _layout)
+        Engine-->>Label: lines, runs, glyphs, graphemes
+        Label->>Label: _layoutRuns++, _quadsValid = false, DropVertexOverride
+        Label->>Caller: OneTextEvents.RaiseTextChanged(label)
+    end
+    Label->>Label: RefreshPpemScale (screen density, hysteresis band)
+    alt quads stale (layout generation or atlas version moved)
+        Label->>Label: EmitBands(behind), per run: DensityFor, GlyphClusters.Split
+        Label->>Atlas: PrepareClusters(font, density, positioned, clusters)
+        Label->>Atlas: GetOrAddCluster per cluster
+        Atlas-->>Label: AtlasLocation (UvRect, Layer, OriginUnits, SizeUnits)
+        Label->>Label: _quads.Add(TextQuad), EmitBands(over), mark quads valid
+    end
+    Label->>Label: EmitQuads: reveal, TextAnimator, QuadModifier, tint, AddVert x4 per quad
+    Label->>Flush: Request()
+    Flush->>Canvas: registered at willRenderCanvases as ICanvasElement
+    Canvas-->>Flush: Rebuild(CanvasUpdate.LatePreRender)
+    Flush->>Atlas: Flush() uploads the Texture2DArray once for the frame

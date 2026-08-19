@@ -1,0 +1,27 @@
+flowchart TD
+  start["frag(v2f i)"]
+  clip["clipA: RectMask2D softness factor (1.0 when UNITY_UI_CLIP_RECT is off)"]
+  unpack["Unpack uv.z to layer, outlineSoftness; Unpack bounds.w to atlasKind, faceDilate"]
+  kind{"atlasKind"}
+  solid["3: return i.color with a *= clipA (no sampler)"]
+  colorTile["1: sample _ColorTex at (uv.x, clamp(uv.y, vmin, vmax), layer) * i.color; a *= clipA"]
+  field["0 or 2: field.x = Field(_GlyphTex).r or Median(_MsdfTex.rgb); field.y = same or _MsdfTex.a"]
+  aa["aa = max(fwidth(field.y), 1e-4)"]
+  face["faceT = 0.5 - faceDilate * REACH_FIELD; faceA = color.a * smoothstep(faceT - aa, faceT + aa, d)"]
+  plain{"decoA.y + decoA.w + decoB.y below 0.5 and faceDilate about 0?"}
+  plainOut["return (color.rgb, faceA * clipA)"]
+  deco["Unpack outline, shadow, glow bytes"]
+  shadow["shadowUv = uv - Signed(offset) * REACH_TEXELS * texel; shadowD from Field or MsdfTrueField (alpha); soft = max(aa, softness * REACH_FIELD)"]
+  glow["glow: falloff on (0.5 - d) outside, (d - 0.5) inside; inner and outer nibbles"]
+  outline["outlineT = max(0.5 - REACH_FIELD * width, aa * 1.5); outlineSoft = max(aa, outlineSoftness * REACH_FIELD)"]
+  stack["acc = shadow; Over(glow); Over(outline); Over(face)   (premultiplied)"]
+  clipAcc["acc *= clipA"]
+  out["return (acc.rgb / max(acc.a, 1e-4), acc.a)  (straight alpha)"]
+  ret["ONETEXT_RETURN: clip(a - 0.001) only under UNITY_UI_ALPHACLIP"]
+
+  start --> clip --> unpack --> kind
+  kind -- 3 --> solid --> ret
+  kind -- 1 --> colorTile --> ret
+  kind -- 0 or 2 --> field --> aa --> face --> plain
+  plain -- yes --> plainOut --> ret
+  plain -- no --> deco --> shadow --> glow --> outline --> stack --> clipAcc --> out --> ret

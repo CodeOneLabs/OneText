@@ -1,0 +1,13 @@
+flowchart TD
+    Start["Compile-time defines in HarfBuzzApi.cs"] --> Q1{"UNITY_WEBGL and not UNITY_EDITOR"}
+    Q1 -- yes --> W["Lib = __Internal, HbPrefix = onetext_ (statically linked, renamed symbols)"]
+    Q1 -- no --> Q2{"UNITY_IOS and not UNITY_EDITOR"}
+    Q2 -- yes --> I["Lib = __Internal, HbPrefix empty (framework linked into UnityFramework)"]
+    Q2 -- no --> D["Lib = libHarfBuzzSharp, HbPrefix empty"]
+    D --> M["macOS: libHarfBuzzSharp.dylib"]
+    D --> L["Linux x86_64: libHarfBuzzSharp.so"]
+    D --> WIN["Windows x86 / x86_64 / ARM64: libHarfBuzzSharp.dll (exact name, no lib prefix walk)"]
+    D --> AN["Android arm64-v8a / armeabi-v7a / x86_64: libHarfBuzzSharp.so"]
+    D --> ED["Editor on any OS, including Web or iOS as active target"]
+    W --> WA["Runtime/Plugins/WebGL/libHarfBuzzSharp.a"]
+    I --> IA["Runtime/Plugins/iOS/libHarfBuzzSharp.xcframework"]

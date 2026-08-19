@@ -1,0 +1,43 @@
+flowchart TD
+    Hub["HubOnboardingTab (Editor/Hub)"]
+    CM["ComponentMigration"]
+    Prov["MigrationProviders (registry)"]
+    IMP["IMigrationProvider"]
+    Legacy["LegacyTextProvider (Text, TextMesh, InputField, Dropdown)"]
+    Tmp["TmpMigrationProvider (Onboarding/Tmp, gated on ONETEXT_TMPRO)"]
+    Map["MigrationMapping (pure value conversions, tag lint)"]
+    Model["MigrationModel: MigrationTarget, MigrationValues, MigrationFinding, MigrationReport"]
+    CR["ContainerReferences (cross-container census and relink)"]
+    CF["ContainerFile (reads fileIDs out of the YAML text)"]
+    UET["UnityEventTransfer (persistent listeners as data)"]
+    FR["FontRecovery (placeholder OneFontAsset per missing font file)"]
+    FSC["FontSourceCatalog (licence-checked downloads)"]
+    FM["FontMetadata / FontWeightNames"]
+    RW["TmpScriptRewriter (source rename)"]
+    AG["TmpAssemblyGraph (asmdef references)"]
+    Git["OnboardingGit (is this overwrite revertible?)"]
+    Misc["DOTweenPresence / OnboardingWelcome (InitializeOnLoad)"]
+
+    Hub --> CM
+    Hub --> RW
+    Hub --> FR
+    Hub --> Git
+    Hub --> AG
+    CM --> Prov
+    Prov --> IMP
+    IMP --> Legacy
+    IMP --> Tmp
+    Tmp -. registers via InitializeOnLoad .-> Prov
+    Legacy --> Map
+    Tmp --> Map
+    Legacy --> UET
+    Tmp --> UET
+    CM --> Model
+    CM --> CR
+    CM --> CF
+    CR --> CF
+    CM --> UET
+    CM --> FR
+    FR --> FSC
+    FSC --> FM
+    RW --> AG

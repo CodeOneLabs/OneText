@@ -1,0 +1,24 @@
+flowchart TD
+    subgraph Callers["Managed callers (own the handles)"]
+        FD["Fonts/FontData: Blob, Face, Font"]
+        SH["Shaping/Shaper: hb_buffer"]
+        OE["Rendering/OutlineExtractor: hb_draw_funcs"]
+        CG["Rendering/ColorGlyphs: PNG blobs, layers, palettes"]
+        FS["Fonts/FontSubsetter: subset input, result face"]
+        HS["Fonts/HarfBuzzSubset.IsAvailable"]
+    end
+    API["Native/HarfBuzzApi (internal static, one extern per hb_* entry point)"]
+    FD --> API
+    SH --> API
+    OE --> API
+    CG --> API
+    FS --> API
+    HS --> API
+    API --> LIB["libHarfBuzzSharp (HarfBuzz 14.2.1 C API)"]
+    subgraph Structs["Blittable structs in HarfBuzzApi.cs"]
+        S1["HBGlyphInfo, HBGlyphPosition"]
+        S2["HBGlyphExtents, HBFontExtents"]
+        S3["HBVariation, HBVarAxisInfo"]
+        S4["HBOtColorLayer"]
+    end
+    API --- Structs

@@ -1,0 +1,28 @@
+flowchart TD
+    A["TextLayoutEngine.Layout(text, settings, result)"] --> B["result.Clear()"]
+    B --> C{"text empty?"}
+    C -->|yes| C1["EmptyLine + Publish + Align"]
+    C -->|no| D["IsSimple: ASCII, NoWrap, no spans, primary font covers all"]
+    D -->|simple| E["opportunity table cleared, one grapheme per char"]
+    D -->|general| F["LineBreaker.Analyze (UAX 14)"]
+    F --> F1["SuppressNoBreakOpportunities (nobr)"]
+    F1 --> F2["SuppressRubyBreakOpportunities"]
+    F2 --> F3["DictionaryLineBreaker.Apply (Thai etc.)"]
+    F3 --> F4["AsianTypography.ApplyKoreanWordWrap"]
+    F4 --> F5["AsianTypography.ApplyKinsoku"]
+    F5 --> G["TextSegmenter.GraphemeBoundaries (UAX 29)"]
+    E --> H
+    G --> H["result.GraphemeStarts published"]
+    H --> P["for each paragraph (split at Mandatory breaks)"]
+    P --> I["BuildItems: bidi levels, font and style itemization"]
+    I --> I1["MeasureItems: shape every item once, fill _advances"]
+    I1 --> I2["MeasureRubies: shape annotations, pad base if wider"]
+    I2 --> W["WrapParagraph"]
+    W --> W1["FindLineEnd (greedy, then emergency break)"]
+    W1 --> W2["EmitLine: ShapeRun per item slice, metrics, overflow, Justify, ReorderVisually, PlaceRubies"]
+    W2 --> W1
+    W2 -->|height budget exceeded| X["Truncated = true, ApplyEllipsis if asked"]
+    W2 -->|paragraph done| P
+    P -->|all paragraphs| Q["Publish: inline and block extents become Width and Height"]
+    Q --> R["Align: per-line InlineOffset, runs moved"]
+    X --> Q

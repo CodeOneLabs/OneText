@@ -1,0 +1,22 @@
+flowchart TD
+    K["KeyDown event from Event.PopEvent"] --> C{"_model.IsComposing?"}
+    C -- yes --> E{"Escape?"}
+    E -- yes --> CANCEL["CancelComposition"]
+    E -- no --> B{"Backspace?"}
+    B -- yes --> HOLD["_backspaceHeld = true, decided by ReleaseHeldBackspace"]
+    B -- no --> P{"printable char, no Ctrl or Cmd?"}
+    P -- yes --> ACC1["model.AcceptCharacter (the IME's commit)"]
+    P -- no --> DROP1["dropped: the key belongs to the IME"]
+    C -- no --> N{"keyCode None and char 0?"}
+    N -- yes --> DROP2["dropped: macOS stray event"]
+    N -- no --> OB{"Backspace and DiscardOwedCommit?"}
+    OB -- yes --> SWALLOW["drop, _swallowingCompositionTail = true"]
+    OB -- no --> S["SettleOwedCommit if the key carries no text"]
+    S --> SW{"switch keyCode"}
+    SW --> EDIT["Backspace, Delete, arrows, Home, End"]
+    SW --> RET["Return: multiline Insert newline, else Submit"]
+    SW --> ESC["Escape: DeactivateInputField"]
+    SW --> CLIP["Ctrl or Cmd A C X V"]
+    SW --> CH{"character printable?"}
+    CH -- yes --> ACC2["model.AcceptCharacter, arbiter may swallow an echo"]
+    CH -- no --> DROP3["dropped"]

@@ -1,0 +1,31 @@
+flowchart LR
+    subgraph ucd["Unicode Character Database  (ucd-dir, UCD 17.0.0 today)"]
+        dbc["DerivedBidiClass.txt"]
+        bb["BidiBrackets.txt"]
+        dlb["DerivedLineBreak.txt"]
+        dgc["DerivedGeneralCategory.txt"]
+        eaw["EastAsianWidth.txt"]
+        gbp["GraphemeBreakProperty.txt"]
+        wbp["WordBreakProperty.txt"]
+        sbp["SentenceBreakProperty.txt"]
+        dcp["DerivedCoreProperties.txt  (InCB)"]
+        ed["emoji-data.txt"]
+        vo["VerticalOrientation.txt"]
+    end
+    dbc --> genb["Tools/gen_bidi_tables.py"]
+    bb --> genb
+    dlb --> genl["Tools/gen_break_tables.py"]
+    dgc --> genl
+    eaw --> genl
+    gbp --> genl
+    wbp --> genl
+    sbp --> genl
+    dcp --> genl
+    ed --> genl
+    vo --> genv["Tools/gen_vertical_tables.py"]
+    genb --> bidi["Runtime/Core/Unicode/BidiData.g.cs  BidiData.GetClass, TryGetBracket"]
+    genl --> brk["Runtime/Core/Unicode/BreakData.g.cs  GetLineClass, GetGraphemeClass, GetWordClass, GetSentenceClass, GetIncb, GetFlags"]
+    genv --> vert["Runtime/Core/Unicode/VerticalData.g.cs  VerticalData.GetOrientation"]
+    bidi --> alg["BidiAlgorithm"]
+    brk --> lb["LineBreaker, TextSegmenter"]
+    vert --> vol["VerticalOrientationLookup"]

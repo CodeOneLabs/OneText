@@ -1,0 +1,26 @@
+flowchart TD
+    subgraph SHARED["Shared core pipeline, Runtime/Core"]
+        FS["FontStack and OneFontAsset"] --> RP["RichTextParser"]
+        RP --> LE["TextLayoutEngine.Layout"]
+        LE --> GC["GlyphClusters.Split"]
+        GC --> GA["SharedGlyphAtlas: SDF, precise, colour"]
+        GA --> VC["Vertex channel contract from OneTextLabel.AddVert"]
+    end
+    subgraph LABEL["OneTextLabel, Runtime/UGUI"]
+        L1["MaskableGraphic in a Canvas"]
+        L2["size in canvas units, density from quality and ScreenPpem"]
+        L3["SharedGlyphAtlas.Material, canvas ZTest"]
+        L4["VertexHelper in OnPopulateMesh"]
+        L5["decorations, reveal, effects, sprites, styles, links, textInfo"]
+        L6["AtlasFlushScheduler at LatePreRender"]
+    end
+    subgraph MESH["OneTextMesh, Runtime/Mesh"]
+        M1["MonoBehaviour with MeshFilter and MeshRenderer, ExecuteAlways"]
+        M2["size in points, PointsToUnits = 0.1, density from quality only (ForWorld)"]
+        M3["WorldMaterial: clone with unity_GUIZTestMode = LessEqual"]
+        M4["Mesh.SetVertices etc. in Rebuild, from LateUpdate or EditorPoll"]
+        M5["none of those: tags lay out but draw nothing extra"]
+        M6["MeshFlush at Application.onBeforeRender"]
+    end
+    VC --> L4
+    VC --> M4

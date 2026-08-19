@@ -1,0 +1,22 @@
+flowchart TD
+    subgraph boot ["SubsystemRegistration, only when ONETEXT_INPUT_SYSTEM is defined"]
+        R0["InputSystemImeInput.Register"] --> R1["s_shared.Forget: sessions 0, unsubscribe"]
+        R1 --> R2{"ImeInput.PlatformImeAnswers?"}
+        R2 -- yes --> R3["do nothing: the built-in backend will run"]
+        R2 -- no --> R4["ImeInput.Register(() => s_shared)"]
+    end
+    subgraph focus ["First focus of a field: ImeInput.Create"]
+        C0["_registered factory set?"] -- yes --> C1["registered = factory()"]
+        C1 --> C2{"registered != null and IsAvailable?"}
+        C2 -- yes --> C3["return registered, Describe = name, registered"]
+        C2 -- no --> C4["remember why it refused"]
+        C0 -- no --> C5["builtIn = new ImguiImeInput"]
+        C4 --> C5
+        C5 --> C6{"builtIn.IsAvailable (PlatformImeAnswers)?"}
+        C6 -- yes --> C7["return builtIn, Describe = ImguiImeInput"]
+        C6 -- no --> C8["WarnThereIsNoBackend once, return null: field edits but cannot compose"]
+    end
+    subgraph mobile ["Before any of that, in OneTextInputField.StartInputMethod"]
+        M0{"MobileTextInput.IsSupported?"} -- yes --> M1["MobileTextInput.Open, no IImeInput"]
+        M0 -- no --> C0
+    end

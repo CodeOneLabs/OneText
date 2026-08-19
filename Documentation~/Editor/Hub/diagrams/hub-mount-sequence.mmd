@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant SW as Settings window
+    participant P as OneTextSettingsProvider
+    participant H as OneTextHub
+    participant S as HubShell
+    participant T as HubSection (e.g. HubDoctorTab)
+
+    SW->>P: activateHandler(searchContext, root)
+    P->>H: Mount() (CreateInstance, hideFlags DontSave)
+    H->>H: OnEnable: read EditorPrefs OneText.Hub.Folders and OneText.Hub.Section, BuildSections()
+    P->>H: CreateUI()
+    H->>S: new HubShell(hub)
+    S->>S: HubUI.LoadTree("OneTextHub").CloneTree, LoadStyle("OneTextHub"), BuildNav()
+    H->>S: Select(Find(pending or s_requested))
+    S->>T: Build(hub) -> Compose(root)
+    S->>T: OnShow()
+    S->>S: RefreshNav() (BadgeText per section)
+    H-->>P: shell.Root
+    P->>SW: root.Add(ui) - schedule Tick() every 500 ms
+    loop every 500 ms
+        SW->>H: Tick()
+        H->>T: Current.Tick() (only HubAtlasTab does work, and only in play mode)
+    end
+    SW->>P: deactivateHandler()
+    P->>H: Unmount(hub) -> DestroyImmediate
+    H->>H: OnDisable: write EditorPrefs section and folders, Dispose() every section

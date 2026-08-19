@@ -1,0 +1,24 @@
+flowchart LR
+  shaped["List of ShapedGlyph (one run)"]
+  split["GlyphClusters.Split or SplitUpright"]
+  clusters["Cluster list + PositionedGlyph list"]
+  prepare["GlyphAtlas.PrepareClusters"]
+  key["Key: font CacheId, cluster hash, ppem bucket, generations, precise"]
+  hit{"Key in _entries?"}
+  extract["OutlineExtractor.Extract via hb_font_draw_glyph"]
+  contours["Flattened polylines in font units, moved to cluster offsets"]
+  raster["GlyphRasterizer.RasterizeBatch"]
+  job["SdfBatchJob or MsdfBatchJob (Burst, IJobParallelFor)"]
+  pixels["RasterizedGlyph: bytes into one pooled buffer"]
+  commit["GlyphAtlas.Commit: Allocate + WriteSlot"]
+  tex["Texture2DArray CPU copy (R8 or RGBA32)"]
+  flush["GlyphAtlas.Flush: partial CopyTexture or full Apply"]
+  loc["GlyphLocation: OriginUnits, SizeUnits, UvRect, Layer"]
+  quad["Frontend builds TextQuad, then vertices"]
+
+  shaped --> split --> clusters --> prepare --> key --> hit
+  hit -- yes --> loc
+  hit -- no --> extract --> contours --> raster --> job --> pixels --> commit --> tex
+  commit --> loc
+  tex --> flush
+  loc --> quad

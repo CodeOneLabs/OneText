@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant E as TextLayoutEngine.BuildItems
+    participant R as BidiRuns
+    participant A as BidiAlgorithm
+    participant D as BidiData
+    E->>R: GetLogicalRuns(text, start, length, settings.BaseDirection, _bidiRuns)
+    R->>R: decode UTF-16 to codepoints (t_cps) and offsets (t_cpStarts), ThreadStatic scratch
+    R->>A: Resolve(cps, paragraphDirection, levels, removed, visualOrder)
+    A->>D: GetClass(cp) for every codepoint
+    A->>A: P2/P3 paragraph level (AutoDirection = 2 means first strong)
+    alt no R, AL, AN, BN or explicit controls and paragraph is LTR
+        A-->>R: all levels 0, nothing removed (fast path, no allocation)
+    else
+        A->>A: X1-X8 explicit embeddings/isolates (stack, MaxDepth 125)
+        A->>A: X9 removed[] for LRE RLE LRO RLO PDF BN - X10 isolating run sequences
+        loop each sequence
+            A->>A: W1-W7 weak types
+            A->>D: TryGetBracket / CanonicalBracket (N0, BD16)
+            A->>A: N1-N2 neutrals, I1-I2 implicit levels
+        end
+        A->>A: L1 trailing whitespace to paragraph level - L2 reverse by level into visualOrder
+        A-->>R: paragraph level
+    end
+    R->>R: removed codepoints inherit previous level (no holes in coverage)
+    R->>R: group equal-level neighbours into Run{Start, Length, Level} in logical order
+    R-->>E: paragraph level - _bidiRuns filled
+    E->>E: per run: split further by font, style, presentation, orientation

@@ -1,0 +1,44 @@
+classDiagram
+    class OneTextSettings {
+        +const string ResourcePath
+        +static OneTextSettings Instance
+        +static TextDefaults ProjectDefaults
+        +OneFontAsset DefaultFont
+        +IReadOnlyList FallbackFonts
+        +bool SystemFontFallback
+        +TextQuality DefaultQuality
+        +GlyphAtlasSettings AtlasSettings
+        +IReadOnlyList Dictionaries
+        +InstallDictionaries()
+        +static Invalidate()
+    }
+    class TextDefaults {
+        +float FontSize
+        +float AutoSizeMin
+        +float AutoSizeMax
+        +bool RaycastTarget
+        +bool RichText
+        +TextWrap Wrap
+        +static TextDefaults Default
+    }
+    class TextQuality {
+        <<enumeration>>
+        Project
+        Performance
+        Medium
+        High
+    }
+    class TextQualityScale {
+        +static TextQuality Project
+        +static Resolve(TextQuality)
+        +static ForWorld(TextQuality) float
+        +static ForCanvas(TextQuality) float
+    }
+    class OneTextInfo {
+        +const string Version
+        +const string PackageName
+    }
+    OneTextSettings *-- TextDefaults : Defaults
+    OneTextSettings --> TextQuality : DefaultQuality
+    TextQualityScale ..> OneTextSettings : reads Instance
+    TextQualityScale ..> TextQuality

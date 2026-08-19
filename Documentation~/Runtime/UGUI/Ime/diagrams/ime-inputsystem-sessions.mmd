@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> Forgotten : static ctor, or Register() at SubsystemRegistration calls Forget()
+    Forgotten --> Listening : Begin() from the first field, _sessions 1, Listen(Keyboard.current), SetIMEEnabled(true)
+    Listening --> Listening : Begin() from another field, _sessions + 1, composition cleared
+    Listening --> Listening : End() while _sessions > 1, _sessions - 1, switch left on
+    Listening --> Listening : onIMECompositionChange, _composition = string
+    Listening --> Listening : onDeviceChange and Keyboard.current differs, Unlisten(false), Listen(current)
+    Listening --> Forgotten : End() from the last field, Unlisten(disableIme true), composition cleared
+    note right of Listening
+        TryGetComposition returns the cached _composition.
+        ReportsPlatformState is false: empty means no event, not platform released.
+    end note

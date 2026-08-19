@@ -1,0 +1,75 @@
+classDiagram
+    class ITextEffect {
+        <<interface>>
+        +Evaluate(in TextEffectInput) TextEffectOutput
+    }
+    class ISettlingTextEffect {
+        <<interface>>
+        +SettleSeconds float
+    }
+    class TextEffectInput {
+        +Time float
+        +Cluster int
+        +ClusterCount int
+        +Reveal float
+        +TimeSinceReveal float
+        +Center Vector2
+    }
+    class TextEffectOutput {
+        +Translate Vector2
+        +RotationDegrees float
+        +Scale Vector2
+        +Tint Color
+        +Combine(other) TextEffectOutput
+        +Faded(weight) TextEffectOutput
+    }
+    class TextEffectParameters {
+        +Amplitude float
+        +Frequency float
+        +Speed float
+        +Extra float
+        +Duration float
+        +Or(fallback) TextEffectParameters
+    }
+    class TextEffectSpan {
+        +Effect ITextEffect
+        +Parameters TextEffectParameters
+        +FirstCluster int
+        +LastCluster int
+        +Covers(cluster) bool
+    }
+    class TextAnimator {
+        +Spans
+        +IsEmpty bool
+        +WorkEndsAt float
+        +Clear()
+        +Add(in TextEffectSpan)
+        +NoteReveal(revealed, clusterCount, time)
+        +UnlatchFrozenStamps()
+        +Modify(ref TextQuad, in TextQuadContext) bool
+        +EnvelopeWeight(duration, time) float
+        +Apply(ref TextQuad, in TextEffectOutput)
+    }
+    class BuiltInEffects {
+        <<static>>
+        +Register(name, factory)
+        +Register(name, factory, defaults, uses)
+        +Has(name) bool
+        +CanonicalName(span) string
+        +Create(name, parameters) ITextEffect
+        +Names
+        +DefaultsOf(name)
+        +UsesOf(name)
+    }
+    class DelegateTextEffect {
+        +Evaluate(in TextEffectInput)
+    }
+    ITextEffect <|-- ISettlingTextEffect
+    ITextEffect <|.. DelegateTextEffect
+    BuiltInEffects ..> ITextEffect : creates one of 14 private structs
+    TextEffectSpan o-- ITextEffect
+    TextEffectSpan o-- TextEffectParameters
+    TextAnimator o-- TextEffectSpan : List
+    TextAnimator ..> TextEffectInput : builds per quad
+    TextAnimator ..> TextEffectOutput : combines
+    BuiltInEffects ..> TextEffectParameters : declares defaults per name
