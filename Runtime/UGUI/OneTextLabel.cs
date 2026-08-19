@@ -236,7 +236,27 @@ namespace OneText.UGUI
         public string Text
         {
             get => _text;
-            set { _text = value; InvalidateText(); }
+            set
+            {
+                // Assigning the string the label already holds used to cost a
+                // full rebuild — re-parse, re-layout, re-quad — for a result
+                // that could not differ, and a scene of labels refreshed from
+                // game state pays that every frame. TextMeshPro's setter has
+                // guarded this since it existed; measured here it was 380 bytes
+                // and a relayout per label per frame.
+                if (_text == value)
+                {
+                    // The one thing a same-value assignment did that mattered:
+                    // a running typewriter retyped the line. RestartReveal is
+                    // the documented way to ask for that and touches only the
+                    // reveal counters, so the behaviour survives without any of
+                    // the work above.
+                    if (_charactersPerSecond > 0f && Application.isPlaying) RestartReveal();
+                    return;
+                }
+                _text = value;
+                InvalidateText();
+            }
         }
 
         public float FontSize
@@ -1402,6 +1422,17 @@ namespace OneText.UGUI
         private TextLayoutSettings BuildSettings(float maxWidth, float maxHeight) =>
             BuildSettings(maxWidth, maxHeight, EffectiveFontSize);
 
+        // A method group converts to a NEW delegate every time it is converted,
+        // and Roslyn caches that conversion for static methods only; these three
+        // are instance methods by necessity. Uncached they were three heap
+        // allocations on every layout that missed its cache, for every label in
+        // the scene, which is the whole of what a rebuild allocated. Each one
+        // reads live state when it is invoked, so a delegate built once can
+        // never serve a stale font, style or sprite.
+        private System.Func<int, FontData> _resolveFontOverride;
+        private System.Func<int, TextStyle, TextStyle> _resolveNamedStyle;
+        private System.Func<int, float> _resolveSpriteAspect;
+
         private TextLayoutSettings BuildSettings(float maxWidth, float maxHeight, float fontSize) =>
             new TextLayoutSettings
             {
@@ -1417,9 +1448,9 @@ namespace OneText.UGUI
                 LetterSpacingEm = EffectiveLetterSpacing,
                 HasLetterSpacing = HasBaseLetterSpacing,
                 BaseDirection = BidiAlgorithm.AutoDirection,
-                ResolveFontOverride = NamedFont,
-                ResolveNamedStyle = ApplyNamedStyle,
-                ResolveSpriteAspect = SpriteAspect,
+                ResolveFontOverride = _resolveFontOverride ??= NamedFont,
+                ResolveNamedStyle = _resolveNamedStyle ??= ApplyNamedStyle,
+                ResolveSpriteAspect = _resolveSpriteAspect ??= SpriteAspect,
                 Language = _language,
                 Kinsoku = _kinsoku,
                 // Korean word wrap follows the locale rather than a toggle: a

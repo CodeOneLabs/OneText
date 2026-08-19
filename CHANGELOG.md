@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A label rebuild allocates nothing.** Changing a label's text cost about 380
+  bytes of garbage, and all of it came from three method groups —
+  `NamedFont`, `ApplyNamedStyle`, `SpriteAspect` — handed to the layout
+  settings. A method group converts to a *new* delegate every time it is
+  converted, and the compiler caches that conversion for static methods only,
+  so a scene paid three allocations per label per rebuild for ever. They are
+  built once per label now. Measured over 600 frames of the world-space
+  scenario (200 labels, 50 retexted a frame): **17.0 KB a frame to 1.3 KB**,
+  which is under TextMeshPro's 1.6 KB on the same frame, with no change to
+  frame time. The remaining kilobyte is the scenario's own `ToString()` calls,
+  not the engine's.
+
+- **Assigning the text a label already holds does nothing.** The setter
+  re-parsed, re-laid-out and re-built quads for a string that had not changed,
+  which is the ordinary case for any UI refreshed from game state every frame
+  (TextMeshPro's setter has guarded this since it existed). One side effect of
+  that assignment was worth keeping and is kept: a running typewriter still
+  retypes the line, through `RestartReveal`, which touches the reveal counters
+  and nothing else.
+
+
 ## [0.3.0] - 2026-08-12
 
 ### Added

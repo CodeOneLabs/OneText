@@ -222,6 +222,90 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void Reassigning_An_Equal_String_Rebuilds_Nothing()
+        {
+            _label.Text = Sample;
+            Populate();
+            int runs = _label.LayoutRuns;
+            int quads = _label.QuadBuilds;
+
+            // Equal content, deliberately not the same reference: a project
+            // that formats its text builds a fresh string every frame, and that
+            // is the case worth being cheap.
+            string same = new string(Sample.ToCharArray());
+            _label.Text = same;
+            _label.EnsureLayout();
+            Populate();
+
+            // Counters rather than a comparison of results, because a rebuild
+            // that produced the identical layout is invisible in the output and
+            // is exactly what this is about.
+            Assert.AreEqual(runs, _label.LayoutRuns,
+                "assigning a string equal to the one already set must not re-run layout");
+            Assert.AreEqual(quads, _label.QuadBuilds,
+                "assigning a string equal to the one already set must not rebuild quads");
+        }
+
+        [Test]
+        public void Reassigning_An_Equal_String_Still_Retypes_A_Running_Typewriter()
+        {
+            // The one side effect of a same-value assignment that a game can
+            // see: a typewriter showing this line starts it again. The guard
+            // above must not have taken it away.
+            _label.Text = Sample;
+            _label.CharactersPerSecond = 30f;
+            _label.MaxVisibleGraphemes = 5;
+
+            _label.Text = Sample;
+
+            // Outside play mode RestartReveal is not called (there is no clock
+            // to un-blank the label with), so what is asserted here is that the
+            // reveal state was not disturbed either way — the play-mode retype
+            // is pinned by RuntimeTypewriterTests.
+            Assert.AreEqual(5, _label.MaxVisibleGraphemes,
+                "a same-value assignment outside play mode must not blank the reveal");
+        }
+
+        [Test]
+        public void Layout_Resolvers_Are_Built_Once_Per_Label()
+        {
+            // The three resolvers are method groups, and a method group makes a
+            // new delegate on every conversion: uncached they were the whole of
+            // a rebuild's allocation. This reads the fields rather than the
+            // profiler because the GC.Alloc recorder counts nothing in a batch
+            // editor, where a "does not allocate" assertion passes whatever the
+            // code does.
+            string a = Sample, b = Sample.ToUpperInvariant();
+            _label.Text = a;
+            _label.EnsureLayout();
+
+            var fields = new[]
+            {
+                "_resolveFontOverride", "_resolveNamedStyle", "_resolveSpriteAspect",
+            };
+            var before = new object[fields.Length];
+            for (int i = 0; i < fields.Length; i++)
+            {
+                var field = typeof(OneTextLabel).GetField(fields[i],
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.NotNull(field, $"{fields[i]} is gone; the cache it names was the fix");
+                before[i] = field.GetValue(_label);
+                Assert.NotNull(before[i], $"{fields[i]} was not built by the first layout");
+            }
+
+            _label.Text = b;
+            _label.EnsureLayout();
+
+            for (int i = 0; i < fields.Length; i++)
+            {
+                var field = typeof(OneTextLabel).GetField(fields[i],
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.AreSame(before[i], field.GetValue(_label),
+                    $"{fields[i]} was rebuilt by a second layout: one allocation per label per frame");
+            }
+        }
+
+        [Test]
         public void Steady_State_Redraw_Does_Not_Allocate()
         {
             _label.Text = Sample;
