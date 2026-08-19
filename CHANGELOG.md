@@ -197,6 +197,17 @@
   retypes the line, through `RestartReveal`, which touches the reveal counters
   and nothing else.
 
+- **A label with no font of its own re-ran its whole layout every frame.** With
+  no font assigned and none in the settings, the font stack is empty and the
+  label draws in a system face — and the stack was rebuilt on every layout pass
+  so that a `.ttf` dropped into the empty field would be picked up. The rebuild
+  bumped the generation counter that the layout cache keys on, so the cache
+  never hit: every pass re-parsed, re-shaped and re-broke the text. It is still
+  rebuilt every pass; it now bumps the counter only when the rebuild arrives at
+  different faces than it started with. This is what the test above — writing
+  the same number twice and asking that the second write lay out nothing —
+  found: it passed only on a machine with a project font configured.
+
 
 ## [0.3.0] - 2026-08-12
 

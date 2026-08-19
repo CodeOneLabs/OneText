@@ -1451,9 +1451,11 @@ namespace OneText.UGUI
             }
         }
 
-        private void ReleaseFonts()
+        private void ReleaseFonts() => ReleaseFonts(bumpGeneration: true);
+
+        private void ReleaseFonts(bool bumpGeneration)
         {
-            _layoutGeneration++;
+            if (bumpGeneration) _layoutGeneration++;
             _fonts?.Dispose();
             _fonts = null;
             // Only fonts this label loaded from raw bytes are ours to destroy;
@@ -1493,6 +1495,10 @@ namespace OneText.UGUI
 
             return EnsureMaterial();
         }
+
+        // Scratch for BuildFontStack's before-and-after, reused because that
+        // comparison happens on every layout pass of a system-font label.
+        private readonly List<FontData> _facesBefore = new List<FontData>();
 
         // The gate above runs on every layout pass, and while there is no font
         // it rebuilds the stack on every one of them, so the deduplication that
@@ -1590,7 +1596,20 @@ namespace OneText.UGUI
         /// </summary>
         private void BuildFontStack()
         {
-            ReleaseFonts();
+            // What the stack held going in, so that a rebuild which arrives at
+            // the same faces can leave the layout alone.
+            //
+            // It has to be able to, because the gate above rebuilds on every
+            // layout pass while nothing of the project's own is in the stack —
+            // deliberately, so a .ttf dropped into an empty field is picked up —
+            // and bumping the generation each time made every label drawing in
+            // a system face re-run its whole layout every frame. The test that
+            // caught it writes the same number twice and asks that the second
+            // one lay out nothing.
+            _facesBefore.Clear();
+            if (_fonts != null) _facesBefore.AddRange(_fonts.Fonts);
+
+            ReleaseFonts(bumpGeneration: false);
             _fonts = new FontStack();
 
             // Length check, not just null: a domain reload serializes private
@@ -1677,6 +1696,23 @@ namespace OneText.UGUI
                             _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
                 }
             }
+
+            if (!SameFaces(_facesBefore, _fonts.Fonts)) _layoutGeneration++;
+            _facesBefore.Clear();
+        }
+
+        /// <summary>
+        /// Whether two stacks draw with the same faces, in the same order. Face
+        /// identity is enough: the shared cache hands the same FontData back for
+        /// the same bytes, so a rebuild that reaches the same fonts reaches the
+        /// same objects.
+        /// </summary>
+        private static bool SameFaces(List<FontData> before, IReadOnlyList<FontData> after)
+        {
+            if (before.Count != after.Count) return false;
+            for (int i = 0; i < before.Count; i++)
+                if (!ReferenceEquals(before[i], after[i])) return false;
+            return true;
         }
 
         private TextLayoutSettings BuildSettings(float maxWidth, float maxHeight) =>
