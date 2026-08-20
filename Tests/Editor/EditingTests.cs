@@ -984,6 +984,49 @@ namespace OneText.Tests
             Destroy(field);
         }
 
+        /// <summary>
+        /// Both presses landing in one poll. Key repeat runs at about thirty a
+        /// second against sixty polls, so the two normally arrive a frame
+        /// apart and the field sees the report shrink to ㅇ on the way — but a
+        /// frame hitch collapses them, and then the only thing the composition
+        /// channel says is that 아 stopped being composed. That is character
+        /// for character what a platform commit whose character never arrives
+        /// looks like, and the field makes one of those on purpose
+        /// (A_Commit_The_Platform_Never_Sends_Is_Made_By_The_Field). There is
+        /// no signal left in that channel to tell them apart.
+        ///
+        /// The key is the signal that remains, and the discard already reads
+        /// it. This is the case where depending on the key is right: it is not
+        /// the discriminator the fix rests on — the tests above delete with no
+        /// key events at all — it is the second chance for the one ordering
+        /// the composition cannot describe. Where the IMM swallows the key AND
+        /// the frame hitches, the syllable still comes back; that intersection
+        /// is recorded, not fixed, because nothing observable distinguishes it.
+        /// </summary>
+        [Test]
+        public void Two_Backspaces_In_One_Poll_Are_Undone_By_The_Key()
+        {
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            field.text = "안녕";
+            field.caretPosition = 2;
+
+            _ime.Composition = "\u3147";      // ㅇ
+            field.UpdateEditing();
+            _ime.Composition = "\uC544";      // 아
+            field.UpdateEditing();
+
+            _ime.Composition = string.Empty;   // both presses, one poll
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.Backspace));
+            for (int idle = 0; idle < 40; idle++) field.UpdateEditing();
+
+            Assert.AreEqual("안녕", field.text, "the collapsed pair put the syllable back");
+            Assert.AreEqual("안녕", field.displayText);
+
+            Destroy(field);
+        }
+
         [Test]
         public void Backspacing_The_Last_Jamo_Leaves_The_Committed_Text_Alone()
         {
