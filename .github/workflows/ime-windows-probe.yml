@@ -11,7 +11,7 @@ name: IME Windows probe
 on:
   workflow_dispatch:
   push:
-    branches: [ime/windows-runner-probe]
+    branches: [ime/windows-runner-probe, ime/windows-runner-control]
 
 jobs:
   capabilities:
