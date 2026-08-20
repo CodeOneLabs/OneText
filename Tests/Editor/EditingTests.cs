@@ -1930,6 +1930,189 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void A_Key_Inside_A_Prepaid_Window_Does_Not_Turn_The_Delivery_Into_An_Echo()
+        {
+            // Read frame by frame off a recording of 21 Aug 2026: ㅇㅇ, then a
+            // click away. The second ㅇ's commit was credited forward while the
+            // report stood still, so when the report empties the window opens
+            // owing nothing — and the click lands a keycode in that same
+            // update. Settling on that key flipped the window to echo mode,
+            // and the commit arriving two events later — the second ㅇ, which
+            // never reached the value — was swallowed as the echo of an insert
+            // that never happened. The window owed nothing to hand back, but
+            // it was still owed a delivery, and it has to be standing when the
+            // delivery comes.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+
+            // f=1954: the first press. A phantom keycode-less event rides
+            // ahead of it, as recorded.
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+
+            // f=2679: the second press. ㅇ cannot combine with ㅇ, so the
+            // platform commits the first and composes the second under a
+            // report that reads exactly the same.
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            Assert.AreEqual("ㅇ", field.text);
+            Assert.IsTrue(field.isComposing);
+
+            // f=2943: the click. The report empties at the poll, the click's
+            // keycode arrives inside the window, and the commit for the
+            // second ㅇ lands behind it — all in one update.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.DeactivateInputField();
+
+            Assert.AreEqual("ㅇㅇ", field.text,
+                "the delivery the prepaid window was still owed reached the value");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void The_Same_Jamo_Keeps_Accumulating_After_A_Click_Away_And_Back()
+        {
+            // The whole of the recording of 21 Aug 2026: ㅇㅇ, a click away, a
+            // click back, then ㅇ pressed on and on. What the user saw was ㅇㅇㅇ
+            // and then nothing, however many times they pressed. The commit
+            // swallowed on the way out (the test above) came back as a second
+            // delivery on the first keystroke in — macOS holds the syllable
+            // across the gap — and a field that had inserted nothing and
+            // remembered nothing took it as payment for the newborn
+            // composition, closed it, and refused everything after it as a
+            // replay: the log has the same report refused 382 updates running.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.DeactivateInputField();
+            Assert.AreEqual("ㅇㅇ", field.text);
+
+            // f=3828: back in. f=4238: the first press — the composition for
+            // the syllable being typed now, and the delivery the platform
+            // already made once, in the same update.
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+            field.UpdateEditing();
+
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+
+            Assert.AreEqual("ㅇㅇ", field.text,
+                "the platform said that ㅇ twice and the field took it once");
+            Assert.IsTrue(field.isComposing, "and the syllable being typed now is untouched");
+
+            // The updates between presses, in which the composition lives on
+            // and retires the platform's right to repeat itself.
+            field.UpdateEditing();
+            field.UpdateEditing();
+
+            // f=4622 and f=5217: pressing on. Every press from here is the
+            // ordinary same-jamo stream: a commit under an unmoved report,
+            // credited while the composition stays adopted.
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            Assert.AreEqual("ㅇㅇㅇ", field.text, "the fourth press landed");
+
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            Assert.AreEqual("ㅇㅇㅇㅇ", field.text, "and the fifth");
+            Assert.IsTrue(field.isComposing, "with the live syllable still on screen");
+
+            Destroy(field);
+        }
+
+        [Test]
+        public void One_Backspace_After_The_Platform_Repeats_Itself_Deletes_One_Syllable()
+        {
+            // Read frame by frame off a recording of 21 Aug 2026, the report
+            // that followed the fix above: ㅇㅇㅇㅇ in the field, a click away
+            // and back, one press of Backspace — and two ㅇ gone. macOS sends
+            // the press as the same four-event volley it sends when a
+            // backspace empties a composition: an empty event, the backspace,
+            // the jamo the platform was still holding, and the backspace
+            // again, this one with FunctionKey on it. The first backspace
+            // deletes, the jamo is swallowed as the platform repeating the
+            // commit it made on the way out of focus — and the second
+            // backspace deleted a syllable of its own.
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            _ime.KeepsComposingAfterEnd = true; // the poll of the platform
+
+            // ㅇ four times: a birth, then three commits under an unmoved
+            // report, exactly as at f=1599 through f=2018.
+            _ime.Composition = "ㅇ";
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            for (int press = 0; press < 3; press++)
+            {
+                field.UpdateEditing();
+                field.ProcessKeyEvent(Key(KeyCode.None));
+                field.ProcessKeyEvent(Key(KeyCode.D));
+                field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            }
+
+            // f=2316: the click away. The report empties, and the commit for
+            // the last ㅇ lands two events later, into the standing window.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.D));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.DeactivateInputField();
+            Assert.AreEqual("ㅇㅇㅇㅇ", field.text);
+
+            // f=2621: back in. f=2995: one press of Backspace, four events.
+            field.ActivateInputField();
+            field.caretPosition = field.text.Length;
+            field.UpdateEditing();
+            field.UpdateEditing();
+
+            field.ProcessKeyEvent(Key(KeyCode.None));
+            field.ProcessKeyEvent(Key(KeyCode.Backspace));
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅇ'));
+            field.ProcessKeyEvent(Key(KeyCode.Backspace, '\0', EventModifiers.FunctionKey));
+
+            Assert.AreEqual("ㅇㅇㅇ", field.text, "one press deletes one syllable");
+
+            Destroy(field);
+        }
+
+        [Test]
         public void A_Platform_That_Went_Quiet_Still_Has_Its_Echo_Swallowed()
         {
             // The commit the field made on its way out of focus, and a platform

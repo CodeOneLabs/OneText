@@ -999,6 +999,20 @@ namespace OneText.UGUI
             Trace($"character {Quote(character.ToString())} taken={taken} changed={changed}");
             if (taken && changed) Changed();
             else _visualsDirty = true;
+
+            // A character the arbiter swallowed can have the tail of its own
+            // press riding behind it. Read off a recording of 21 Aug 2026:
+            // ㅇㅇㅇㅇ committed, a click away and back, one press of Backspace
+            // — and macOS sends the same four events it sends when a backspace
+            // empties a composition: an empty one, the backspace, the jamo the
+            // platform was still holding, and the backspace again. The first
+            // backspace deletes the syllable, the jamo is swallowed as the
+            // platform repeating a commit it already made — and the second
+            // backspace, taken at face value, deleted a syllable the user
+            // never asked about: one press, two characters gone. The swallowed
+            // character is the one signal that the volley is a single press,
+            // so it is what arms the guard that drops the tail.
+            if (!taken) _swallowingCompositionTail = true;
         }
 
         // -------------------------------------------------------------- editing
