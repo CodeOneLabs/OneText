@@ -2095,6 +2095,10 @@ namespace OneText.UGUI
         private static readonly Vector3 s_Normal = new Vector3(0f, 0f, -1f);
         private static readonly Vector4 s_Tangent = new Vector4(1f, 0f, 0f, -1f);
         private readonly List<GlyphClusters.Cluster> _clusters = new List<GlyphClusters.Cluster>();
+
+        // Where those clusters live in the atlas, when PrepareClusters could
+        // say so without a bake; see the comment at its call site.
+        private readonly List<GlyphLocation> _clusterLocations = new List<GlyphLocation>();
         private readonly List<PositionedGlyph> _positioned = new List<PositionedGlyph>();
         private readonly List<TextQuad> _quads = new List<TextQuad>();
         private long _meshHeapMark;
@@ -3461,15 +3465,30 @@ namespace OneText.UGUI
                 // Bake everything this run is missing in one dispatch: a job per
                 // glyph spends more on scheduling than on the field itself.
                 long lookupStartedAt = AtlasDiagnostics.Now;
-                atlas.PrepareClusters(font, runDensity, _positioned, _clusters);
+                // Fills _clusterLocations when every cluster was already baked,
+                // which is what a warm atlas means and what a running game has.
+                // Then the resolve below is a list read rather than a second
+                // walk of the atlas dictionary with a seven-field key.
+                bool located = atlas.PrepareClusters(font, runDensity, _positioned,
+                    _clusters, _clusterLocations) &&
+                    _clusterLocations.Count == _clusters.Count;
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
 
-                foreach (var cluster in _clusters)
+                for (int clusterIndex = 0; clusterIndex < _clusters.Count; clusterIndex++)
                 {
-                    lookupStartedAt = AtlasDiagnostics.Now;
-                    var loc = atlas.GetOrAddCluster(font, runDensity,
-                        _positioned, cluster.Start, cluster.Count, cluster.Hash);
-                    AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
+                    var cluster = _clusters[clusterIndex];
+                    GlyphLocation loc;
+                    if (located)
+                    {
+                        loc = _clusterLocations[clusterIndex];
+                    }
+                    else
+                    {
+                        lookupStartedAt = AtlasDiagnostics.Now;
+                        loc = atlas.GetOrAddCluster(font, runDensity,
+                            _positioned, cluster.Start, cluster.Count, cluster.Hash);
+                        AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
+                    }
                     if (!loc.HasPixels) continue;
 
                     frame.Place(cluster.PenX, cluster.PenY, loc.OriginUnits, loc.SizeUnits,

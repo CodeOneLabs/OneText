@@ -498,10 +498,33 @@ namespace OneText
         /// locations back, and the reads then all hit the cache.
         /// </summary>
         public void PrepareClusters(FontData font, float pixelsPerEm,
-            List<PositionedGlyph> positioned, List<GlyphClusters.Cluster> clusters)
+            List<PositionedGlyph> positioned, List<GlyphClusters.Cluster> clusters) =>
+            PrepareClusters(font, pixelsPerEm, positioned, clusters, null);
+
+        /// <summary>
+        /// The same, filling <paramref name="locations"/> with one entry per
+        /// cluster and answering true when it did.
+        ///
+        /// A warm run used to look every cluster up twice: once here to decide
+        /// whether it needed baking, and once again in
+        /// <see cref="GetOrAddCluster"/> to find out where it went. The key is
+        /// seven fields wide and the dictionary is the hot one, so the second
+        /// lookup is not free — and it is the common case, because a warm atlas
+        /// is what a running game has.
+        ///
+        /// Only when nothing was baked: a bake can evict or repack, which moves
+        /// tiles this pass already found, so a location taken before it is not
+        /// a location afterwards. Then this answers false and the caller
+        /// resolves cluster by cluster, exactly as it did before.
+        /// </summary>
+        public bool PrepareClusters(FontData font, float pixelsPerEm,
+            List<PositionedGlyph> positioned, List<GlyphClusters.Cluster> clusters,
+            List<GlyphLocation> locations)
         {
-            if (clusters == null || clusters.Count == 0) return;
+            locations?.Clear();
+            if (clusters == null || clusters.Count == 0) return locations != null;
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
+            bool collecting = locations != null;
 
             _batchRequests.Clear();
             _batchKeys.Clear();
@@ -514,6 +537,22 @@ namespace OneText
             foreach (var cluster in clusters)
             {
                 var key = new Key(font, cluster.Hash, ppem, Precise);
+                if (collecting)
+                {
+                    // TryTouch rather than ContainsKey: it answers the same
+                    // question, hands back the location the caller is about to
+                    // ask for, and refreshes the entry's place in the LRU. A
+                    // tile drawn every frame through a path that only ever asked
+                    // "is it there?" would otherwise age as if nothing used it,
+                    // and be the first thing evicted under pressure.
+                    if (TryTouch(key, out var found))
+                    {
+                        locations.Add(found);
+                        continue;
+                    }
+                    collecting = false;
+                    locations.Clear();
+                }
                 // Repeated words in one run share a tile; bake it once.
                 if (_entries.ContainsKey(key) || !_batchPending.Add(key)) continue;
 
@@ -540,11 +579,13 @@ namespace OneText
             }
 
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OutlineCount += glyphsExtracted;
-            if (_batchRequests.Count == 0) return;
+            if (_batchRequests.Count == 0) return collecting;
 
             GlyphRasterizer.RasterizeBatch(_batchRequests, _batchResults, Precise);
             for (int i = 0; i < _batchKeys.Count && i < _batchResults.Count; i++)
                 Commit(_batchKeys[i], _batchResults[i], ppem);
+            locations?.Clear();
+            return false;
         }
 
         private readonly List<RasterizeRequest> _batchRequests = new List<RasterizeRequest>();
