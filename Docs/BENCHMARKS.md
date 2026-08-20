@@ -357,8 +357,9 @@ Where C3's 833 µs actually goes, from `BenchSuite.BreakdownWorldSpace`:
 | — layout and shaping | 203 |
 | — — HarfBuzz shaping itself | 41 |
 | — — itemize / wrap / everything else | 162 |
-| — quad building (split, lookup, emit) | 226 |
-| — per-rebuild scaffolding | 132 |
+| — quad building | 226 |
+| — — split / lookup / the build loop itself | 36 / 75 / 88 |
+| — everything else in a rebuild | 42 |
 | outside rebuilds (canvas, ppem) | 272 |
 
 Two things that table says and the paragraph above it did not. **More than half
@@ -369,12 +370,21 @@ are one to four ASCII digits, and they cost 4.0 µs to lay out and 4.5 µs to
 turn into quads. Nothing here scales with the text; it scales with the number
 of labels.
 
+`emit` has been taken apart since, and one repair has landed. Packing the
+three vertex channels that belong to the tile rather than the corner once per
+quad instead of once per corner takes `emit` from **110 µs to 91 µs**, three
+alternating pairs in one session with no spread at all between repetitions.
+The first attempt to measure that change read it as noise, because it was
+measured on the frame median where ±4 % is ±30 µs; a stage counter is quiet
+enough to see a 19 µs effect and a frame median is not. **Measure a stage
+change on the stage, not on the frame.**
+
 `emit` has been taken apart since. Driving uGUI's `VertexHelper` at C3's rate
 and nothing else — 200 quads a frame, 800 `AddVert` and 400 `AddTriangle`,
 none of this package's code in the window — costs **48 µs a frame**, because
 one `AddVert` appends to eight parallel lists and a frame of C3 is 6,400 of
-those appends. So a little under half of `emit` is uGUI's vertex plumbing and
-the rest, about 64 µs, is this package's own loop at 320 ns a quad. Recovering
+those appends. With the packing repaired that is now more than half of what
+`emit` costs: 48 µs of uGUI plumbing against 43 µs of this package's own loop. Recovering
 the first half means not using `VertexHelper` — writing a persistent mesh and
 handing it to `canvasRenderer.SetMesh` — which also takes the label out of the
 `IMeshModifier` chain that Outline, Shadow and every third-party mesh modifier
