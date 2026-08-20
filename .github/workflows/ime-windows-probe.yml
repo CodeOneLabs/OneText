@@ -1,7 +1,11 @@
-# Asks a Windows runner whether the Korean IME bug can be reproduced without
-# a person at a keyboard. Two questions, cheapest first: can the runner hold
-# an IME at all, and do synthesised keystrokes actually go through it. Only
-# if both answer yes is it worth building a player here. Not part of the suite.
+# Puts the Windows report to a machine. The runner turns out to have an
+# interactive console session, and the Microsoft Korean IME installs and
+# composes on it from synthesised keystrokes — so the one thing that was
+# said to need a person at a keyboard does not.
+#
+# Build the check player on Linux, drive it on Windows: type 아, press
+# backspace twice, read the log the player writes beside itself. Not part of
+# the test suite; this answers a specific report.
 name: IME Windows probe
 
 on:
@@ -10,10 +14,10 @@ on:
     branches: [ime/windows-runner-probe]
 
 jobs:
-  probe:
+  capabilities:
     name: What a Windows runner can do with an IME
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Can it hold an IME
@@ -22,3 +26,98 @@ jobs:
       - name: Do synthesised keys go through it
         shell: powershell
         run: ./Tools/ImeCheck~/probe-synthesis.ps1
+
+  build:
+    name: Build the check player
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          path: package
+
+      - name: Create the host project
+        run: |
+          # Beside the package, never inside it: the tests workflow has the
+          # whole account of what nesting did to the asset database.
+          mkdir -p CI/Assets/Editor CI/Assets/ImeCheck CI/Packages
+          cat > CI/Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.onetext.core": "file:../../package",
+              "com.unity.ugui": "2.0.0",
+              "com.unity.modules.imageconversion": "1.0.0",
+              "com.unity.modules.imgui": "1.0.0",
+              "com.unity.modules.jsonserialize": "1.0.0",
+              "com.unity.modules.ui": "1.0.0",
+              "com.unity.modules.uielements": "1.0.0",
+              "com.unity.modules.unitywebrequest": "1.0.0"
+            }
+          }
+          JSON
+          cp "package/Tools/ImeCheck~/ImeCheckHud.cs"     CI/Assets/ImeCheck/
+          cp "package/Tools/ImeCheck~/BuildStampValue.cs" CI/Assets/ImeCheck/
+          cp "package/Tools/ImeCheck~/ImeCheckBuild.cs"   CI/Assets/Editor/
+          sed -i "s/COMMIT_PLACEHOLDER/$(cd package && git rev-parse --short HEAD)/" \
+            CI/Assets/ImeCheck/BuildStampValue.cs
+
+      - name: A font with Hangul in it
+        run: |
+          # Otherwise every syllable being checked draws as a box, and the
+          # screenshot half of this is worthless.
+          curl -fsSL --retry 3 -o CI/Assets/PretendardVariable.ttf \
+            "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf"
+
+      - uses: actions/cache@v4
+        with:
+          path: CI/Library
+          key: Library-imecheck-v1-${{ hashFiles('package/**/*.cs') }}
+          restore-keys: Library-imecheck-v1-
+
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: CI
+          unityVersion: 6000.0.77f1
+          targetPlatform: StandaloneWindows64
+          buildMethod: ImeCheckBuild.Windows
+          customParameters: -imeOut build/OneTextImeCheck.exe
+          allowDirtyBuild: true
+          versioning: None
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ime-check-player
+          path: CI/build
+          retention-days: 3
+
+  drive:
+    name: Type 아 and backspace twice
+    runs-on: windows-2022
+    needs: [capabilities, build]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ime-check-player
+          path: player
+
+      - name: Install the Korean IME
+        shell: powershell
+        run: ./Tools/ImeCheck~/probe-runner.ps1
+
+      - name: Drive the player
+        shell: powershell
+        run: ./Tools/ImeCheck~/drive-ime.ps1 -Exe "$env:GITHUB_WORKSPACE\player\OneTextImeCheck.exe"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ime-check-log
+          path: player/ime-check.log
+          if-no-files-found: warn

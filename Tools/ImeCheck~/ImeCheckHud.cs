@@ -43,6 +43,26 @@ public sealed class ImeCheckHud : MonoBehaviour
         Debug.Log($"[ime-check] {Application.unityVersion} on {Application.platform}, package build {BuildStamp.Value}");
     }
 
+    /// <summary>
+    /// A person opens this player and clicks the field, which is the right
+    /// thing to make them do — the click is part of what is being checked.
+    /// A machine driving the same player has no reason to aim a mouse at a
+    /// rectangle it has to compute, so <c>-imeAutoFocus</c> puts the caret in
+    /// the field at startup and nothing else changes.
+    /// </summary>
+    private void Start()
+    {
+        foreach (string arg in Environment.GetCommandLineArgs())
+        {
+            if (!string.Equals(arg, "-imeAutoFocus", StringComparison.Ordinal)) continue;
+            if (Field == null) break;
+            Field.Select();
+            Field.ActivateInputField();
+            Debug.Log("[ime-check] -imeAutoFocus: the field is focused without a click");
+            break;
+        }
+    }
+
     private void OnDestroy()
     {
         Application.logMessageReceived -= Mirror;
