@@ -660,12 +660,6 @@ namespace OneText
         {
             if (_mode != Mode.AwaitingPlatform) return null;
 
-            string owed = _pending;
-            bool owes = !_pendingOwesNothing;
-            _mode = Mode.SuppressingEcho;
-            _echo = string.Empty;
-            _updatesLeft = GraceUpdates;
-
             // Two callers, opposite questions. One is throwing the commit away
             // and only needs to know a window was open — it gets the text
             // whatever the window owes, because closing it is the whole point.
@@ -677,7 +671,28 @@ namespace OneText
             // through a different door — the field settles an owed commit on
             // any control or keycode-less key, and macOS alone sends four
             // events for one backspace.
-            return onlyWhatIsOwed && !owes ? null : owed;
+            //
+            // And a window handed nothing is left standing, not switched to
+            // swallowing an echo of the insert that never happened. Read off a
+            // recording of ㅇㅇ, a click away, and ㅇㅇ again (2026-08-21): the
+            // click lands a keycode in the same update the report empties, the
+            // settle it triggers flipped the prepaid window to echo mode, and
+            // the commit for the second ㅇ — arriving two events later — was
+            // swallowed as that echo. Nothing was inserted, and nothing was
+            // remembered: the echo path does not write the repeat register the
+            // way the awaiting path does, so when the platform delivered the
+            // same syllable once more on the first keystroke back, it read as
+            // new, closed the newborn composition as its payment, and armed
+            // the replay guard against every keystroke after it. The window
+            // still awaiting is what accepts the delivery, inserts it, and
+            // remembers it as the platform's commit — all in ShouldSwallow.
+            if (onlyWhatIsOwed && _pendingOwesNothing) return null;
+
+            string owed = _pending;
+            _mode = Mode.SuppressingEcho;
+            _echo = string.Empty;
+            _updatesLeft = GraceUpdates;
+            return owed;
         }
 
         /// <summary>
