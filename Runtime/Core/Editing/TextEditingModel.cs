@@ -57,11 +57,31 @@ namespace OneText
 
         // Whether a payment was credited to an identical, finished predecessor
         // while this composition stayed alive — see NoteHandedOver. If the
-        // report later empties, the commit window opens prepaid: should the
-        // platform send nothing (the shape the old reasoned tests assumed, and
-        // no recording shows), the window must not insert a copy of text the
-        // credit already inserted.
+        // report later empties, the commit window opens owing nothing: should
+        // the platform send nothing (the shape the old reasoned tests assumed,
+        // and no recording shows), the window must not insert a copy of text
+        // the credit already inserted.
         private bool _paidForward;
+
+        // Whether the composition on screen was arrived at by the user taking a
+        // jamo off the one before it — a report that shrank to a prefix of
+        // itself with nothing paid for what it dropped. That is a backspace
+        // inside the IME, and it is the one way a composition ends without the
+        // platform ever meaning to commit it: 아, backspace, ㅇ, backspace,
+        // nothing. The commit window that the emptying opens must owe nothing
+        // there, or the syllable the user just deleted is inserted two updates
+        // later and the delete reads as swallowed — the second bug report of
+        // 2026-08-20, where the third press was the one that appeared to work.
+        //
+        // A shrink is told from a split by what pays for it, not by the shape
+        // alone: 앙 giving up 아 is also a prefix shrink, but a character
+        // arrives in that update to pay for what was dropped, and any payment
+        // at all clears this. Nothing is measured here that the platform has to
+        // agree to send — the composition channel and the character channel
+        // are both already being read, and this is a fact about the two of them
+        // together. That matters because the key event is exactly what is not
+        // to be counted on: the Windows report says the IMM eats the backspace.
+        private bool _shrankUnpaid;
 
         /// <summary>Refuses every edit, including composition.</summary>
         public bool ReadOnly { get; set; }
@@ -297,9 +317,9 @@ namespace OneText
             if (composing.Length == 0)
             {
                 string previous = _composition.Text;
-                bool prepaid = _paidForward;
+                bool owesNothing = _paidForward || _shrankUnpaid;
                 EndComposition();
-                Arbiter.AwaitPlatformCommit(previous, prepaid);
+                Arbiter.AwaitPlatformCommit(previous, owesNothing);
                 return textChanged;
             }
 
@@ -318,8 +338,11 @@ namespace OneText
                 _reportMoved = true;
                 _reportMovedThisUpdate = true;
                 // A report that moved on is a new syllable being built; its
-                // commit will be its own, so the window it opens is not prepaid.
+                // commit will be its own, and the window it opens owes it.
                 _paidForward = false;
+                // A report that grew, or that changed to something it was never
+                // the start of, is not a deletion and clears this.
+                _shrankUnpaid = ImeCommitArbiter.IsShortenedFrom(_replaced, composing);
             }
 
             _composition.Text = composing;
@@ -552,10 +575,17 @@ namespace OneText
                 if (ImeCommitArbiter.TextStartsWith(_replaced, toReplaced))
                 {
                     _paidTheReplaced = toReplaced;
+                    // Paid for, so the report did not shrink because the user
+                    // deleted anything: this is a syllable splitting.
+                    _shrankUnpaid = false;
                     return;
                 }
             }
 
+            // A character arriving while this composition stands is the
+            // platform paying for something. Whatever it turns out to pay for,
+            // the shrink that brought this report here was not a silent one.
+            _shrankUnpaid = false;
             _handedOver += character;
 
             // The same text, not the same code units, and through the arbiter's
@@ -599,8 +629,8 @@ namespace OneText
             // still showing with no report change (none of the recordings has
             // one; the old tests here assumed it), the value still comes out
             // right: the character was inserted once by this credit, and the
-            // window the report's eventual emptying opens is prepaid — it will
-            // take a late character but will not invent one. The cost there is
+            // window the report's eventual emptying opens owes nothing — it
+            // will take a late character but will not invent one. The cost there is
             // the syllable drawn twice until the report empties, which is what
             // uGUI's own field does unconditionally.
             if (!_reportMoved)
@@ -691,6 +721,7 @@ namespace OneText
             _reportMoved = false;
             _reportMovedThisUpdate = false;
             _paidForward = false;
+            _shrankUnpaid = false;
         }
 
         private string ApplyLimit(string value) =>

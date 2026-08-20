@@ -119,10 +119,9 @@ namespace OneText
         private string _pending = string.Empty;
         private int _updatesLeft;
 
-        // Whether the pending commit's text already reached the value through
-        // the crediting in TextEditingModel.NoteHandedOver. See
-        // AwaitPlatformCommit.
-        private bool _pendingPrepaid;
+        // Whether this window owes its pending text nothing on expiry. See
+        // AwaitPlatformCommit for the two ways that happens.
+        private bool _pendingOwesNothing;
 
         // The echo as it arrives, rather than an index into _pending. The
         // platform is not obliged to hand a syllable back in the shape it
@@ -189,22 +188,25 @@ namespace OneText
         /// The input method cleared a non-empty composition without our asking.
         /// Either the characters are on their way or they were never sent.
         ///
-        /// <paramref name="prepaid"/> says the composition's text already
-        /// reached the value once, credited to an identical predecessor while
-        /// the report stood still — see <c>TextEditingModel.NoteHandedOver</c>.
-        /// A prepaid window still takes the character if one arrives (on the
-        /// measured platform it always does, in the same frame the report
-        /// empties), but on expiry it inserts nothing: if the platform never
-        /// sends the character, the credit was the payment, and inserting the
-        /// pending text on top of it is the doubled syllable.
+        /// <paramref name="owesNothing"/> says the field must not make this
+        /// commit itself when the window expires. Two things say that, both
+        /// decided by <c>TextEditingModel</c>: the text already reached the
+        /// value once, credited to an identical predecessor while the report
+        /// stood still; or the composition was one the user backspaced away
+        /// inside the IME, which the platform never meant to commit at all.
+        /// Such a window still takes a character if one arrives — on the
+        /// measured platform a real commit always sends one, in the same frame
+        /// the report empties — but on expiry it inserts nothing. Inserting
+        /// there is the doubled syllable in the first case and the deletion
+        /// that would not take in the second.
         /// </summary>
-        public void AwaitPlatformCommit(string composed, bool prepaid = false)
+        public void AwaitPlatformCommit(string composed, bool owesNothing = false)
         {
             if (string.IsNullOrEmpty(composed)) { Reset(); return; }
             _mode = Mode.AwaitingPlatform;
             _pending = composed;
             _pendingDecomposed = Decomposed(composed);
-            _pendingPrepaid = prepaid;
+            _pendingOwesNothing = owesNothing;
             _echo = string.Empty;
             _updatesLeft = GraceUpdates;
 
@@ -711,10 +713,9 @@ namespace OneText
         /// </summary>
         public string Flush()
         {
-            // A prepaid window owes nothing on expiry: its text was inserted
-            // once already, by the credit that opened it. See
+            // A window told it owes nothing makes no commit here. See
             // AwaitPlatformCommit.
-            string owed = _mode == Mode.AwaitingPlatform && !_pendingPrepaid ? _pending : null;
+            string owed = _mode == Mode.AwaitingPlatform && !_pendingOwesNothing ? _pending : null;
             Reset();
 
             // Text the field takes because the platform announced it and has
@@ -851,6 +852,40 @@ namespace OneText
             return wholeDecomposed.StartsWith(Decomposed(prefix), StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Whether <paramref name="shorter"/> is <paramref name="longer"/> with
+        /// jamo taken off the end — the shape a composition takes when the user
+        /// backspaces inside the IME, and the same shape a syllable takes when
+        /// it splits. What tells those two apart is payment, not shape; see
+        /// <c>TextEditingModel</c>. Equal strings are not shortened.
+        ///
+        /// Compatibility-decomposed, which the comparisons above deliberately
+        /// are not. The report hands a lone jamo back as a compatibility jamo —
+        /// ㅇ is U+3147 in every recording — while the syllable it came off
+        /// decomposes to conjoining jamo, U+110B U+1161 for 아. Canonical
+        /// decomposition leaves those as different characters and this question
+        /// answers no to the one case it exists for. The other comparisons ask
+        /// whether two strings are the same text, and there folding
+        /// compatibility forms together would call things equal that a user can
+        /// tell apart; this one asks only how many jamo a composition has, so
+        /// it can afford the coarser form and needs it.
+        /// </summary>
+        public static bool IsShortenedFrom(string longer, string shorter)
+        {
+            if (string.IsNullOrEmpty(longer) || string.IsNullOrEmpty(shorter)) return false;
+            if (string.Equals(longer, shorter, StringComparison.Ordinal)) return false;
+
+            string a = Compatibility(longer);
+            string b = Compatibility(shorter);
+            return b.Length < a.Length && a.StartsWith(b, StringComparison.Ordinal);
+        }
+
+        private static string Compatibility(string value)
+        {
+            try { return value.Normalize(NormalizationForm.FormKD); }
+            catch (ArgumentException) { return value; } // half a surrogate pair mid-keystroke
+        }
+
         private static bool SameText(string left, string right, string rightDecomposed)
         {
             // Free, and the answer almost every time: two sides already in the
@@ -913,7 +948,7 @@ namespace OneText
             _mode = Mode.Idle;
             _pending = string.Empty;
             _pendingDecomposed = string.Empty;
-            _pendingPrepaid = false;
+            _pendingOwesNothing = false;
             _echo = string.Empty;
             _updatesLeft = 0;
         }

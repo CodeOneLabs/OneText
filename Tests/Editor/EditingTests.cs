@@ -116,6 +116,70 @@ namespace OneText.Tests
             Assert.AreEqual("안녕" + Hangul_HAN, model.Text);
         }
 
+        /// <summary>
+        /// The second report of 2026-08-20, from Windows: 아, backspace,
+        /// backspace. The IMM handles both presses itself — the field is never
+        /// told a key was pressed, and all it sees is the report shrinking to
+        /// ㅇ and then to nothing. The syllable was deleted, not committed, and
+        /// the window the emptying opens must not make a commit of it: the
+        /// user's account of the bug is that the delete appeared to be
+        /// swallowed and a third press was needed, which is this insert two
+        /// updates later putting the ㅇ back as ordinary text.
+        ///
+        /// The presses are separated by idle updates on purpose. The signal is
+        /// a property of the composition, not of two polls landing next to each
+        /// other; a user who pauses between backspaces gets the same answer.
+        /// </summary>
+        [Test]
+        public void A_Composition_The_User_Backspaces_Away_Is_Not_Committed()
+        {
+            var model = new TextEditingModel { Text = "안녕" };
+            model.SetCaret(2, false);
+
+            model.SetComposition("\u3147");   // ㅇ
+            model.Tick();
+            model.SetComposition("\uC544");   // 아
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+
+            model.SetComposition("\u3147");   // backspace, inside the IME
+            Assert.AreEqual("안녕", model.Text, "a shortened composition commits nothing");
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+
+            model.SetComposition(string.Empty); // backspace again: gone
+            Assert.IsFalse(model.IsComposing);
+
+            for (int update = 0; update < ImeCommitArbiter.DefaultGraceUpdates + 4; update++)
+                model.Tick();
+
+            Assert.AreEqual("안녕", model.Text, "the deleted syllable came back as committed text");
+            Assert.AreEqual("안녕", model.DisplayText);
+        }
+
+        /// <summary>
+        /// The same shape, paid for: a syllable splitting shrinks the report to
+        /// a prefix of itself too, and that one is a commit. What tells them
+        /// apart is the character arriving to pay for what was dropped, so the
+        /// commit still lands.
+        /// </summary>
+        [Test]
+        public void A_Syllable_That_Splits_Is_Still_Committed_Though_Its_Report_Shrank()
+        {
+            var model = new TextEditingModel { Text = "안녕" };
+            model.SetCaret(2, false);
+
+            model.SetComposition("\uC559");   // 앙
+            model.Tick();
+            model.SetComposition("\uC544");   // 아 — 앙 gave up its final ㅇ
+            Assert.IsTrue(model.AcceptCharacter('\uC544', out _), "the split pays on the character channel");
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+
+            model.SetComposition(string.Empty);
+            for (int update = 0; update < ImeCommitArbiter.DefaultGraceUpdates + 4; update++)
+                model.Tick();
+
+            Assert.AreEqual("안녕\uC544\uC544", model.Text, "a paid shrink is a split, and both syllables land");
+        }
+
         [Test]
         public void A_Commit_The_Platform_Does_Send_Is_Not_Made_Twice()
         {
@@ -810,6 +874,47 @@ namespace OneText.Tests
             Assert.AreEqual(2, field.caretPosition);
             Assert.IsFalse(submitted, "Enter confirmed a candidate; it did not submit the form");
             Assert.IsTrue(field.isComposing);
+
+            Destroy(field);
+        }
+
+        /// <summary>
+        /// The second report of 2026-08-20, at the field: on Windows the user
+        /// typed 아, pressed backspace and was left with ㅇ, pressed it again
+        /// and nothing happened, and had to press a third time to be rid of it.
+        ///
+        /// Driven with no key events at all, which is the point. Whether the
+        /// IMM passes the backspace on to Unity is exactly what this field
+        /// cannot know — the report is that it does not — so the deletion has
+        /// to hold on the composition channel alone. The one before this test
+        /// covers the platform that does deliver the key.
+        /// </summary>
+        [Test]
+        public void A_Composition_Backspaced_Away_Behind_The_Fields_Back_Stays_Away()
+        {
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            field.text = "안녕";
+            field.caretPosition = 2;
+
+            _ime.Composition = "\u3147";      // ㅇ
+            field.UpdateEditing();
+            _ime.Composition = "\uC544";      // 아
+            field.UpdateEditing();
+            Assert.AreEqual("안녕", field.text);
+            Assert.AreEqual("\uC544", field.compositionString);
+
+            _ime.Composition = "\u3147";      // backspace: the IMM shortens it
+            field.UpdateEditing();
+            Assert.AreEqual("\u3147", field.compositionString, "the composition lost its vowel");
+            Assert.AreEqual("안녕", field.text);
+
+            _ime.Composition = string.Empty;   // backspace again: the IMM drops it
+            for (int idle = 0; idle < 40; idle++) field.UpdateEditing();
+
+            Assert.AreEqual("안녕", field.text, "the deleted syllable came back as committed text");
+            Assert.AreEqual("안녕", field.displayText);
+            Assert.IsFalse(field.isComposing);
 
             Destroy(field);
         }
