@@ -20,7 +20,20 @@ public static class ImeCheckBuild
     private const string FontSource = "Assets/PretendardVariable.ttf";
     private const string FontName = "ImeCheckFont.ttf";
 
-    public static void Windows()
+    /// <summary>
+    /// The same scene for the machine this is developed on. The Windows player
+    /// is the one that answers the report, but it cannot be started here, and a
+    /// harness nobody has run is not a harness — this is how the scene, the
+    /// font, the readout and the log file get checked before someone else's
+    /// double-click depends on them.
+    ///
+    ///   -executeMethod ImeCheckBuild.Mac -imeOut &lt;path to .app&gt;
+    /// </summary>
+    public static void Mac() => Build(BuildTarget.StandaloneOSX);
+
+    public static void Windows() => Build(BuildTarget.StandaloneWindows64);
+
+    private static void Build(BuildTarget target)
     {
         try
         {
@@ -34,10 +47,9 @@ public static class ImeCheckBuild
             File.Copy(Path.GetFullPath(FontSource), Path.Combine(streaming, FontName), true);
             AssetDatabase.Refresh();
 
-            if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64 &&
-                !EditorUserBuildSettings.SwitchActiveBuildTarget(
-                    BuildTargetGroup.Standalone, BuildTarget.StandaloneWindows64))
-                throw new Exception("no Windows Build Support in this editor");
+            if (EditorUserBuildSettings.activeBuildTarget != target &&
+                !EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Standalone, target))
+                throw new Exception($"no build support for {target} in this editor");
 
             var standalone = NamedBuildTarget.Standalone;
             PlayerSettings.SetScriptingBackend(standalone, ScriptingImplementation.Mono2x);
@@ -55,7 +67,7 @@ public static class ImeCheckBuild
             {
                 scenes = new[] { ScenePath },
                 locationPathName = output,
-                target = BuildTarget.StandaloneWindows64,
+                target = target,
                 targetGroup = BuildTargetGroup.Standalone,
                 options = BuildOptions.StrictMode,
             });

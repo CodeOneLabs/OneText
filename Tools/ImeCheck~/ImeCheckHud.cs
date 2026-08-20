@@ -35,6 +35,11 @@ public sealed class ImeCheckHud : MonoBehaviour
         if (File.Exists(font) && Field != null && Field.textComponent != null)
             Field.textComponent.SetFont(File.ReadAllBytes(font));
 
+        // Without this the log this whole player exists to produce is empty:
+        // the field's own account of what it did is off by default and costs
+        // nothing when off, which is right everywhere except here.
+        OneTextInputField.LogEditing = true;
+
         Debug.Log($"[ime-check] {Application.unityVersion} on {Application.platform}, package build {BuildStamp.Value}");
     }
 
@@ -56,6 +61,38 @@ public sealed class ImeCheckHud : MonoBehaviour
         foreach (char c in value) sb.Append($"U+{(int)c:X4} ");
         return sb.ToString().TrimEnd();
     }
+
+    private string _lastComposition = "\u0000";
+    private string _lastValue = "\u0000";
+
+    /// <summary>
+    /// The one thing the field's own trace does not say and every diagnosis so
+    /// far has turned on: whether the report moved this frame, and in what
+    /// code points. ㅇ as U+3147 and ㅇ as U+110B read the same on screen and
+    /// are not the same to the discriminator that decides whether a syllable
+    /// was deleted or committed.
+    /// </summary>
+    private void LateUpdate()
+    {
+        if (Field == null) return;
+
+        string composing = Field.compositionString ?? string.Empty;
+        if (!string.Equals(composing, _lastComposition, StringComparison.Ordinal))
+        {
+            Debug.Log($"[report] {Quoted(_lastComposition)} -> {Quoted(composing)}");
+            _lastComposition = composing;
+        }
+
+        string value = Field.text ?? string.Empty;
+        if (!string.Equals(value, _lastValue, StringComparison.Ordinal))
+        {
+            Debug.Log($"[value ] {Quoted(_lastValue)} -> {Quoted(value)}");
+            _lastValue = value;
+        }
+    }
+
+    private static string Quoted(string value) =>
+        value == "\u0000" ? "(start)" : $"'{value}' [{Points(value)}]";
 
     private void OnGUI()
     {
@@ -87,7 +124,3 @@ public sealed class ImeCheckHud : MonoBehaviour
     }
 }
 
-public static class BuildStamp
-{
-    public static string Value = "unknown";
-}
