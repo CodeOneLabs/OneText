@@ -369,6 +369,17 @@ are one to four ASCII digits, and they cost 4.0 µs to lay out and 4.5 µs to
 turn into quads. Nothing here scales with the text; it scales with the number
 of labels.
 
+`emit` has been taken apart since. Driving uGUI's `VertexHelper` at C3's rate
+and nothing else — 200 quads a frame, 800 `AddVert` and 400 `AddTriangle`,
+none of this package's code in the window — costs **48 µs a frame**, because
+one `AddVert` appends to eight parallel lists and a frame of C3 is 6,400 of
+those appends. So a little under half of `emit` is uGUI's vertex plumbing and
+the rest, about 64 µs, is this package's own loop at 320 ns a quad. Recovering
+the first half means not using `VertexHelper` — writing a persistent mesh and
+handing it to `canvasRenderer.SetMesh` — which also takes the label out of the
+`IMeshModifier` chain that Outline, Shadow and every third-party mesh modifier
+attach to. That is a trade, not a cleanup, and it has not been made.
+
 That is consistent with what the bisect saw. `TextLayoutEngine.cs` went from
 1,214 lines to 2,162 over the same range, `TextRun` gained three fields and
 `TextQuad` went from 16 to 18, while the HarfBuzz shaping call underneath is

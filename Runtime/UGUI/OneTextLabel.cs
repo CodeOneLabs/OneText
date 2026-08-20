@@ -3607,14 +3607,53 @@ namespace OneText.UGUI
             (byte)(a.r * b.r / 255), (byte)(a.g * b.g / 255),
             (byte)(a.b * b.b / 255), (byte)(a.a * b.a / 255));
 
+        /// <summary>
+        /// The three numbers every corner of a tile shares: the packed layer,
+        /// the tile's v-min, and the whole vmax channel. Not one of them varies
+        /// by corner, and all three were being rebuilt at each of the four —
+        /// two packs, a Vector4 and four Rect reads per vertex, for values the
+        /// vertex beside it already had.
+        /// </summary>
+        private readonly struct QuadChannels
+        {
+            public readonly float PackedLayer, UvMinV;
+            public readonly Vector4 VMax;
+
+            public QuadChannels(int layer, float atlas, in Rect uv,
+                in DecorationChannels decoration)
+            {
+                // The layer is an index into a texture array of at most sixteen
+                // slices, so it has been carrying four bits in a whole float
+                // since the day it was written. The outline's softness rides in
+                // the byte below it. Same for the atlas discriminator's float in
+                // vmax.w, which distinguishes four things and now carries the
+                // face dilate.
+                //
+                // Two whole bytes, found rather than made: no channel was added,
+                // so nothing in this canvas pays for them, and neither one is a
+                // field split inside a byte — the one place that happens is the
+                // glow's own inside and outside, which can only blur each other.
+                PackedLayer = TextDecoration.Pack((byte)layer, decoration.OutlineSoftness);
+                UvMinV = uv.yMin;
+                // vmax.w picks the atlas: single-channel field, colour picture
+                // or multi-channel field. It fits in a channel the mesh already
+                // carries, so emoji and precise text cost no extra vertex data
+                // and no second draw call, which is the whole reason both are
+                // flags rather than submeshes.
+                VMax = new Vector4(uv.yMax, uv.xMin, uv.xMax,
+                    TextDecoration.Pack((byte)atlas, decoration.FaceDilate));
+            }
+        }
+
         private static void EmitQuad(VertexHelper vh, float x, float y, float w, float h,
             Rect uv, int layer, Color32 c, float atlas, in DecorationChannels decoration)
         {
             int start = vh.currentVertCount;
-            AddVert(vh, x, y, uv.xMin, uv.yMin, layer, uv, c, atlas, decoration);
-            AddVert(vh, x, y + h, uv.xMin, uv.yMax, layer, uv, c, atlas, decoration);
-            AddVert(vh, x + w, y + h, uv.xMax, uv.yMax, layer, uv, c, atlas, decoration);
-            AddVert(vh, x + w, y, uv.xMax, uv.yMin, layer, uv, c, atlas, decoration);
+            var shared = new QuadChannels(layer, atlas, uv, decoration);
+            AddVert(vh, x, y, uv.xMin, uv.yMin, shared, c, decoration);
+            AddVert(vh, x, y + h, uv.xMin, uv.yMax, shared, c, decoration);
+            AddVert(vh, x + w, y + h, uv.xMax, uv.yMax, shared, c, decoration);
+            AddVert(vh, x + w, y, uv.xMax, uv.yMin, shared, c, decoration);
             vh.AddTriangle(start, start + 1, start + 2);
             vh.AddTriangle(start, start + 2, start + 3);
         }
@@ -3640,17 +3679,18 @@ namespace OneText.UGUI
             }
 
             int start = vh.currentVertCount;
-            AddVertAt(vh, Corner(-1f, -1f), uv.xMin, uv.yMin, quad, decoration);
-            AddVertAt(vh, Corner(-1f, 1f), uv.xMin, uv.yMax, quad, decoration);
-            AddVertAt(vh, Corner(1f, 1f), uv.xMax, uv.yMax, quad, decoration);
-            AddVertAt(vh, Corner(1f, -1f), uv.xMax, uv.yMin, quad, decoration);
+            var shared = new QuadChannels(quad.Layer, AtlasOf(quad), uv, decoration);
+            AddVert(vh, Corner(-1f, -1f), uv.xMin, uv.yMin, shared, quad.Color, decoration);
+            AddVert(vh, Corner(-1f, 1f), uv.xMin, uv.yMax, shared, quad.Color, decoration);
+            AddVert(vh, Corner(1f, 1f), uv.xMax, uv.yMax, shared, quad.Color, decoration);
+            AddVert(vh, Corner(1f, -1f), uv.xMax, uv.yMin, shared, quad.Color, decoration);
             vh.AddTriangle(start, start + 1, start + 2);
             vh.AddTriangle(start, start + 2, start + 3);
         }
 
-        private static void AddVertAt(VertexHelper vh, Vector2 at, float u, float v,
-            in TextQuad quad, in DecorationChannels decoration) =>
-            AddVert(vh, at.x, at.y, u, v, quad.Layer, quad.UvRect, quad.Color, AtlasOf(quad), decoration);
+        private static void AddVert(VertexHelper vh, Vector2 at, float u, float v,
+            in QuadChannels shared, Color32 c, in DecorationChannels decoration) =>
+            AddVert(vh, at.x, at.y, u, v, shared, c, decoration);
 
         /// <summary>
         /// Which atlas a tile samples, as the shader's discriminator: 0 the
@@ -3695,7 +3735,7 @@ namespace OneText.UGUI
             /// since every plain label in every project takes this path, that
             /// is every glyph everywhere.
             /// </summary>
-            public static DecorationChannels None => new DecorationChannels(
+            public static readonly DecorationChannels None = new DecorationChannels(
                 Vector4.zero, Vector4.zero, 0, TextDecoration.QuantizeSigned(0f, 1f));
         }
 
@@ -3798,31 +3838,17 @@ namespace OneText.UGUI
         /// per-vertex data; it took the third value of the TEXCOORD2.w
         /// discriminator that already told the colour atlas from the SDF one.
         /// </summary>
+        /// <summary>
+        /// One corner. Everything that is the tile's rather than the corner's
+        /// was worked out once by <see cref="QuadChannels"/>; what is left here
+        /// is the position and the two coordinates that actually differ between
+        /// the four.
+        /// </summary>
         private static void AddVert(VertexHelper vh, float x, float y, float u, float v,
-            int layer, Rect uvRect, Color32 c, float atlas, in DecorationChannels decoration)
-        {
-            // The layer is an index into a texture array of at most sixteen
-            // slices, so it has been carrying four bits in a whole float since
-            // the day it was written. The outline's softness rides in the byte
-            // below it. Same for the atlas discriminator's float in vmax.w,
-            // which distinguishes four things and now carries the face dilate.
-            //
-            // Two whole bytes, found rather than made: no channel was added, so
-            // nothing in this canvas pays for them, and neither one is a field
-            // split inside a byte — the one place that happens is the glow's own
-            // inside and outside, which can only blur each other.
-            var uvA = new Vector4(u, v,
-                TextDecoration.Pack((byte)layer, decoration.OutlineSoftness), uvRect.yMin);
-            // vmax.w picks the atlas: single-channel field, colour picture or
-            // multi-channel field. It fits in a channel the mesh already
-            // carries, so emoji and precise text cost no extra vertex data and
-            // no second draw call, which is the whole reason both are flags
-            // rather than submeshes.
-            var vmax = new Vector4(uvRect.yMax, uvRect.xMin, uvRect.xMax,
-                TextDecoration.Pack((byte)atlas, decoration.FaceDilate));
-            vh.AddVert(new Vector3(x, y), c, uvA, decoration.Colors, vmax, decoration.Shape,
-                s_Normal, s_Tangent);
-        }
+            in QuadChannels shared, Color32 c, in DecorationChannels decoration) =>
+            vh.AddVert(new Vector3(x, y), c,
+                new Vector4(u, v, shared.PackedLayer, shared.UvMinV),
+                decoration.Colors, shared.VMax, decoration.Shape, s_Normal, s_Tangent);
 
         // ====================================================================
         // TMP parity — begin

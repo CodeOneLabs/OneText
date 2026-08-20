@@ -223,22 +223,24 @@ namespace OneText.UGUI
 
             var uv = quad.UvRect;
             int start = vh.currentVertCount;
-            AddOverrideVert(vh, mesh.vertices[v + 0], uv.xMin, uv.yMin, mesh.colors32[v + 0], quad, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 1], uv.xMin, uv.yMax, mesh.colors32[v + 1], quad, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 2], uv.xMax, uv.yMax, mesh.colors32[v + 2], quad, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 3], uv.xMax, uv.yMin, mesh.colors32[v + 3], quad, decoration);
+            var shared = new QuadChannels(quad.Layer, AtlasOf(quad), uv, decoration);
+            AddOverrideVert(vh, mesh.vertices[v + 0], uv.xMin, uv.yMin, mesh.colors32[v + 0], shared, decoration);
+            AddOverrideVert(vh, mesh.vertices[v + 1], uv.xMin, uv.yMax, mesh.colors32[v + 1], shared, decoration);
+            AddOverrideVert(vh, mesh.vertices[v + 2], uv.xMax, uv.yMax, mesh.colors32[v + 2], shared, decoration);
+            AddOverrideVert(vh, mesh.vertices[v + 3], uv.xMax, uv.yMin, mesh.colors32[v + 3], shared, decoration);
             vh.AddTriangle(start, start + 1, start + 2);
             vh.AddTriangle(start, start + 2, start + 3);
             return true;
         }
 
         /// <summary>
-        /// <see cref="AddVertAt"/> with the colour taken from the caller rather
-        /// than from the tile, which is the one thing a per-character tint has
-        /// to be able to change.
+        /// A corner with the colour taken from the caller rather than from the
+        /// tile, which is the one thing a per-character tint has to be able to
+        /// change. Everything else rides in the channels the quad worked out
+        /// once, exactly as it does for a tile the label placed itself.
         /// </summary>
         private static void AddOverrideVert(VertexHelper vh, Vector3 at, float u, float v,
-            Color32 color, in TextQuad quad, in DecorationChannels decoration) =>
-            AddVert(vh, at.x, at.y, u, v, quad.Layer, quad.UvRect, color, AtlasOf(quad), decoration);
+            Color32 color, in QuadChannels shared, in DecorationChannels decoration) =>
+            AddVert(vh, at.x, at.y, u, v, shared, color, decoration);
     }
 }
