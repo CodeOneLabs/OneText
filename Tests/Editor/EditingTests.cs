@@ -1403,6 +1403,93 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void The_Same_Jamo_Typed_Over_And_Over_Advances_Every_Time()
+        {
+            // ㅁ five times, and the field read ㅁ. The test above it is the
+            // same complaint with a syllable, and it is fixed by the register
+            // that remembers what the report replaced — which is armed by the
+            // report's string changing, 앙 to 아.
+            //
+            // A jamo that cannot combine with itself never changes it. ㅁ plus
+            // ㅁ is not a cluster, so the platform commits the first and opens
+            // a second whose report reads exactly the same, and there is no 앙
+            // in between for anything to notice. The character was credited to
+            // the live composition, which ended it "paid" and registered it as
+            // a replay, and from there every report of the ㅁ the user was
+            // actually typing was refused and every commit behind it swallowed
+            // as the platform repeating itself. Five presses, one ㅁ, and the
+            // same for ㅏㅏㅏ; ㄱㄱ escapes only because it combines into ㄲ.
+            //
+            // What tells the two apart is the character channel, not the
+            // composition one: a report the platform has stopped believing in
+            // sends no characters, so a character paying for the composition
+            // being refused is proof that composition is the user's.
+            var field = CreateField(out _);
+            _ime.KeepsComposingAfterEnd = true; // ImguiImeInput, as recorded
+            field.ActivateInputField();
+
+            _ime.Composition = "ㅁ";
+            field.UpdateEditing();
+            Assert.AreEqual(string.Empty, field.text);
+            Assert.AreEqual("ㅁ", field.compositionString);
+
+            // Each press after the first: the poll sees the new composition —
+            // the same string as the old one — and the key queue then delivers
+            // the ㅁ the platform committed to open it.
+            for (int press = 2; press <= 5; press++)
+            {
+                _ime.Composition = "ㅁ";
+                field.UpdateEditing();
+                field.ProcessKeyEvent(Key(KeyCode.M));
+                field.ProcessKeyEvent(Key(KeyCode.None, 'ㅁ'));
+                for (int idle = 0; idle < 3; idle++) field.UpdateEditing();
+
+                Assert.AreEqual(new string('ㅁ', press - 1), field.text,
+                    $"press {press} did not land");
+
+                // Every press lands in the value; the composition it opened is
+                // drawn on every other one. That is not an oversight, it is the
+                // price of the discriminator, and it is worth writing down
+                // where the next person will look.
+                //
+                // At the moment a payment completes, the two cases are the same
+                // observable state — a composition adopted, paid in full by
+                // characters, with the report unchanged. The three tests above
+                // this file's midpoint require that state to end the
+                // composition (:245, :265 and especially :920, where a paid
+                // report is held by the platform for six updates and must never
+                // be drawn or committed again); a repeated jamo requires the
+                // opposite from the identical state. Nothing on either channel
+                // separates them in that update, so the safe resolution is
+                // taken and reopened on the next evidence there is — the
+                // character of the following press. Hence one press of hidden
+                // preedit, self-correcting, losing nothing.
+                //
+                // Ending it takes information these two strings do not carry: a
+                // composition-session identity from the platform, which is a
+                // native backend the package does not have. The seam for one
+                // would be a generation counter on IImeInput; a generation that
+                // changed is exactly what would arm the replaced-composition
+                // register and put every press on the recorded split path.
+                if (press % 2 == 1)
+                    Assert.AreEqual("ㅁ", field.compositionString,
+                        $"the composition press {press} opened is not on screen");
+            }
+
+            // Focus leaves and the platform commits the last one itself, with
+            // the report already empty — the delivery that used to be swallowed
+            // as a repeat of the first.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, 'ㅁ'));
+            field.DeactivateInputField();
+
+            Assert.AreEqual("ㅁㅁㅁㅁㅁ", field.text);
+
+            Destroy(field);
+        }
+
+        [Test]
         public void The_Same_Syllable_The_Platform_Carries_On_Is_Not_Delivered_Twice()
         {
             // The 안녕하세요요 case with a syllable that is its own neighbour:
