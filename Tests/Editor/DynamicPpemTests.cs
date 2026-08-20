@@ -179,6 +179,58 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void TwoCapturesWithNoCanvasPassBetweenThem_EachBakeAtTheirOwn()
+        {
+            // The build path reuses the context the watcher's last poll worked
+            // out, so that fifty labels rebuilding in one canvas pass do not
+            // ask the camera the same questions fifty times. A harness that
+            // renders several pictures by hand has no canvas pass between
+            // them — and in batch mode no frame counter moving either — so it
+            // moves the camera and draws again with nothing having polled.
+            // That capture must measure, not be handed the first shot's
+            // answer: this is what CornerProbe and SizeSweepProbe do between
+            // pictures, and a stale context bakes the second one at the first
+            // one's density.
+            var label = NewLabel(NewCanvas(), "W");
+
+            label.transform.localScale = Vector3.one * 2f;
+            Draw(label);
+            Assert.AreEqual(2f, label.AppliedPpemScale, 1e-3f);
+
+            label.transform.localScale = Vector3.one * 5f;
+            Draw(label);
+            Assert.AreEqual(5f, label.AppliedPpemScale, 1e-3f,
+                "the second capture was baked at the first one's density");
+        }
+
+        [Test]
+        public void APollThenACameraMove_IsNotServedTheStaleMeasurement()
+        {
+            // The same guarantee from the other side: a poll happened, so a
+            // context is remembered, and then the camera moves before the
+            // rebuild. Within one canvas pass nothing moves between the poll
+            // and the rebuild it triggers, but a caller driving both by hand
+            // can, and the label must not be baked for where the camera was.
+            var canvas = NewCanvas();
+            canvas.renderMode = RenderMode.WorldSpace;
+            var camera = NewCamera(400);
+            camera.orthographic = true;
+            camera.orthographicSize = 10f;
+            canvas.worldCamera = camera;
+
+            var label = NewLabel(canvas, "W");
+            ScreenPpem.PollNow();
+            Draw(label);
+            float near = label.AppliedPpemScale;
+
+            camera.orthographicSize = 2.5f;   // four times the magnification
+            Draw(label);
+
+            Assert.AreEqual(near * 4f, label.AppliedPpemScale, near * 4f * 1e-2f,
+                "the rebuild was handed the context the last poll measured");
+        }
+
+        [Test]
         public void ZoomingOut_NeverDropsBelowTheFontSize()
         {
             // The floor at one: a label zoomed away from keeps the tiles its

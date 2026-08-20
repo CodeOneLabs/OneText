@@ -341,17 +341,51 @@ the mesh:
 | Matrix, 50 rebuilds warm, tier off | 1.320 ms | 1.689 ms |
 | `AsianLayout`, every rule off | 1,357 chars/ms | 755 chars/ms |
 
-A bisect over 106 commits found no single cause: it is a staircase, and the
-largest identified step is the per-frame ppem measurement (+84 µs of the C3
-move; `OneTextLabel.DynamicPpem = false` recovers about that much). The rest is
-spread evenly across itemize, wrap, lookup and emit, while the HarfBuzz shaping
-call underneath is unchanged to the microsecond. `TextLayoutEngine.cs` went
-from 1,214 lines to 2,162 over the same range, `TextRun` gained three fields
-and `TextQuad` went from 16 to 18: a label that uses none of the new features
-still pays for the branches and the state that serve them. The fix is not a
-single revert; it is measuring ppem only when a transform or camera changed,
-and hoisting feature tests to one flag per layout — the pattern the kinsoku
-work already uses.
+A bisect over 106 commits found no single cause: it is a staircase. An earlier
+version of this paragraph named the per-frame ppem measurement as the largest
+step at +84 µs; **that was an over-attribution and the number is wrong.**
+Switching `OneTextLabel.DynamicPpem` off inside one session, alternating twice,
+moves C3's median by **29 µs** — under a fifth of the regression. The +84 µs
+was the height of one bisect step, and that step also tripled the atlas tile
+count.
+
+Where C3's 833 µs actually goes, from `BenchSuite.BreakdownWorldSpace`:
+
+| | µs/frame |
+|---|---|
+| rebuilds (50 labels) | 561 |
+| — layout and shaping | 203 |
+| — — HarfBuzz shaping itself | 41 |
+| — — itemize / wrap / everything else | 162 |
+| — quad building (split, lookup, emit) | 226 |
+| — per-rebuild scaffolding | 132 |
+| outside rebuilds (canvas, ppem) | 272 |
+
+Two things that table says and the paragraph above it did not. **More than half
+the cost is outside the layout engine**: quad building alone (226 µs) beats
+layout and shaping (203 µs), and `emit` at 112 µs is the largest single stage.
+And **this is a per-call cost, not a per-character one** — C3's damage labels
+are one to four ASCII digits, and they cost 4.0 µs to lay out and 4.5 µs to
+turn into quads. Nothing here scales with the text; it scales with the number
+of labels.
+
+That is consistent with what the bisect saw. `TextLayoutEngine.cs` went from
+1,214 lines to 2,162 over the same range, `TextRun` gained three fields and
+`TextQuad` went from 16 to 18, while the HarfBuzz shaping call underneath is
+unchanged to the microsecond: a label that uses none of the new features still
+pays for the branches and the state that serve them. The fix is therefore not a
+single revert, and it is not the ppem work either. It is per-label fixed cost,
+in `EmitQuads` and the atlas cluster lookup before it.
+
+One attempt is already recorded as a failure. The build path re-measures
+density through its own `ScreenPpem.Context`, once per rebuild, where the
+watcher long ago learned to read the camera once per canvas; memoising it per
+poll measured 11 µs faster at the median and 35 µs at p99, and then failed the
+test written for it — a poll's context stays valid until the *next* poll, not
+until the end of the canvas pass, and uGUI offers no signal for the end of a
+pass. `DynamicPpemTests.APollThenACameraMove_IsNotServedTheStaleMeasurement`
+and `TwoCapturesWithNoCanvasPassBetweenThem_EachBakeAtTheirOwn` keep that door
+shut.
 
 **The p99 multiple against TMP shrank because we draw more.** At five rebuilds
 a frame of novel glyphs, v0.1.0 published 12x at the median and 23x at p99;
