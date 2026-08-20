@@ -435,7 +435,7 @@ namespace OneText
         /// </summary>
         public bool SettleOwedCommit()
         {
-            string owed = Arbiter.TakeOwedNow();
+            string owed = Arbiter.TakeOwedNow(onlyWhatIsOwed: true);
             if (owed == null || !InsertAtCaret(owed)) return false;
 
             // It is in the value now, so it is text the platform can deliver a

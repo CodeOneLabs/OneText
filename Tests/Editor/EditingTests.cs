@@ -919,6 +919,71 @@ namespace OneText.Tests
             Destroy(field);
         }
 
+        /// <summary>
+        /// The same deletion with the key event arriving as well, before the
+        /// poll that empties the report — the ordering the Windows fix was
+        /// nearly built on. The field must not treat that press as an ordinary
+        /// backspace: the composition is still standing when it arrives, so the
+        /// value is not its to touch, and the emptying that follows still
+        /// commits nothing.
+        /// </summary>
+        [Test]
+        public void A_Backspace_Delivered_Before_The_Emptying_Deletes_Nothing_Else()
+        {
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            field.text = "안녕";
+            field.caretPosition = 2;
+
+            _ime.Composition = "\uC544";      // 아
+            field.UpdateEditing();
+            _ime.Composition = "\u3147";      // backspace 1: shortened
+            field.UpdateEditing();
+
+            field.ProcessKeyEvent(Key(KeyCode.Backspace)); // backspace 2, key first
+            _ime.Composition = string.Empty;               // then the report empties
+            for (int idle = 0; idle < 40; idle++) field.UpdateEditing();
+
+            Assert.AreEqual("안녕", field.text, "the value was neither added to nor cut into");
+            Assert.AreEqual("안녕", field.displayText);
+
+            Destroy(field);
+        }
+
+        /// <summary>
+        /// And with the press arriving after the emptying as a character rather
+        /// than a keycode — which is how IMGUI hands a key that carries text to
+        /// a field, one event for the code and one for the character, and a
+        /// backspace carries U+0008. The keycode event is caught by the discard
+        /// above; this one is not, and it reaches the settle that makes an owed
+        /// commit real. A window opened by a deletion owes nothing to that
+        /// either, or the syllable the user removed is put back by the second
+        /// half of the very press that removed it.
+        /// </summary>
+        [Test]
+        public void The_Character_Half_Of_A_Backspace_Settles_No_Commit()
+        {
+            var field = CreateField(out _);
+            field.ActivateInputField();
+            field.text = "안녕";
+            field.caretPosition = 2;
+
+            _ime.Composition = "\uC544";      // 아
+            field.UpdateEditing();
+            _ime.Composition = "\u3147";      // backspace 1
+            field.UpdateEditing();
+
+            _ime.Composition = string.Empty;   // backspace 2: the report empties
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '\b'));
+            for (int idle = 0; idle < 40; idle++) field.UpdateEditing();
+
+            Assert.AreEqual("안녕", field.text, "the character half of the press settled a commit owed to nobody");
+            Assert.AreEqual("안녕", field.displayText);
+
+            Destroy(field);
+        }
+
         [Test]
         public void Backspacing_The_Last_Jamo_Leaves_The_Committed_Text_Alone()
         {

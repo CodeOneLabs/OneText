@@ -656,15 +656,28 @@ namespace OneText
         /// would refuse the user's next composition if it happened to be the
         /// same keystroke.
         /// </summary>
-        public string TakeOwedNow()
+        public string TakeOwedNow(bool onlyWhatIsOwed = false)
         {
             if (_mode != Mode.AwaitingPlatform) return null;
 
             string owed = _pending;
+            bool owes = !_pendingOwesNothing;
             _mode = Mode.SuppressingEcho;
             _echo = string.Empty;
             _updatesLeft = GraceUpdates;
-            return owed;
+
+            // Two callers, opposite questions. One is throwing the commit away
+            // and only needs to know a window was open — it gets the text
+            // whatever the window owes, because closing it is the whole point.
+            // The other is about to insert what it gets back, and a window that
+            // owes nothing must hand it nothing: the text is either already in
+            // the value or was never meant to be there. Without this, a
+            // keycode-less event arriving inside the grace window puts the
+            // syllable the user deleted straight back, which is the same bug
+            // through a different door — the field settles an owed commit on
+            // any control or keycode-less key, and macOS alone sends four
+            // events for one backspace.
+            return onlyWhatIsOwed && !owes ? null : owed;
         }
 
         /// <summary>
