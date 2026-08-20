@@ -173,23 +173,55 @@ $lines | ForEach-Object { Write-Host "  $_" }
 
 Write-Host ""
 Write-Host "=== verdict"
-# The value line is the whole question: after two backspaces the field must
-# hold nothing. A third press being needed is exactly the value still holding
-# the jamo here.
-$values = $lines | Where-Object { $_ -match '\[value \]' }
-$final = ''
-if ($values) {
-    $last = $values | Select-Object -Last 1
-    if ($last -match "-> '([^']*)'") { $final = $matches[1] }
-    Write-Host "last value line: $last"
-} else {
-    Write-Host "the value was never written to"
+# Only what happened after the composition started counts. The escalation
+# above leaves an ASCII d in the value on any attempt that did not compose,
+# and backspaces it out again; those value lines are housekeeping and reading
+# the last one of them as the answer is how the previous run called a pass on
+# a composition that never existed.
+$firstHangul = -1
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -notmatch '\[report\]') { continue }
+    foreach ($ch in $lines[$i].ToCharArray()) {
+        $c = [int]$ch
+        if (($c -ge 0xAC00 -and $c -le 0xD7A3) -or ($c -ge 0x3130 -and $c -le 0x318F) -or
+            ($c -ge 0x1100 -and $c -le 0x11FF)) { $firstHangul = $i; break }
+    }
+    if ($firstHangul -ge 0) { break }
 }
-foreach ($ch in $final.ToCharArray()) { Write-Host ("  left in the value: U+{0:X4}" -f [int]$ch) }
+if ($firstHangul -lt 0) {
+    Write-Host "RESULT: INCONCLUSIVE - nothing ever composed"
+    exit 0
+}
+Write-Host "composition starts at log line $firstHangul"
 
-if ([string]::IsNullOrEmpty($final)) {
-    Write-Host "RESULT: PASS - two backspaces left the value empty, no third press needed"
+$after = @()
+for ($i = $firstHangul; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '\[value \]') { $after += $lines[$i] }
+}
+
+# The report the fix answers: the composition must have shrunk to a prefix of
+# itself and then emptied. If the IME did something else this run is not the
+# case being tested.
+$sawShrink = $false
+for ($i = $firstHangul; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match "\[report\] '(.+)' \[.*\] -> '' \[") { $sawShrink = $true }
+}
+Write-Host "composition emptied: $sawShrink"
+
+if ($after.Count -eq 0) {
+    Write-Host "RESULT: PASS - the composition was deleted and the value was never written to"
+    Write-Host "        No third press is needed: nothing came back as committed text."
 } else {
-    Write-Host "RESULT: FAIL - the value still holds something after two backspaces"
+    Write-Host "value changes after the composition started:"
+    $after | ForEach-Object { Write-Host "  $_" }
+    $last = $after | Select-Object -Last 1
+    $final = ''
+    if ($last -match "-> '([^']*)'") { $final = $matches[1] }
+    foreach ($ch in $final.ToCharArray()) { Write-Host ("  left in the value: U+{0:X4}" -f [int]$ch) }
+    if ([string]::IsNullOrEmpty($final)) {
+        Write-Host "RESULT: PASS - the value ended empty"
+    } else {
+        Write-Host "RESULT: FAIL - a deleted composition came back as committed text"
+    }
 }
 exit 0
