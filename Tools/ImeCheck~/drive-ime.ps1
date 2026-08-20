@@ -60,6 +60,20 @@ Add-Type -TypeDefinition $sig
 $logPath = Join-Path (Split-Path -Parent $Exe) 'ime-check.log'
 if (Test-Path $logPath) { Remove-Item $logPath -Force }
 
+# The driver's way of clicking: one command written beside the executable,
+# which the HUD obeys and deletes. Deletion is the acknowledgement.
+$drivePath = Join-Path (Split-Path -Parent $Exe) 'ime-drive.txt'
+if (Test-Path $drivePath) { Remove-Item $drivePath -Force }
+function Send-Cmd([string]$cmd) {
+    Set-Content -Path $drivePath -Value $cmd -Encoding Ascii
+    for ($i = 0; $i -lt 40; $i++) {
+        Start-Sleep -Milliseconds 100
+        if (-not (Test-Path $drivePath)) { return $true }
+    }
+    Write-Host "  (the player never consumed '$cmd')"
+    return $false
+}
+
 Write-Host "launching $Exe"
 $p = Start-Process -FilePath $Exe -ArgumentList '-imeAutoFocus', '-screen-fullscreen', '0', '-screen-width', '900', '-screen-height', '620' -PassThru
 
@@ -161,6 +175,26 @@ Write-Host "--- k (composing to the full syllable)"; [Drv]::Tap(0x4B, 0x25); Sta
 Write-Host "--- backspace 1"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1100
 Write-Host "--- backspace 2"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1800
 
+# Scenario 2, off the 2026-08-21 report: the same jamo twice (d is the ieung
+# key, and ieung cannot combine with itself), the focus taken away the way a
+# click on empty canvas takes it, the focus given back, the same jamo twice
+# more. Four presses, and all four have to reach the screen.
+Write-Host "--- scenario 2: the same jamo, focus away and back, the same jamo again"
+[void](Send-Cmd 'mark scenario-2')
+Write-Host "--- d"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 900
+Write-Host "--- d"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 900
+Write-Host "--- away"; [void](Send-Cmd 'away'); Start-Sleep -Milliseconds 1200
+Write-Host "--- back"; [void](Send-Cmd 'back'); Start-Sleep -Milliseconds 1200
+Write-Host "--- d"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 900
+Write-Host "--- d"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 1500
+
+# Scenario 3, the report that followed the fix for scenario 2: one press of
+# backspace, which on the reporting platform arrives as a four-event volley,
+# deleted two. One press must delete exactly one.
+Write-Host "--- scenario 3: one backspace"
+[void](Send-Cmd 'mark scenario-3')
+[Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1800
+
 Start-Sleep -Seconds 2
 if (-not $p.HasExited) { $p.CloseMainWindow() | Out-Null; Start-Sleep -Seconds 2 }
 if (-not $p.HasExited) { $p.Kill() }
@@ -170,6 +204,45 @@ $lines = Read-Log
 Write-Host ""
 Write-Host "=== ime-check.log"
 $lines | ForEach-Object { Write-Host "  $_" }
+
+# The marks the driver wrote cut the log into scenarios; each verdict below
+# reads only its own cut. Without them (an old player build) the extra
+# scenarios are inconclusive and the first one reads the whole log, which is
+# what it always did.
+$mark2 = $lines.Count; $mark3 = $lines.Count
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($mark2 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-2') { $mark2 = $i }
+    elseif ($mark3 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-3') { $mark3 = $i }
+}
+
+function Count-Ieung([string]$s) {
+    if ([string]::IsNullOrEmpty($s)) { return 0 }
+    $n = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if ($c -eq 0x3147 -or $c -eq 0x110B) { $n++ }   # ieung, compatibility or conjoining
+    }
+    return $n
+}
+
+function Code-Points([string]$s) {
+    if ([string]::IsNullOrEmpty($s)) { return '(empty)' }
+    $out = @()
+    foreach ($ch in $s.ToCharArray()) { $out += ('U+{0:X4}' -f [int]$ch) }
+    return ($out -join ' ')
+}
+
+# What the screen held once the first $upTo lines had happened: the last
+# value and the last composition the HUD reported. Both persist across the
+# scenario marks, which is why each verdict subtracts the state at its start.
+function Screen-State($lines, $upTo) {
+    $value = ''; $comp = ''
+    for ($i = 0; $i -lt $upTo; $i++) {
+        if ($lines[$i] -match "\[value \] .* -> '([^']*)' \[") { $value = $matches[1] }
+        if ($lines[$i] -match "\[report\] .* -> '([^']*)' \[") { $comp = $matches[1] }
+    }
+    return @{ value = $value; comp = $comp }
+}
 
 Write-Host ""
 Write-Host "=== verdict"
@@ -195,7 +268,7 @@ if ($firstHangul -lt 0) {
 Write-Host "composition starts at log line $firstHangul"
 
 $after = @()
-for ($i = $firstHangul; $i -lt $lines.Count; $i++) {
+for ($i = $firstHangul; $i -lt $mark2; $i++) {
     if ($lines[$i] -match '\[value \]') { $after += $lines[$i] }
 }
 
@@ -203,7 +276,7 @@ for ($i = $firstHangul; $i -lt $lines.Count; $i++) {
 # itself and then emptied. If the IME did something else this run is not the
 # case being tested.
 $sawShrink = $false
-for ($i = $firstHangul; $i -lt $lines.Count; $i++) {
+for ($i = $firstHangul; $i -lt $mark2; $i++) {
     if ($lines[$i] -match "\[report\] '(.+)' \[.*\] -> '' \[") { $sawShrink = $true }
 }
 Write-Host "composition emptied: $sawShrink"
@@ -222,6 +295,52 @@ if ($after.Count -eq 0) {
         Write-Host "RESULT: PASS - the value ended empty"
     } else {
         Write-Host "RESULT: FAIL - a deleted composition came back as committed text"
+    }
+}
+
+Write-Host ""
+Write-Host "=== verdict, scenario 2 (four presses of the same jamo across a focus loss)"
+if ($mark2 -ge $lines.Count) {
+    Write-Host "RESULT: INCONCLUSIVE - the player never consumed the drive commands; this build predates them"
+} else {
+    $base = Screen-State $lines $mark2
+    $s2   = Screen-State $lines $mark3
+    $baseCount = (Count-Ieung $base.value) + (Count-Ieung $base.comp)
+    $s2Count   = (Count-Ieung $s2.value) + (Count-Ieung $s2.comp)
+    $gained = $s2Count - $baseCount
+    Write-Host ("before: value {0} composing {1}" -f (Code-Points $base.value), (Code-Points $base.comp))
+    Write-Host ("after : value {0} composing {1}" -f (Code-Points $s2.value), (Code-Points $s2.comp))
+
+    $moved = $false
+    for ($i = $mark2; $i -lt $mark3; $i++) {
+        if ($lines[$i] -match '\[report\]|\[value \]') { $moved = $true; break }
+    }
+    if (-not $moved) {
+        Write-Host "RESULT: INCONCLUSIVE - the IME composed nothing in this scenario"
+    } elseif ($gained -eq 4) {
+        Write-Host "RESULT: PASS - all four presses reached the screen"
+    } else {
+        Write-Host "RESULT: FAIL - four presses of the same jamo put $gained on the screen"
+    }
+}
+
+Write-Host ""
+Write-Host "=== verdict, scenario 3 (one backspace deletes one)"
+if ($mark3 -ge $lines.Count) {
+    Write-Host "RESULT: INCONCLUSIVE - the scenario was never driven"
+} else {
+    $s2end = Screen-State $lines $mark3
+    $s3    = Screen-State $lines $lines.Count
+    $removed = ((Count-Ieung $s2end.value) + (Count-Ieung $s2end.comp)) -
+               ((Count-Ieung $s3.value) + (Count-Ieung $s3.comp))
+    Write-Host ("before: value {0} composing {1}" -f (Code-Points $s2end.value), (Code-Points $s2end.comp))
+    Write-Host ("after : value {0} composing {1}" -f (Code-Points $s3.value), (Code-Points $s3.comp))
+    if ($removed -eq 1) {
+        Write-Host "RESULT: PASS - one press deleted exactly one"
+    } elseif ($removed -eq 0) {
+        Write-Host "RESULT: FAIL - the press deleted nothing"
+    } else {
+        Write-Host "RESULT: FAIL - one press deleted $removed"
     }
 }
 exit 0

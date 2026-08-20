@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using OneText.UGUI;
 
 /// <summary>
@@ -80,6 +81,53 @@ public sealed class ImeCheckHud : MonoBehaviour
         var sb = new StringBuilder();
         foreach (char c in value) sb.Append($"U+{(int)c:X4} ");
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// The driver's way of clicking. A machine has no reason to aim a mouse
+    /// at a rectangle it has to compute, and the focus-loss half of the
+    /// 2026-08-21 report is a click on empty canvas: the EventSystem deselects
+    /// the field and nothing else happens. So the driver writes one command
+    /// to ime-drive.txt beside the executable — "away" deselects the way that
+    /// click does, "back" selects the field again, "mark &lt;text&gt;" puts a
+    /// line in the log so the verdict can cut it into scenarios — and the file
+    /// is deleted once obeyed, which is how the driver knows it landed.
+    /// </summary>
+    private string _drivePath;
+
+    private void Update()
+    {
+        if (_drivePath == null)
+            _drivePath = Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "ime-drive.txt");
+        if (!File.Exists(_drivePath)) return;
+
+        string command;
+        try
+        {
+            command = File.ReadAllText(_drivePath).Trim();
+            File.Delete(_drivePath);
+        }
+        catch (IOException) { return; } // mid-write; it will still be there next frame
+
+        if (string.Equals(command, "away", StringComparison.Ordinal))
+        {
+            Debug.Log("[drive ] away");
+            if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
+            else if (Field != null) Field.DeactivateInputField();
+        }
+        else if (string.Equals(command, "back", StringComparison.Ordinal))
+        {
+            Debug.Log("[drive ] back");
+            if (Field != null) { Field.Select(); Field.ActivateInputField(); }
+        }
+        else if (command.StartsWith("mark ", StringComparison.Ordinal))
+        {
+            Debug.Log($"[mark  ] {command.Substring(5)}");
+        }
+        else
+        {
+            Debug.Log($"[drive ] unknown command '{command}'");
+        }
     }
 
     private string _lastComposition = "\u0000";
