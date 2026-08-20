@@ -1,4 +1,4 @@
-# Can synthesised keystrokes reach an IME on this runner?
+﻿# Can synthesised keystrokes reach an IME on this runner?
 #
 # The Unity player is the expensive half of the question, so ask the cheap
 # half first with a WinForms text box: install the Korean IME, put the box in
@@ -100,7 +100,11 @@ Write-Host "--- space to commit"
 Write-Host "box after space: '$($box.Text)'"
 foreach ($ch in $box.Text.ToCharArray()) { Write-Host ("  box code point U+{0:X4}" -f [int]$ch) }
 
-if ($box.Text -match '[가-힣㄰-㆏]') {
+# Syllables U+AC00..U+D7A3 and the compatibility jamo block U+3130..U+318F.
+$hangul = $box.Text.ToCharArray() | Where-Object {
+    ([int]$_ -ge 0xAC00 -and [int]$_ -le 0xD7A3) -or ([int]$_ -ge 0x3130 -and [int]$_ -le 0x318F)
+}
+if ($hangul) {
     Write-Host "RESULT: SYNTHESIS REACHES THE IME"
 } else {
     Write-Host "RESULT: no Hangul produced"

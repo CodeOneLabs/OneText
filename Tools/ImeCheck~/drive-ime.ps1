@@ -1,11 +1,16 @@
-# Types 아, then backspace twice, into the OneText check player, using the
-# Microsoft Korean IME and synthesised keystrokes. This is the question the
-# Windows report asked, put to a machine instead of a person.
+﻿# Types A (U+C544), then backspace twice, into the OneText check player,
+# using the Microsoft Korean IME and synthesised keystrokes. This is the
+# question the Windows report asked, put to a machine instead of a person.
+#
+# This file stays ASCII on purpose: Windows PowerShell 5.1 reads a .ps1
+# without a byte order mark as ANSI, and the Hangul that used to be in these
+# comments came through as mojibake and broke the parser before a single key
+# was sent.
 #
 # What makes the answer readable rather than merely a pass or a fail: the
 # player logs the composition report and the field's value separately, with
 # code points. If the report never moves the IME never engaged and the run
-# says nothing about the fix — that is checked for explicitly below, because
+# says nothing about the fix - that is checked for explicitly below, because
 # a silent "no Hangul" would otherwise read as a failure of the fix.
 param(
     [Parameter(Mandatory = $true)][string]$Exe
@@ -90,11 +95,12 @@ if ($imeWnd -ne [IntPtr]::Zero) {
 }
 Start-Sleep -Milliseconds 500
 
-# 아 = d then k. Then the two presses the report is about, a beat apart so the
-# field sees the report shrink to ㅇ on the way — which is the ordering the
-# user described, seeing the ㅇ before pressing again.
-Write-Host "--- d (ㅇ)"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 700
-Write-Host "--- k (ㅏ -> 아)"; [Drv]::Tap(0x4B, 0x25); Start-Sleep -Milliseconds 700
+# U+C544 is d then k. Then the two presses the report is about, a beat
+# apart so the field sees the report shrink to the lone U+3147 on the way,
+# which is the ordering the user described: they saw it before pressing
+# again.
+Write-Host "--- d (U+3147)"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 700
+Write-Host "--- k (U+314F, composing to U+C544)"; [Drv]::Tap(0x4B, 0x25); Start-Sleep -Milliseconds 700
 Write-Host "--- backspace 1"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 900
 Write-Host "--- backspace 2"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1500
 

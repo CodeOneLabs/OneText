@@ -1,4 +1,4 @@
-# Three questions for a Windows runner, in the order that makes the next one
+﻿# Three questions for a Windows runner, in the order that makes the next one
 # worth asking. Everything is reported, nothing throws: a "no" here is an
 # answer, not a failure.
 $ErrorActionPreference = 'Continue'
