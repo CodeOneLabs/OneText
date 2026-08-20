@@ -119,6 +119,11 @@ namespace OneText
         private string _pending = string.Empty;
         private int _updatesLeft;
 
+        // Whether the pending commit's text already reached the value through
+        // the crediting in TextEditingModel.NoteHandedOver. See
+        // AwaitPlatformCommit.
+        private bool _pendingPrepaid;
+
         // The echo as it arrives, rather than an index into _pending. The
         // platform is not obliged to hand a syllable back in the shape it
         // reported composing it — macOS routinely delivers 한 as its three
@@ -143,20 +148,6 @@ namespace OneText
         // frame for an answer that cannot have changed.
         private string _pendingDecomposed = string.Empty;
         private string _replayDecomposed;
-
-        // Whether the registered replay was already paid for on the character
-        // channel (IgnoreReplayOf) rather than committed by the field with the
-        // platform's copy still owed (SuppressEchoOf). The difference is what a
-        // character arriving while the report is being refused means. A paid
-        // replay owes us nothing: the only recorded source of another identical
-        // character in that state is the user pressing the same jamo again —
-        // the platform commits the composition we are refusing and re-issues an
-        // identical one, which never changes the report and so never retires
-        // anything. Swallowing those as repeats is how five presses of ㅁ
-        // became one. An unpaid replay is the opposite: the platform still owes
-        // the echo, and an identical character is that echo.
-        private bool _replayPaid;
-        private string _replayPaidSoFar = string.Empty;
 
         // The last commit the platform made and this field accepted, which the
         // platform may make again — see IsThePlatformSayingItAgain. Outside the
@@ -197,13 +188,23 @@ namespace OneText
         /// <summary>
         /// The input method cleared a non-empty composition without our asking.
         /// Either the characters are on their way or they were never sent.
+        ///
+        /// <paramref name="prepaid"/> says the composition's text already
+        /// reached the value once, credited to an identical predecessor while
+        /// the report stood still — see <c>TextEditingModel.NoteHandedOver</c>.
+        /// A prepaid window still takes the character if one arrives (on the
+        /// measured platform it always does, in the same frame the report
+        /// empties), but on expiry it inserts nothing: if the platform never
+        /// sends the character, the credit was the payment, and inserting the
+        /// pending text on top of it is the doubled syllable.
         /// </summary>
-        public void AwaitPlatformCommit(string composed)
+        public void AwaitPlatformCommit(string composed, bool prepaid = false)
         {
             if (string.IsNullOrEmpty(composed)) { Reset(); return; }
             _mode = Mode.AwaitingPlatform;
             _pending = composed;
             _pendingDecomposed = Decomposed(composed);
+            _pendingPrepaid = prepaid;
             _echo = string.Empty;
             _updatesLeft = GraceUpdates;
 
@@ -253,19 +254,17 @@ namespace OneText
         /// </summary>
         public void IgnoreReplayOf(string composition)
         {
-            if (!string.IsNullOrEmpty(composition)) RegisterReplay(composition, paid: true);
+            if (!string.IsNullOrEmpty(composition)) RegisterReplay(composition);
         }
 
         /// <summary>
         /// The one place <see cref="_replay"/> moves, so that the decomposed
         /// form it is compared against can never be left behind by it.
         /// </summary>
-        private void RegisterReplay(string composition, bool paid = false)
+        private void RegisterReplay(string composition)
         {
             _replay = string.IsNullOrEmpty(composition) ? null : composition;
             _replayDecomposed = _replay == null ? null : Decomposed(_replay);
-            _replayPaid = _replay != null && paid;
-            _replayPaidSoFar = string.Empty;
         }
 
         /// <summary>
@@ -334,41 +333,6 @@ namespace OneText
                     return false;
 
                 default:
-                    // A character paying for the composition a *paid* replay is
-                    // refusing is the user pressing the same jamo again: the
-                    // platform committed the composition we refused and
-                    // re-issued an identical one, delivering one character per
-                    // press with the report never changing. It is not a repeat
-                    // — the recorded repeats all arrive after an announcement
-                    // (the report changing or emptying), never against a report
-                    // still being refused — so it is let through to insert.
-                    // Accumulated like the echo, because a syllable can arrive
-                    // in more events than one.
-                    if (_replayPaid && _replay != null)
-                    {
-                        string paidSoFar = _replayPaidSoFar + character;
-                        if (TextStartsWith(_replay, paidSoFar))
-                        {
-                            // A whole payment is proof the refused report was
-                            // the user's composition and not the platform
-                            // holding a stale one — a stale report never sends
-                            // characters. So the refusal retires here, and the
-                            // next poll adopts what the user is still typing
-                            // and draws it. The repeat register goes with it,
-                            // or the adoption is read as the platform
-                            // reclaiming the identical commit and the reclaim
-                            // takes the character just inserted back out.
-                            if (SameText(paidSoFar, _replay, _replayDecomposed))
-                            {
-                                RegisterReplay(null);
-                                ForgetPlatformCommit();
-                            }
-                            else
-                                _replayPaidSoFar = paidSoFar;
-                            return false;
-                        }
-                        _replayPaidSoFar = string.Empty;
-                    }
                     return IsThePlatformSayingItAgain(character);
             }
         }
@@ -737,18 +701,6 @@ namespace OneText
             // which the platform has not been told anything at all.
             if (_mode != Mode.Idle) return;
 
-            // A paid replay retiring on the platform's own release retires the
-            // repeat register with it. If the composition the report was
-            // showing was the user's — refused because it read identically to
-            // the one just paid — then this release is the platform committing
-            // it, and the character about to arrive is that commit, not a
-            // repeat: swallowing it is how the last of N identical presses was
-            // lost. If the report was only the platform holding what was
-            // already paid (the recorded one-frame lag), nothing arrives and
-            // forgetting changes nothing: every recorded second delivery is
-            // announced by the report changing or comes through a focus gap
-            // where this method is never called with a replay armed.
-            if (_replayPaid) ForgetPlatformCommit();
             RegisterReplay(null);
         }
 
@@ -759,7 +711,10 @@ namespace OneText
         /// </summary>
         public string Flush()
         {
-            string owed = _mode == Mode.AwaitingPlatform ? _pending : null;
+            // A prepaid window owes nothing on expiry: its text was inserted
+            // once already, by the credit that opened it. See
+            // AwaitPlatformCommit.
+            string owed = _mode == Mode.AwaitingPlatform && !_pendingPrepaid ? _pending : null;
             Reset();
 
             // Text the field takes because the platform announced it and has
@@ -958,6 +913,7 @@ namespace OneText
             _mode = Mode.Idle;
             _pending = string.Empty;
             _pendingDecomposed = string.Empty;
+            _pendingPrepaid = false;
             _echo = string.Empty;
             _updatesLeft = 0;
         }

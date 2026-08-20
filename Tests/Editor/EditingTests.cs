@@ -246,38 +246,79 @@ namespace OneText.Tests
         {
             // The third comparison, in NoteHandedOver: the platform composes
             // 한 as one character and hands it over as three. That is still
-            // payment, and a composition that stays live after being paid is
-            // drawn under the caret a second time and committed again behind it.
+            // payment, and a payment that failed to match would leave the
+            // syllable owed, drawn a second time and committed again behind it.
+            //
+            // The commit arrives the way the probe recordings show every
+            // commit arriving (Tools/ImeProbe~, macOS, 2026-08-20: 안, 녕, 하
+            // and 세 each land in the frame the report flips to the next
+            // syllable): the report has already moved on to ㄱ when the jamo
+            // are handed over, and they pay for the 한 that was replaced, not
+            // for the ㄱ on screen. An earlier version of this test had the
+            // platform paying 한 while still reporting 한, unchanged — a shape
+            // written down before any recording existed and observed in none
+            // of them; the model now reads that shape as a committed twin plus
+            // a re-issue instead.
             var model = new TextEditingModel { Text = "안" };
             model.SetCaret(1, false);
             model.SetComposition(Hangul_HAN);
+            model.Tick();
 
+            model.SetComposition("ㄱ"); // the report moves; the payment lands behind it
             foreach (char jamo in Hangul_HAN_Jamo)
                 model.AcceptCharacter(jamo, out _);
 
             Assert.AreEqual("안" + Hangul_HAN_Jamo, model.Text, "the jamo are the value now");
-            Assert.IsFalse(model.IsComposing,
-                "the composition was still owed after the platform had paid it in another shape");
-            Assert.AreEqual("안" + Hangul_HAN_Jamo, model.DisplayText, "so the syllable was drawn twice");
+            Assert.IsTrue(model.IsComposing, "and the next syllable is still being typed");
+            Assert.AreEqual("ㄱ", model.Composition.Text);
+            Assert.AreEqual("안" + Hangul_HAN_Jamo + "ㄱ", model.DisplayText,
+                "the syllable that finished is drawn once, ahead of the composition");
+
+            for (int update = 0; update < 4; update++) model.Tick();
+            Assert.AreEqual("안" + Hangul_HAN_Jamo, model.Text,
+                "and nothing arrives later to double it");
         }
 
         [Test]
         public void A_Character_That_Pays_For_Nothing_Does_Not_Spoil_The_Payment_Behind_It()
         {
             // 닭 and ㅏ: the platform commits 달 and composes 가, and 달 is no
-            // part of 가 — a character that pays for nothing on the screen.
-            // Left in the running total, the 가 the platform hands over later
-            // would arrive as "달가" and never match, and the composition would
-            // be drawn under the caret after it had been paid for.
+            // part of 가 — against the composition on screen it pays for
+            // nothing. Left in the running total, everything that arrives
+            // after it would be matched as "달…" and never fit, and the
+            // composition would stay owed after being paid.
+            //
+            // Driven at the recorded timings rather than the assumed ones
+            // (Tools/ImeProbe~, macOS, 2026-08-20). The split's commit may
+            // land a poll late — the order the two channels arrive in is the
+            // platform's business — so here 달 arrives after the register
+            // that remembers the replaced 닭 has aged out, and lands in the
+            // running total, which is the case this test exists for. The 가
+            // behind it commits the way every recorded commit does, in the
+            // frame the report moves — here, to empty. An earlier version had
+            // 가 paying against a report that never moved, a shape no
+            // recording shows.
             var model = new TextEditingModel();
-            model.SetComposition("가");
+            model.SetComposition("달");
+            model.Tick();
+            model.SetComposition("닭");
+            model.Tick();
+            model.SetComposition("가"); // ㅏ: the report moves on ...
+            model.Tick();
+            model.Tick();               // ... and the commit arrives late, past the register
 
             Assert.IsTrue(model.AcceptCharacter('달', out _));
             Assert.IsTrue(model.IsComposing, "달 is not 가, so 가 is still owed");
+            Assert.AreEqual("달가", model.DisplayText, "and both are drawn, each once");
 
+            // The report empties and 가 lands in that frame, as recorded.
+            model.SetComposition(string.Empty);
             Assert.IsTrue(model.AcceptCharacter('가', out _));
             Assert.AreEqual("달가", model.Text);
             Assert.IsFalse(model.IsComposing, "the composition was paid and a stale character got in the way");
+
+            for (int update = 0; update < 4; update++) model.Tick();
+            Assert.AreEqual("달가", model.Text, "and the grace window invents nothing on top");
         }
 
         [Test]
@@ -919,13 +960,29 @@ namespace OneText.Tests
         [Test]
         public void A_Syllable_Handed_Over_As_A_Character_Is_Not_Also_Owed_As_A_Composition()
         {
-            // The report with nothing exotic in it: no click, no focus change,
-            // just typing. The Input Manager backend reports what the platform
-            // is holding, and the platform does not have to update that report
-            // on the same frame it hands the finished syllable over as a
-            // character. For one frame it says both — here is 한, and I am still
-            // composing 한 — and a field that believes both draws it twice and
-            // commits it twice.
+            // What this test protects is the ending: a character taken once,
+            // and a grace window that must not invent a commit nobody sent on
+            // top of it. What it used to assume about the platform — that a
+            // syllable is handed over as a character while the report goes on
+            // saying it, unchanged — was written down before any recording
+            // existed, and three probe recordings later (Tools/ImeProbe~,
+            // macOS, 2026-08-20, ~4,500 frames) it has never been observed:
+            // every commit arrives in the frame the report changes, and the
+            // only characters that arrive against an unmoved report are a jamo
+            // committed and re-issued identically. The model therefore reads
+            // this shape as that re-issue: the character is credited to the
+            // finished twin and the composition stays adopted and drawn — the
+            // same artifact uGUI's own field produces unconditionally, since
+            // it splices Input.compositionString into the display every
+            // rebuild with no arbitration at all.
+            //
+            // The shape stays tested because Windows is unmeasured and might
+            // be the platform the old premise described. If it is, this is
+            // the contract that keeps the value right however long the stale
+            // report lingers: the character reached the value once, the
+            // lingering report costs a doubled drawing and nothing else, and
+            // the window the report's eventual emptying opens is prepaid — it
+            // inserts nothing.
             var field = CreateField(out _);
             field.ActivateInputField();
             field.text = "안녕";
@@ -933,29 +990,34 @@ namespace OneText.Tests
 
             _ime.Composition = Hangul_HAN;
             field.UpdateEditing();
+            field.UpdateEditing(); // the report stands still ...
+            field.UpdateEditing();
             Assert.AreEqual("안녕", field.text);
 
-            // The character arrives; the report has not caught up.
+            // ... and the character arrives against it, no report change in sight.
             field.ProcessKeyEvent(Key(KeyCode.None, Hangul_HAN[0]));
 
-            Assert.AreEqual("안녕" + Hangul_HAN, field.text);
-            Assert.IsFalse(field.isComposing,
-                "the composition was still owed after the platform had paid it");
-            Assert.AreEqual("안녕" + Hangul_HAN, field.displayText, "so the syllable was drawn twice");
+            Assert.AreEqual("안녕" + Hangul_HAN, field.text, "the character is the value, once");
+            Assert.IsTrue(field.isComposing,
+                "read as a committed twin and a re-issue, the composition stands");
+            Assert.AreEqual("안녕" + Hangul_HAN + Hangul_HAN, field.displayText,
+                "drawn behind the value until the report moves — the cost of a shape no recording shows");
 
-            // The report goes on saying 한 for as long as the platform holds it,
-            // and none of those polls may put it back.
+            // The report goes on saying 한 for as long as the platform holds
+            // it, and none of those polls may double the value.
             for (int update = 0; update < 6; update++) field.UpdateEditing();
-            Assert.IsFalse(field.isComposing);
-            Assert.AreEqual("안녕" + Hangul_HAN, field.displayText);
+            Assert.AreEqual("안녕" + Hangul_HAN, field.text);
 
-            // Then the platform lets go, and the grace window must not decide
-            // it is owed a commit nobody sent.
+            // Then the platform lets go with nothing else arriving, and the
+            // grace window must not decide it is owed a commit nobody sent:
+            // it was paid when the character was credited.
             _ime.Composition = string.Empty;
             for (int update = 0; update < 6; update++) field.UpdateEditing();
 
             Assert.AreEqual("안녕" + Hangul_HAN, field.text,
                 "a syllable appeared that the user did not type");
+            Assert.IsFalse(field.isComposing);
+            Assert.AreEqual("안녕" + Hangul_HAN, field.displayText);
 
             Destroy(field);
         }
@@ -1420,10 +1482,16 @@ namespace OneText.Tests
             // as the platform repeating itself. Five presses, one ㅁ, and the
             // same for ㅏㅏㅏ; ㄱㄱ escapes only because it combines into ㄲ.
             //
-            // What tells the two apart is the character channel, not the
-            // composition one: a report the platform has stopped believing in
-            // sends no characters, so a character paying for the composition
-            // being refused is proof that composition is the user's.
+            // What tells the two apart is measured, not assumed. Three probe
+            // recordings (Tools/ImeProbe~, macOS, 2026-08-20, ~4,500 frames)
+            // show every genuine commit arriving in the frame the report
+            // changes — to the next syllable at a split, to empty at an Enter
+            // or a click — and the only characters that ever arrive against an
+            // unmoved report are exactly these re-issues. So a payment that
+            // completes with the report unmoved is credited to the finished,
+            // identical twin, and the composition the user is typing stays
+            // adopted and drawn: every press lands, and every press is on
+            // screen.
             var field = CreateField(out _);
             _ime.KeepsComposingAfterEnd = true; // ImguiImeInput, as recorded
             field.ActivateInputField();
@@ -1446,34 +1514,10 @@ namespace OneText.Tests
 
                 Assert.AreEqual(new string('ㅁ', press - 1), field.text,
                     $"press {press} did not land");
-
-                // Every press lands in the value; the composition it opened is
-                // drawn on every other one. That is not an oversight, it is the
-                // price of the discriminator, and it is worth writing down
-                // where the next person will look.
-                //
-                // At the moment a payment completes, the two cases are the same
-                // observable state — a composition adopted, paid in full by
-                // characters, with the report unchanged. The three tests above
-                // this file's midpoint require that state to end the
-                // composition (:245, :265 and especially :920, where a paid
-                // report is held by the platform for six updates and must never
-                // be drawn or committed again); a repeated jamo requires the
-                // opposite from the identical state. Nothing on either channel
-                // separates them in that update, so the safe resolution is
-                // taken and reopened on the next evidence there is — the
-                // character of the following press. Hence one press of hidden
-                // preedit, self-correcting, losing nothing.
-                //
-                // Ending it takes information these two strings do not carry: a
-                // composition-session identity from the platform, which is a
-                // native backend the package does not have. The seam for one
-                // would be a generation counter on IImeInput; a generation that
-                // changed is exactly what would arm the replaced-composition
-                // register and put every press on the recorded split path.
-                if (press % 2 == 1)
-                    Assert.AreEqual("ㅁ", field.compositionString,
-                        $"the composition press {press} opened is not on screen");
+                Assert.AreEqual("ㅁ", field.compositionString,
+                    $"the composition press {press} opened is not on screen");
+                Assert.AreEqual(new string('ㅁ', press), field.displayText,
+                    $"press {press}: everything typed so far is what is drawn");
             }
 
             // Focus leaves and the platform commits the last one itself, with

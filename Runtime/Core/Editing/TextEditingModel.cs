@@ -43,6 +43,26 @@ namespace OneText
         private bool _replacedThisUpdate;
         private string _paidTheReplaced = string.Empty;
 
+        // Whether the report said something new this update: a composition was
+        // adopted, or the one on screen changed its text. Aged out by Tick the
+        // way _replaced is, and for the same reason — the poll runs before the
+        // key queue drains, so "this update" has to survive the Tick between
+        // them. Measured (Tools/ImeProbe~, three recordings, ~4,500 frames,
+        // macOS): every genuine commit character arrives in the frame the
+        // report changes; the only characters that arrive against an unmoved
+        // report are a jamo the platform committed and re-issued identically.
+        // NoteHandedOver keys on this to tell those apart.
+        private bool _reportMoved;
+        private bool _reportMovedThisUpdate;
+
+        // Whether a payment was credited to an identical, finished predecessor
+        // while this composition stayed alive — see NoteHandedOver. If the
+        // report later empties, the commit window opens prepaid: should the
+        // platform send nothing (the shape the old reasoned tests assumed, and
+        // no recording shows), the window must not insert a copy of text the
+        // credit already inserted.
+        private bool _paidForward;
+
         /// <summary>Refuses every edit, including composition.</summary>
         public bool ReadOnly { get; set; }
 
@@ -270,13 +290,16 @@ namespace OneText
                 textChanged = DeleteSelection(); // composing over a selection replaces it
                 _composition.Active = true;
                 _composition.Start = _caret;
+                _reportMoved = true;
+                _reportMovedThisUpdate = true;
             }
 
             if (composing.Length == 0)
             {
                 string previous = _composition.Text;
+                bool prepaid = _paidForward;
                 EndComposition();
-                Arbiter.AwaitPlatformCommit(previous);
+                Arbiter.AwaitPlatformCommit(previous, prepaid);
                 return textChanged;
             }
 
@@ -292,6 +315,11 @@ namespace OneText
                 _replacedThisUpdate = _replaced.Length != 0;
                 _paidTheReplaced = string.Empty;
                 _handedOver = string.Empty;
+                _reportMoved = true;
+                _reportMovedThisUpdate = true;
+                // A report that moved on is a new syllable being built; its
+                // commit will be its own, so the window it opens is not prepaid.
+                _paidForward = false;
             }
 
             _composition.Text = composing;
@@ -365,6 +393,12 @@ namespace OneText
             // second. See NoteHandedOver.
             if (_replacedThisUpdate) _replacedThisUpdate = false;
             else if (_replaced.Length != 0) { _replaced = string.Empty; _paidTheReplaced = string.Empty; }
+
+            // The same clock for the same reason: whether the report moved is a
+            // fact about this update, judged by the characters this update
+            // delivers after it.
+            if (_reportMovedThisUpdate) _reportMovedThisUpdate = false;
+            else _reportMoved = false;
 
             string owed = Arbiter.Tick();
             return owed != null && InsertAtCaret(owed);
@@ -546,6 +580,36 @@ namespace OneText
                 return;
             }
 
+            // Paid in full — but paid for what? Measured, not assumed
+            // (Tools/ImeProbe~, recordings of 2026-08-20, ~4,500 frames): every
+            // genuine commit on this platform arrives in the frame the report
+            // changes — the split (안 committed as the report flips to ㄴ), the
+            // ending (요 committed as the report empties), the Enter and the
+            // click (한 committed as the report empties). The one shape that
+            // arrives against a report that has not moved is a jamo that cannot
+            // combine with itself: the platform commits the first ㅁ and opens
+            // a second whose report reads exactly the same, and there is no
+            // edge for anything upstream to notice. So a payment completing
+            // here with the report unmoved is credited to that finished,
+            // identical predecessor, and the live composition — the one the
+            // user is typing now — stays adopted, drawn and owed. Crediting it
+            // to the live one instead was five presses of ㅁ becoming one.
+            //
+            // If a platform exists that really does pay the composition it is
+            // still showing with no report change (none of the recordings has
+            // one; the old tests here assumed it), the value still comes out
+            // right: the character was inserted once by this credit, and the
+            // window the report's eventual emptying opens is prepaid — it will
+            // take a late character but will not invent one. The cost there is
+            // the syllable drawn twice until the report empties, which is what
+            // uGUI's own field does unconditionally.
+            if (!_reportMoved)
+            {
+                _handedOver = string.Empty;
+                _paidForward = true;
+                return;
+            }
+
             string spent = _composition.Text;
             EndComposition();
             Arbiter.IgnoreReplayOf(spent);
@@ -624,6 +688,9 @@ namespace OneText
             _replaced = string.Empty;
             _replacedThisUpdate = false;
             _paidTheReplaced = string.Empty;
+            _reportMoved = false;
+            _reportMovedThisUpdate = false;
+            _paidForward = false;
         }
 
         private string ApplyLimit(string value) =>
