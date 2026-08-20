@@ -45,10 +45,12 @@ public class Drv {
     public const int  IMC_SETOPENSTATUS = 0x0006;
     public const int  IMC_GETOPENSTATUS = 0x0005;
 
-    public static void Tap(ushort vk, ushort scan) {
+    public static void Tap(ushort vk, ushort scan) { TapEx(vk, scan, 0); }
+
+    public static void TapEx(ushort vk, ushort scan, uint extra) {
         INPUT[] a = new INPUT[2];
-        a[0].type = 1; a[0].ki.wVk = vk; a[0].ki.wScan = scan; a[0].ki.dwFlags = 0;
-        a[1].type = 1; a[1].ki.wVk = vk; a[1].ki.wScan = scan; a[1].ki.dwFlags = 2;
+        a[0].type = 1; a[0].ki.wVk = vk; a[0].ki.wScan = scan; a[0].ki.dwFlags = extra;
+        a[1].type = 1; a[1].ki.wVk = vk; a[1].ki.wScan = scan; a[1].ki.dwFlags = extra | 2;
         SendInput(2, a, Marshal.SizeOf(typeof(INPUT)));
     }
 }
@@ -89,52 +91,105 @@ Start-Sleep -Milliseconds 800
 
 $imeWnd = [Drv]::ImmGetDefaultIMEWnd($hwnd)
 Write-Host ("player IME window: {0:X}" -f $imeWnd.ToInt64())
-if ($imeWnd -ne [IntPtr]::Zero) {
-    [void][Drv]::SendMessage($imeWnd, [Drv]::WM_IME_CONTROL, [IntPtr][Drv]::IMC_SETOPENSTATUS, [IntPtr]1)
-    Write-Host "IME open status: $([Drv]::SendMessage($imeWnd, [Drv]::WM_IME_CONTROL, [IntPtr][Drv]::IMC_GETOPENSTATUS, [IntPtr]::Zero))"
-}
-Start-Sleep -Milliseconds 500
 
-# U+C544 is d then k. Then the two presses the report is about, a beat
-# apart so the field sees the report shrink to the lone U+3147 on the way,
-# which is the ordering the user described: they saw it before pressing
-# again.
-Write-Host "--- d (U+3147)"; [Drv]::Tap(0x44, 0x20); Start-Sleep -Milliseconds 700
-Write-Host "--- k (U+314F, composing to U+C544)"; [Drv]::Tap(0x4B, 0x25); Start-Sleep -Milliseconds 700
-Write-Host "--- backspace 1"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 900
-Write-Host "--- backspace 2"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1500
+function Read-Log {
+    if (Test-Path $logPath) { Get-Content $logPath -Encoding UTF8 } else { @() }
+}
+
+# Has the composition report ever held Hangul? That, and not any return value
+# from the IME, is what says the keystrokes are going through an input method.
+# A syllable is U+AC00..U+D7A3, a lone jamo U+3130..U+318F or U+1100..U+11FF.
+function Composed-Hangul {
+    foreach ($line in (Read-Log)) {
+        if ($line -notmatch '\[report\]') { continue }
+        foreach ($ch in $line.ToCharArray()) {
+            $c = [int]$ch
+            if (($c -ge 0xAC00 -and $c -le 0xD7A3) -or
+                ($c -ge 0x3130 -and $c -le 0x318F) -or
+                ($c -ge 0x1100 -and $c -le 0x11FF)) { return $true }
+        }
+    }
+    return $false
+}
+
+# Four ways to put the field into Hangul mode, cheapest first, each judged by
+# whether a d actually composes rather than by what the call returned. The
+# first one is the one that looked like it worked last time and did not: it
+# reported open status 0 and the d landed in the value as an ASCII d.
+$ways = @(
+    @{ name = 'WM_IME_CONTROL IMC_SETOPENSTATUS'; act = {
+        if ($imeWnd -ne [IntPtr]::Zero) {
+            [void][Drv]::SendMessage($imeWnd, [Drv]::WM_IME_CONTROL, [IntPtr][Drv]::IMC_SETOPENSTATUS, [IntPtr]1)
+            Write-Host ("  open status now: {0}" -f [Drv]::SendMessage($imeWnd, [Drv]::WM_IME_CONTROL, [IntPtr][Drv]::IMC_GETOPENSTATUS, [IntPtr]::Zero))
+        }
+    }},
+    @{ name = 'VK_HANGUL'; act = { [Drv]::Tap(0x15, 0xF2) } },
+    @{ name = 'right Alt (the Hangul key on a Korean keyboard)'; act = { [Drv]::TapEx(0xA5, 0x38, 0x0001) } },
+    @{ name = 'VK_HANGUL with the right Alt scan code'; act = { [Drv]::TapEx(0x15, 0x38, 0x0001) } }
+)
+
+$composing = $false
+foreach ($way in $ways) {
+    Write-Host "--- trying: $($way.name)"
+    & $way.act
+    Start-Sleep -Milliseconds 700
+    [Drv]::Tap(0x44, 0x20)          # d
+    Start-Sleep -Milliseconds 900
+    if (Composed-Hangul) { Write-Host "  composes"; $composing = $true; break }
+    Write-Host "  no composition; clearing and trying the next"
+    [Drv]::Tap(0x08, 0x0E)          # backspace, take the stray d back out
+    Start-Sleep -Milliseconds 400
+}
+
+if (-not $composing) {
+    Write-Host ""
+    Write-Host "=== ime-check.log"
+    Read-Log | ForEach-Object { Write-Host "  $_" }
+    Write-Host ""
+    Write-Host "RESULT: INCONCLUSIVE - no way of opening the IME made the player compose."
+    Write-Host "        The keystrokes reach the field, so this is about the input method,"
+    Write-Host "        not about the fix. Nothing here is evidence either way."
+    if (-not $p.HasExited) { $p.Kill() }
+    exit 0
+}
+
+# The d has already composed to the lone jamo. Add k to make the syllable,
+# then the two presses the report is about, a beat apart so the field sees
+# the report shrink on the way - the ordering the user described.
+$before = (Read-Log).Count
+Write-Host "--- k (composing to the full syllable)"; [Drv]::Tap(0x4B, 0x25); Start-Sleep -Milliseconds 900
+Write-Host "--- backspace 1"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1100
+Write-Host "--- backspace 2"; [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1800
 
 Start-Sleep -Seconds 2
 if (-not $p.HasExited) { $p.CloseMainWindow() | Out-Null; Start-Sleep -Seconds 2 }
 if (-not $p.HasExited) { $p.Kill() }
 Start-Sleep -Seconds 1
 
+$lines = Read-Log
 Write-Host ""
 Write-Host "=== ime-check.log"
-if (-not (Test-Path $logPath)) {
-    Write-Host "RESULT: INCONCLUSIVE - no log was written"
-    exit 0
-}
-$lines = Get-Content $logPath -Encoding UTF8
 $lines | ForEach-Object { Write-Host "  $_" }
 
 Write-Host ""
 Write-Host "=== verdict"
-$reports = $lines | Where-Object { $_ -match '\[report\]' }
-if (-not $reports) {
-    Write-Host "RESULT: INCONCLUSIVE - the composition report never moved, so the IME never"
-    Write-Host "        engaged with the player. This says nothing about the fix."
-    exit 0
-}
+# The value line is the whole question: after two backspaces the field must
+# hold nothing. A third press being needed is exactly the value still holding
+# the jamo here.
 $values = $lines | Where-Object { $_ -match '\[value \]' }
-Write-Host "reports: $($reports.Count)  value changes: $($values.Count)"
-$last = $values | Select-Object -Last 1
-Write-Host "last value line: $last"
-if ($last -and $last -match "-> ''") {
-    Write-Host "RESULT: PASS - two backspaces left the value empty"
-} elseif (-not $values) {
-    Write-Host "RESULT: PASS - the value was never written to at all"
+$final = ''
+if ($values) {
+    $last = $values | Select-Object -Last 1
+    if ($last -match "-> '([^']*)'") { $final = $matches[1] }
+    Write-Host "last value line: $last"
 } else {
-    Write-Host "RESULT: SUSPECT - something was left in the value; read the log above"
+    Write-Host "the value was never written to"
+}
+foreach ($ch in $final.ToCharArray()) { Write-Host ("  left in the value: U+{0:X4}" -f [int]$ch) }
+
+if ([string]::IsNullOrEmpty($final)) {
+    Write-Host "RESULT: PASS - two backspaces left the value empty, no third press needed"
+} else {
+    Write-Host "RESULT: FAIL - the value still holds something after two backspaces"
 }
 exit 0
