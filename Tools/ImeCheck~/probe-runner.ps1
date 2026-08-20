@@ -78,3 +78,7 @@ $k = [Lay]::LoadKeyboardLayout('00000412', 1)
 Write-Host ("  LoadKeyboardLayout(00000412) -> {0:X8}" -f $k.ToInt64())
 Write-Host ""
 Write-Host "=== done"
+
+# A probe reports, it does not fail: native tools leave $LASTEXITCODE
+# behind and the step wrapper exits with it.
+exit 0

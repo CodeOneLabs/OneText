@@ -106,3 +106,5 @@ if ($box.Text -match '[가-힣㄰-㆏]') {
     Write-Host "RESULT: no Hangul produced"
 }
 $form.Close()
+
+exit 0
