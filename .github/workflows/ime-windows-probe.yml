@@ -1,6 +1,7 @@
 # Asks a Windows runner whether the Korean IME bug can be reproduced without
-# a person at a keyboard: is there an interactive desktop, can the Korean IME
-# be installed, does a keyboard layout for it load. Not part of the suite.
+# a person at a keyboard. Two questions, cheapest first: can the runner hold
+# an IME at all, and do synthesised keystrokes actually go through it. Only
+# if both answer yes is it worth building a player here. Not part of the suite.
 name: IME Windows probe
 
 on:
@@ -15,6 +16,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Probe
+      - name: Can it hold an IME
         shell: powershell
         run: ./Tools/ImeCheck~/probe-runner.ps1
+      - name: Do synthesised keys go through it
+        shell: powershell
+        run: ./Tools/ImeCheck~/probe-synthesis.ps1
