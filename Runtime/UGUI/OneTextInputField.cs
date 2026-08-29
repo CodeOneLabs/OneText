@@ -686,7 +686,19 @@ namespace OneText.UGUI
                     string reclaimed = _model.Arbiter.ReclaimedInto(
                         _model.Composition.Text, out bool certain);
                     if (reclaimed != null && certain) Reclaim(reclaimed);
-                    else _reclaimIfNoKeyFollows = reclaimed;
+                    // The uncertain answer waits a keystroke: a key or a
+                    // character behind the adoption is the user starting a
+                    // syllable, silence is the platform taking one back. On
+                    // the platform that pays every commit that question can
+                    // never be answered — the IMM eats the keystrokes that
+                    // drive a composition whole, so its silence covers every
+                    // user keystroke too, and the wait resolves to "reclaim"
+                    // one update later, unconditionally. 가나다라, Enter, ㄹ:
+                    // the ㄹ shares its lead with the 라 just committed, and
+                    // the 라 was pulled back out of the value — 가나다ㄹ. That
+                    // platform has never been seen to reclaim committed text,
+                    // so the uncertain shape there is the user, always.
+                    else if (!_model.PlatformPaysEveryCommit) _reclaimIfNoKeyFollows = reclaimed;
                 }
                 // Only when something is or was on screen. A composition the
                 // model refuses as a replay of one the field already committed

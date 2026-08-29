@@ -1847,6 +1847,52 @@ namespace OneText.Tests
             Destroy(field);
         }
 
+        /// <summary>
+        /// The 2026-08-29 report that followed the refocus fix: 가나다라,
+        /// Enter, ㄹ — and the screen reads 가나다ㄹ. The ㄹ shares its lead
+        /// with the 라 the Enter committed, which is the uncertain reclaim
+        /// shape, and the discriminator for that shape is a keystroke arriving
+        /// behind the adoption. On the platform that pays every commit no
+        /// keystroke can ever arrive — the IMM eats the keys that drive a
+        /// composition whole, measured on every recording — so the wait
+        /// resolved to "reclaim" for every syllable the user started, and the
+        /// syllable before the caret left the value one update later. There
+        /// the uncertain answer must be the user, always.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_A_Same_Lead_Syllable_Reclaims_Nothing()
+        {
+            var field = CreateField(out _);
+            _ime.PaysEveryCommit = true;
+            field.ActivateInputField();
+
+            _ime.Composition = "라";
+            field.UpdateEditing();
+            field.UpdateEditing();
+
+            // Enter: the IMM ends the composition and pays it on the character
+            // channel in the same update; the Return arrives behind the pay.
+            _ime.Composition = string.Empty;
+            field.UpdateEditing();
+            field.ProcessKeyEvent(Key(KeyCode.None, '라'));
+            field.ProcessKeyEvent(Key(KeyCode.Return, '\n'));
+            Assert.AreEqual("라", field.text);
+            for (int idle = 0; idle < 3; idle++) field.UpdateEditing();
+
+            // ㄹ: the report is all there is — the keystroke that made it
+            // never reaches the field on this platform.
+            _ime.Composition = "ㄹ";
+            field.UpdateEditing();
+            field.UpdateEditing();
+
+            Assert.AreEqual("라", field.text,
+                "the committed syllable was reclaimed off a keystroke the field never saw");
+            Assert.IsTrue(field.isComposing);
+            Assert.AreEqual("라ㄹ", field.displayText);
+
+            Destroy(field);
+        }
+
         [Test]
         public void The_Same_Syllable_Typed_Over_And_Over_Advances_Every_Time()
         {

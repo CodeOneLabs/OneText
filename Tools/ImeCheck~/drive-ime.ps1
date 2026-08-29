@@ -223,6 +223,27 @@ for ($n = 1; $n -le 6; $n++) {
 }
 Start-Sleep -Milliseconds 1500
 
+# Scenario 5, off the report that followed the refocus fix: type a run of
+# syllables (r k s k e k f k = GA NA DA RA on the 2-set layout), press Enter
+# to commit the last one, then press f (RIEUL) - which shares its lead with
+# the RA just committed. The report said the RA disappears: the new lead was
+# mistaken for the platform reclaiming the committed syllable, because the
+# "did a key follow" discriminator never gets a key on this platform. One
+# press after Enter must add exactly one jamo and take nothing away.
+Write-Host "--- scenario 5: syllables, Enter, then the same lead again"
+[void](Send-Cmd 'mark scenario-5')
+$seq5 = @(
+    @(0x52, 0x13), @(0x4B, 0x25),
+    @(0x53, 0x1F), @(0x4B, 0x25),
+    @(0x45, 0x12), @(0x4B, 0x25),
+    @(0x46, 0x21), @(0x4B, 0x25)
+)
+foreach ($k in $seq5) { [Drv]::Tap($k[0], $k[1]); Start-Sleep -Milliseconds 450 }
+Write-Host "--- enter"; [Drv]::Tap(0x0D, 0x1C); Start-Sleep -Milliseconds 1500
+[void](Send-Cmd 'mark scenario-5-go')
+Write-Host "--- f (the lead of the syllable just committed)"
+[Drv]::Tap(0x46, 0x21); Start-Sleep -Milliseconds 1800
+
 Start-Sleep -Seconds 2
 if (-not $p.HasExited) { $p.CloseMainWindow() | Out-Null; Start-Sleep -Seconds 2 }
 if (-not $p.HasExited) { $p.Kill() }
@@ -238,11 +259,14 @@ $lines | ForEach-Object { Write-Host "  $_" }
 # scenarios are inconclusive and the first one reads the whole log, which is
 # what it always did.
 $mark2 = $lines.Count; $mark3 = $lines.Count; $mark4 = $lines.Count; $mark4del = $lines.Count
+$mark5 = $lines.Count; $mark5go = $lines.Count
 for ($i = 0; $i -lt $lines.Count; $i++) {
     if ($mark2 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-2') { $mark2 = $i }
     elseif ($mark3 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-3') { $mark3 = $i }
     elseif ($mark4 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-4$') { $mark4 = $i }
     elseif ($mark4del -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-4-del') { $mark4del = $i }
+    elseif ($mark5 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-5$') { $mark5 = $i }
+    elseif ($mark5go -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-5-go') { $mark5go = $i }
 }
 
 function Count-Ieung([string]$s) {
@@ -395,7 +419,9 @@ if ($mark4 -ge $lines.Count) {
 } else {
     $s4base  = Screen-State $lines $mark4
     $s4typed = Screen-State $lines $mark4del
-    $s4end   = Screen-State $lines $lines.Count
+    # Up to where scenario 5 begins, not the end of the log: everything
+    # after that mark belongs to the next scenario.
+    $s4end   = Screen-State $lines $mark5
     $typed   = ((Count-Hangul $s4typed.value) + (Count-Hangul $s4typed.comp)) -
                ((Count-Hangul $s4base.value)  + (Count-Hangul $s4base.comp))
     $removed = ((Count-Hangul $s4typed.value) + (Count-Hangul $s4typed.comp)) -
@@ -415,6 +441,33 @@ if ($mark4 -ge $lines.Count) {
     } else {
         $eaten = 6 - $removed
         Write-Host "RESULT: FAIL - six presses of backspace deleted $removed ($eaten swallowed)"
+    }
+}
+
+Write-Host ""
+Write-Host "=== verdict, scenario 5 (Enter, then the lead of the committed syllable)"
+if ($mark5 -ge $lines.Count -or $mark5go -ge $lines.Count) {
+    Write-Host "RESULT: INCONCLUSIVE - the scenario was never driven"
+} else {
+    # The state the Enter left behind, against the state one press of f
+    # later. The press starts a composition and commits nothing, so the
+    # screen must gain exactly the one jamo being composed. The reported
+    # bug reads as zero: the new jamo arrives and the syllable before the
+    # caret leaves, mistaken for the platform reclaiming it.
+    $s5base = Screen-State $lines $mark5go
+    $s5end  = Screen-State $lines $lines.Count
+    $gained = ((Count-Hangul $s5end.value)  + (Count-Hangul $s5end.comp)) -
+              ((Count-Hangul $s5base.value) + (Count-Hangul $s5base.comp))
+    Write-Host ("before: value {0} composing {1}" -f (Code-Points $s5base.value), (Code-Points $s5base.comp))
+    Write-Host ("after : value {0} composing {1}" -f (Code-Points $s5end.value), (Code-Points $s5end.comp))
+    if ((Count-Hangul $s5base.value) -eq 0) {
+        Write-Host "RESULT: INCONCLUSIVE - the IME composed nothing in this scenario"
+    } elseif ($gained -eq 1 -and (Count-Hangul $s5end.value) -eq (Count-Hangul $s5base.value)) {
+        Write-Host "RESULT: PASS - the press added its jamo and took nothing away"
+    } elseif ($gained -eq 0) {
+        Write-Host "RESULT: FAIL - the syllable before the caret was reclaimed by a keystroke the field never saw"
+    } else {
+        Write-Host "RESULT: FAIL - one press changed the screen by $gained"
     }
 }
 exit 0
