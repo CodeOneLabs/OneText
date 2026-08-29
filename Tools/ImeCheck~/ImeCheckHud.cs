@@ -89,7 +89,8 @@ public sealed class ImeCheckHud : MonoBehaviour
     /// 2026-08-21 report is a click on empty canvas: the EventSystem deselects
     /// the field and nothing else happens. So the driver writes one command
     /// to ime-drive.txt beside the executable — "away" deselects the way that
-    /// click does, "back" selects the field again, "mark &lt;text&gt;" puts a
+    /// click does, "back" selects the field again with the caret at the end,
+    /// the way the reported click back in named a position, "mark &lt;text&gt;" puts a
     /// line in the log so the verdict can cut it into scenarios — and the file
     /// is deleted once obeyed, which is how the driver knows it landed.
     /// </summary>
@@ -118,7 +119,18 @@ public sealed class ImeCheckHud : MonoBehaviour
         else if (string.Equals(command, "back", StringComparison.Ordinal))
         {
             Debug.Log("[drive ] back");
-            if (Field != null) { Field.Select(); Field.ActivateInputField(); }
+            if (Field != null)
+            {
+                Field.Select();
+                Field.ActivateInputField();
+                // The report this reproduces is a click back into the field,
+                // and a click names a caret position, so focusing this way must
+                // not leave the whole value selected the way a Tab would — the
+                // next keystroke would replace the text instead of resuming it,
+                // and the verdict would read that replacement as presses lost.
+                int end = (Field.text ?? string.Empty).Length;
+                Field.SetSelection(end, end);
+            }
         }
         else if (command.StartsWith("mark ", StringComparison.Ordinal))
         {
