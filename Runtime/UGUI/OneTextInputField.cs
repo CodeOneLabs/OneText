@@ -475,6 +475,11 @@ namespace OneText.UGUI
             }
 
             _ime ??= ImeInput.Create();
+            // A platform fact, not a backend one, told to the model here
+            // because this is where the desktop input method path begins and
+            // the mobile path has already returned. See the property for the
+            // measurement.
+            _model.PlatformPaysEveryCommit = ImeInput.PlatformPaysEveryCommit;
             if (_ime == null || _imeBegun) return;
             _ime.Begin();
             _imeBegun = true;

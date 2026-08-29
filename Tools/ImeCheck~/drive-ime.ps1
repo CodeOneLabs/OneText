@@ -196,14 +196,16 @@ Write-Host "--- scenario 3: one backspace"
 [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1800
 
 # Scenario 4, off the 2026-08-29 report: consonants only, then backspace,
-# which the reporter says is swallowed - and is not on macOS. No two of
-# these jamo can join into a syllable, so every press commits the previous
-# one and starts composing the new one; after twelve presses the value holds
-# eleven and the composition one. Then six presses of backspace: the first
-# crosses the composition-to-value boundary, the rest delete committed text.
-# Keys on the 2-set layout: a=MIEUM s=NIEUN d=IEUNG f=RIEUL, and the typed
-# run is MIEUM NIEUN IEUNG RIEUL / MIEUM IEUNG RIEUL / MIEUM NIEUN IEUNG
-# RIEUL / NIEUN, exactly as reported.
+# which the reporter says is swallowed - and is not on macOS. Almost no two
+# of these jamo can join, so nearly every press commits the previous one and
+# starts composing the new one - except that the Microsoft IME composes
+# RIEUL+MIEUM into the cluster jamo U+313B, which the first run of this
+# measured: it happens twice in this sequence, so twelve presses put ten
+# characters on the screen and that is correct. Then six presses of
+# backspace: the first crosses the composition-to-value boundary, the rest
+# delete committed text. Keys on the 2-set layout: a=MIEUM s=NIEUN d=IEUNG
+# f=RIEUL, and the typed run is MIEUM NIEUN IEUNG RIEUL / MIEUM IEUNG RIEUL
+# / MIEUM NIEUN IEUNG RIEUL / NIEUN, exactly as reported.
 Write-Host "--- scenario 4: twelve consonants, then six backspaces"
 [void](Send-Cmd 'mark scenario-4')
 $seq = @(
@@ -403,11 +405,13 @@ if ($mark4 -ge $lines.Count) {
     Write-Host ("end   : value {0} composing {1}" -f (Code-Points $s4end.value), (Code-Points $s4end.comp))
     if ($typed -eq 0) {
         Write-Host "RESULT: INCONCLUSIVE - the IME composed nothing in this scenario"
-    } elseif ($typed -ne 12) {
-        Write-Host "RESULT: FAIL - twelve presses put $typed jamo on the screen before any backspace"
+    } elseif ($typed -ne 10) {
+        # Ten, not twelve: the Microsoft IME joins RIEUL+MIEUM into one
+        # cluster jamo, twice in this sequence. See the typing comment above.
+        Write-Host "RESULT: FAIL - twelve presses put $typed characters on the screen, not the ten measured"
         Write-Host "        (the deletion half still ran: six backspaces removed $removed)"
     } elseif ($removed -eq 6) {
-        Write-Host "RESULT: PASS - twelve presses typed twelve, six backspaces deleted six"
+        Write-Host "RESULT: PASS - twelve presses typed ten (two RIEUL+MIEUM clusters), six backspaces deleted six"
     } else {
         $eaten = 6 - $removed
         Write-Host "RESULT: FAIL - six presses of backspace deleted $removed ($eaten swallowed)"

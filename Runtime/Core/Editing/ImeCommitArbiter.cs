@@ -123,6 +123,14 @@ namespace OneText
         // AwaitPlatformCommit for the two ways that happens.
         private bool _pendingOwesNothing;
 
+        // Whether this window pays out only to an explicit Flush — the field
+        // committing because focus is leaving — and never to a key or to the
+        // window expiring. Set on the platform whose IME pays every commit it
+        // makes on the character channel and eats the deleting backspace whole,
+        // where a window that expires unpaid can only be a deletion. See
+        // AwaitPlatformCommit.
+        private bool _pendingOwedOnlyToFlush;
+
         // The echo as it arrives, rather than an index into _pending. The
         // platform is not obliged to hand a syllable back in the shape it
         // reported composing it — macOS routinely delivers 한 as its three
@@ -199,14 +207,34 @@ namespace OneText
         /// the report empties — but on expiry it inserts nothing. Inserting
         /// there is the doubled syllable in the first case and the deletion
         /// that would not take in the second.
+        ///
+        /// <paramref name="owedOnlyToFlush"/> is the Windows report of
+        /// 2026-08-29, measured on a runner rather than reasoned about. The IMM
+        /// pays every commit it makes on the character channel, in the same
+        /// update the report moves — and it eats the backspace that empties a
+        /// composition whole, so the field is never told a key was pressed.
+        /// That leaves a lone composing jamo with no shrink for
+        /// <c>TextEditingModel</c> to see: ㄴ, backspace, and the report goes
+        /// straight from ㄴ to nothing, unpaid, keyless — the exact shape of a
+        /// commit on the platform this window's expiry insert exists for. On a
+        /// platform that always pays, an unpaid expiry can only be the
+        /// deletion, so such a window takes a character if one arrives, pays
+        /// out to <see cref="Flush"/> if focus leaves while it is open — the
+        /// one caller that knows nothing more is coming — and hands nothing to
+        /// a key and nothing to expiry. Handing it to a key is how the deleted
+        /// jamo came back: the field settles owed text on control keys, and
+        /// the very next keystroke would have reinserted what the backspace
+        /// removed.
         /// </summary>
-        public void AwaitPlatformCommit(string composed, bool owesNothing = false)
+        public void AwaitPlatformCommit(string composed, bool owesNothing = false,
+            bool owedOnlyToFlush = false)
         {
             if (string.IsNullOrEmpty(composed)) { Reset(); return; }
             _mode = Mode.AwaitingPlatform;
             _pending = composed;
             _pendingDecomposed = Decomposed(composed);
             _pendingOwesNothing = owesNothing;
+            _pendingOwedOnlyToFlush = owedOnlyToFlush;
             _echo = string.Empty;
             _updatesLeft = GraceUpdates;
 
@@ -628,6 +656,16 @@ namespace OneText
             if (_mode == Mode.SuppressingEcho && _replay != null) return null;
 
             if (--_updatesLeft > 0) return null;
+
+            // A window owed only to a flush expires empty-handed: on the
+            // platform that set it, a commit would have paid by now, so what
+            // never paid was deleted. Flushing it here instead is the deleted
+            // jamo coming back as committed text two updates after the press.
+            if (_mode == Mode.AwaitingPlatform && _pendingOwedOnlyToFlush)
+            {
+                Reset();
+                return null;
+            }
             return Flush();
         }
 
@@ -659,6 +697,15 @@ namespace OneText
         public string TakeOwedNow(bool onlyWhatIsOwed = false)
         {
             if (_mode != Mode.AwaitingPlatform) return null;
+
+            // A window owed only to a flush answers no key at all, in either
+            // direction, and stays open. On the platform that sets these the
+            // press that empties a composition never reaches the field as a
+            // key, so a backspace arriving while one is open is a different
+            // press — key repeat, most often — and closing the window as its
+            // payment would swallow that press the way the report says the
+            // first one was. The window expires on its own; see Tick.
+            if (_pendingOwedOnlyToFlush) return null;
 
             // Two callers, opposite questions. One is throwing the commit away
             // and only needs to know a window was open — it gets the text
@@ -977,6 +1024,7 @@ namespace OneText
             _pending = string.Empty;
             _pendingDecomposed = string.Empty;
             _pendingOwesNothing = false;
+            _pendingOwedOnlyToFlush = false;
             _echo = string.Empty;
             _updatesLeft = 0;
         }

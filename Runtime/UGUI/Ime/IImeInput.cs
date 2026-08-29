@@ -150,6 +150,21 @@ namespace OneText.UGUI
         }
 
         /// <summary>
+        /// Whether this platform's input method pays every commit it makes on
+        /// the character channel. True on Windows, measured on a runner
+        /// (2026-08-29): the IMM turns every commit into a character in the
+        /// update the report moves, and it eats the backspace that empties a
+        /// composition whole, so a report that empties unpaid and keyless there
+        /// is a deletion and never a commit. macOS is the opposite measured
+        /// shape — a commit can arrive with no character at all — and answers
+        /// false, along with every platform not yet measured, because false
+        /// keeps the behaviour every recording to date was read from.
+        /// </summary>
+        public static bool PlatformPaysEveryCommit =>
+            Application.platform == RuntimePlatform.WindowsPlayer ||
+            Application.platform == RuntimePlatform.WindowsEditor;
+
+        /// <summary>
         /// Whether <c>UnityEngine.Input</c>'s input-method members answer in
         /// this project, which is what <see cref="ImguiImeInput"/> needs and
         /// the only thing it needs.

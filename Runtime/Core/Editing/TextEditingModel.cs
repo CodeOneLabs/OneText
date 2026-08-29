@@ -86,6 +86,21 @@ namespace OneText
         /// <summary>Refuses every edit, including composition.</summary>
         public bool ReadOnly { get; set; }
 
+        /// <summary>
+        /// True on a platform whose input method pays every commit it makes on
+        /// the character channel, in the update the report moves — measured on
+        /// Windows (run 33236712154): twelve consonants, twelve payments, and
+        /// the one report that emptied unpaid was the backspace the IMM ate
+        /// whole. On such a platform the commit window an emptying report
+        /// opens is owed only to a focus-loss flush: a character still pays it,
+        /// but neither a key nor its expiry may insert, because what never
+        /// paid was deleted. False by default, which is the measured macOS
+        /// shape — there a commit can arrive with no character at all, and the
+        /// expiry insert is what keeps it. The field sets this from
+        /// <c>ImeInput.PlatformPaysEveryCommit</c>.
+        /// </summary>
+        public bool PlatformPaysEveryCommit { get; set; }
+
         /// <summary>Maximum length of the committed text; 0 means unlimited.</summary>
         public int CharacterLimit { get; set; }
 
@@ -319,7 +334,8 @@ namespace OneText
                 string previous = _composition.Text;
                 bool owesNothing = _paidForward || _shrankUnpaid;
                 EndComposition();
-                Arbiter.AwaitPlatformCommit(previous, owesNothing);
+                Arbiter.AwaitPlatformCommit(previous, owesNothing,
+                    owedOnlyToFlush: PlatformPaysEveryCommit);
                 return textChanged;
             }
 

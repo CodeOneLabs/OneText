@@ -156,6 +156,109 @@ namespace OneText.Tests
         }
 
         /// <summary>
+        /// The 2026-08-29 report, measured on a Windows runner: consonants
+        /// only — ㅁㄴㅇㄹ… — and then backspace, which appears swallowed. No
+        /// two of those jamo join, so the composition is always one jamo, and
+        /// deleting a one-jamo composition has no shrink for the model to see:
+        /// the report goes straight from ㄴ to nothing, unpaid, and the IMM
+        /// eats the backspace whole so no key arrives either. On the platform
+        /// where every real commit pays on the character channel, that unpaid
+        /// keyless emptying can only be the deletion, and the window it opens
+        /// must not insert on expiry — inserting is the ㄴ coming back as
+        /// committed text, which is the press reading as swallowed.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_A_Keyless_Unpaid_Emptying_Is_A_Deletion()
+        {
+            var model = new TextEditingModel { Text = "안녕", PlatformPaysEveryCommit = true };
+            model.SetCaret(2, false);
+
+            model.SetComposition("ㄴ");   // ㄴ, composing
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+
+            model.SetComposition(string.Empty); // the backspace the IMM ate
+            Assert.IsFalse(model.IsComposing);
+
+            for (int update = 0; update < ImeCommitArbiter.DefaultGraceUpdates + 4; update++)
+                Assert.IsFalse(model.Tick(), "the deleted jamo was inserted on expiry");
+
+            Assert.AreEqual("안녕", model.Text, "the deleted jamo came back as committed text");
+        }
+
+        /// <summary>
+        /// The same window, paid: on the platform that pays every commit, the
+        /// payment still arrives on the character channel in the update the
+        /// report empties, and the window takes it exactly as before. The flag
+        /// only changes what happens when nothing arrives.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_The_Payment_Still_Lands()
+        {
+            var model = new TextEditingModel { Text = "안녕", PlatformPaysEveryCommit = true };
+            model.SetCaret(2, false);
+
+            model.SetComposition("ㄴ");
+            model.Tick();
+            model.SetComposition(string.Empty);
+
+            Assert.IsTrue(model.AcceptCharacter('ㄴ', out bool changed));
+            Assert.IsTrue(changed);
+            Assert.AreEqual("안녕ㄴ", model.Text);
+
+            for (int update = 0; update < 4; update++)
+                Assert.IsFalse(model.Tick(), "the platform already delivered; we owe nothing");
+            Assert.AreEqual("안녕ㄴ", model.Text);
+        }
+
+        /// <summary>
+        /// The window is still owed to the one caller that knows nothing more
+        /// is coming: focus leaving. The report can empty at the poll of the
+        /// same update a click deactivates the field, and the flush that
+        /// deactivation runs must commit the jamo the user was composing — the
+        /// flag must not turn a click away into a deletion.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_Focus_Loss_Still_Commits()
+        {
+            var model = new TextEditingModel { Text = "안녕", PlatformPaysEveryCommit = true };
+            model.SetCaret(2, false);
+
+            model.SetComposition("ㄴ");
+            model.Tick();
+            model.SetComposition(string.Empty);
+
+            Assert.IsTrue(model.FlushCommit(), "the flush made no commit");
+            Assert.AreEqual("안녕ㄴ", model.Text);
+        }
+
+        /// <summary>
+        /// A backspace arriving while the deletion's window is still open is a
+        /// different press — key repeat reaches this in two updates — because
+        /// on this platform the press that emptied the composition never
+        /// arrives as a key at all. The window must not take it as its
+        /// payment: the press deletes committed text, exactly as it would with
+        /// no window open.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_A_Repeat_Backspace_Is_Not_The_Windows_Payment()
+        {
+            var model = new TextEditingModel { Text = "안녕", PlatformPaysEveryCommit = true };
+            model.SetCaret(2, false);
+
+            model.SetComposition("ㄴ");
+            model.Tick();
+            model.SetComposition(string.Empty);
+
+            Assert.IsFalse(model.DiscardOwedCommit(), "the repeat press was taken as the window's payment");
+            Assert.IsTrue(model.Backspace());
+            Assert.AreEqual("안", model.Text, "the repeat press deleted nothing");
+
+            for (int update = 0; update < ImeCommitArbiter.DefaultGraceUpdates + 4; update++)
+                Assert.IsFalse(model.Tick(), "the deleted jamo was inserted on expiry");
+            Assert.AreEqual("안", model.Text);
+        }
+
+        /// <summary>
         /// The same shape, paid for: a syllable splitting shrinks the report to
         /// a prefix of itself too, and that one is a commit. What tells them
         /// apart is the character arriving to pay for what was dropped, so the
