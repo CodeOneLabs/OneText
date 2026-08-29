@@ -195,6 +195,32 @@ Write-Host "--- scenario 3: one backspace"
 [void](Send-Cmd 'mark scenario-3')
 [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1800
 
+# Scenario 4, off the 2026-08-29 report: consonants only, then backspace,
+# which the reporter says is swallowed - and is not on macOS. No two of
+# these jamo can join into a syllable, so every press commits the previous
+# one and starts composing the new one; after twelve presses the value holds
+# eleven and the composition one. Then six presses of backspace: the first
+# crosses the composition-to-value boundary, the rest delete committed text.
+# Keys on the 2-set layout: a=MIEUM s=NIEUN d=IEUNG f=RIEUL, and the typed
+# run is MIEUM NIEUN IEUNG RIEUL / MIEUM IEUNG RIEUL / MIEUM NIEUN IEUNG
+# RIEUL / NIEUN, exactly as reported.
+Write-Host "--- scenario 4: twelve consonants, then six backspaces"
+[void](Send-Cmd 'mark scenario-4')
+$seq = @(
+    @(0x41, 0x1E), @(0x53, 0x1F), @(0x44, 0x20), @(0x46, 0x21),
+    @(0x41, 0x1E), @(0x44, 0x20), @(0x46, 0x21),
+    @(0x41, 0x1E), @(0x53, 0x1F), @(0x44, 0x20), @(0x46, 0x21),
+    @(0x53, 0x1F)
+)
+foreach ($k in $seq) { [Drv]::Tap($k[0], $k[1]); Start-Sleep -Milliseconds 450 }
+Start-Sleep -Milliseconds 1500
+[void](Send-Cmd 'mark scenario-4-del')
+for ($n = 1; $n -le 6; $n++) {
+    Write-Host "--- backspace $n"
+    [Drv]::Tap(0x08, 0x0E); Start-Sleep -Milliseconds 1100
+}
+Start-Sleep -Milliseconds 1500
+
 Start-Sleep -Seconds 2
 if (-not $p.HasExited) { $p.CloseMainWindow() | Out-Null; Start-Sleep -Seconds 2 }
 if (-not $p.HasExited) { $p.Kill() }
@@ -209,10 +235,12 @@ $lines | ForEach-Object { Write-Host "  $_" }
 # reads only its own cut. Without them (an old player build) the extra
 # scenarios are inconclusive and the first one reads the whole log, which is
 # what it always did.
-$mark2 = $lines.Count; $mark3 = $lines.Count
+$mark2 = $lines.Count; $mark3 = $lines.Count; $mark4 = $lines.Count; $mark4del = $lines.Count
 for ($i = 0; $i -lt $lines.Count; $i++) {
     if ($mark2 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-2') { $mark2 = $i }
     elseif ($mark3 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-3') { $mark3 = $i }
+    elseif ($mark4 -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-4$') { $mark4 = $i }
+    elseif ($mark4del -eq $lines.Count -and $lines[$i] -match '\[mark  \] scenario-4-del') { $mark4del = $i }
 }
 
 function Count-Ieung([string]$s) {
@@ -221,6 +249,18 @@ function Count-Ieung([string]$s) {
     foreach ($ch in $s.ToCharArray()) {
         $c = [int]$ch
         if ($c -eq 0x3147 -or $c -eq 0x110B) { $n++ }   # ieung, compatibility or conjoining
+    }
+    return $n
+}
+
+function Count-Hangul([string]$s) {
+    if ([string]::IsNullOrEmpty($s)) { return 0 }
+    $n = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if (($c -ge 0xAC00 -and $c -le 0xD7A3) -or
+            ($c -ge 0x3130 -and $c -le 0x318F) -or
+            ($c -ge 0x1100 -and $c -le 0x11FF)) { $n++ }
     }
     return $n
 }
@@ -330,7 +370,7 @@ if ($mark3 -ge $lines.Count) {
     Write-Host "RESULT: INCONCLUSIVE - the scenario was never driven"
 } else {
     $s2end = Screen-State $lines $mark3
-    $s3    = Screen-State $lines $lines.Count
+    $s3    = Screen-State $lines $mark4
     $removed = ((Count-Ieung $s2end.value) + (Count-Ieung $s2end.comp)) -
                ((Count-Ieung $s3.value) + (Count-Ieung $s3.comp))
     Write-Host ("before: value {0} composing {1}" -f (Code-Points $s2end.value), (Code-Points $s2end.comp))
@@ -341,6 +381,36 @@ if ($mark3 -ge $lines.Count) {
         Write-Host "RESULT: FAIL - the press deleted nothing"
     } else {
         Write-Host "RESULT: FAIL - one press deleted $removed"
+    }
+}
+
+Write-Host ""
+Write-Host "=== verdict, scenario 4 (twelve consonants, then six backspaces)"
+if ($mark4 -ge $lines.Count) {
+    Write-Host "RESULT: INCONCLUSIVE - the scenario was never driven"
+} elseif ($mark4del -ge $lines.Count) {
+    Write-Host "RESULT: INCONCLUSIVE - the typing half ran but the deletion mark never landed"
+} else {
+    $s4base  = Screen-State $lines $mark4
+    $s4typed = Screen-State $lines $mark4del
+    $s4end   = Screen-State $lines $lines.Count
+    $typed   = ((Count-Hangul $s4typed.value) + (Count-Hangul $s4typed.comp)) -
+               ((Count-Hangul $s4base.value)  + (Count-Hangul $s4base.comp))
+    $removed = ((Count-Hangul $s4typed.value) + (Count-Hangul $s4typed.comp)) -
+               ((Count-Hangul $s4end.value)   + (Count-Hangul $s4end.comp))
+    Write-Host ("start : value {0} composing {1}" -f (Code-Points $s4base.value), (Code-Points $s4base.comp))
+    Write-Host ("typed : value {0} composing {1}" -f (Code-Points $s4typed.value), (Code-Points $s4typed.comp))
+    Write-Host ("end   : value {0} composing {1}" -f (Code-Points $s4end.value), (Code-Points $s4end.comp))
+    if ($typed -eq 0) {
+        Write-Host "RESULT: INCONCLUSIVE - the IME composed nothing in this scenario"
+    } elseif ($typed -ne 12) {
+        Write-Host "RESULT: FAIL - twelve presses put $typed jamo on the screen before any backspace"
+        Write-Host "        (the deletion half still ran: six backspaces removed $removed)"
+    } elseif ($removed -eq 6) {
+        Write-Host "RESULT: PASS - twelve presses typed twelve, six backspaces deleted six"
+    } else {
+        $eaten = 6 - $removed
+        Write-Host "RESULT: FAIL - six presses of backspace deleted $removed ($eaten swallowed)"
     }
 }
 exit 0
