@@ -63,6 +63,9 @@ namespace OneText.UGUI
         /// </summary>
         public bool ReportsPlatformState => true;
 
+        /// <summary>The platform fact, unmodified: this backend is the platform.</summary>
+        public bool PlatformPaysEveryCommit => ImeInput.PlatformPaysEveryCommit;
+
         public bool TryGetComposition(out string text, out int caret, out int clauseStart, out int clauseLength)
         {
             text = Input.compositionString;

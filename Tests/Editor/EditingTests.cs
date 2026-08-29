@@ -259,6 +259,137 @@ namespace OneText.Tests
         }
 
         /// <summary>
+        /// The refocus half of the 2026-08-29 report, measured on the runner
+        /// (run 33238252563, scenario 2): the IMM holds a composition across a
+        /// focus loss and reopens it when focus returns, so the field's
+        /// focus-loss commit is echoed not on the next update but on the first
+        /// keystroke back — and that keystroke, typed on the same key, starts a
+        /// composition that reads as exactly the string the replay register
+        /// refuses. The refusal never saw anything differ and never retired:
+        /// the third press's composition was invisible and the fourth press's
+        /// commit was all that reached the screen. Four presses of ㅇ across a
+        /// focus loss put one character on it.
+        ///
+        /// On the platform that pays every commit, the character completing the
+        /// echo is the platform settling that debt and moving on, so it retires
+        /// the replay with the window, and the identical report after it is the
+        /// user's next press.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_The_Paid_Echo_Retires_The_Refocus_Phantom()
+        {
+            var model = new TextEditingModel { PlatformPaysEveryCommit = true };
+
+            // ㅇ, then ㅇ again: the report never moves, and the second press's
+            // character is credited to the finished, identical predecessor.
+            model.SetComposition("ㅇ");
+            model.Tick(); model.Tick();
+            Assert.IsTrue(model.AcceptCharacter('ㅇ', out _));
+            Assert.AreEqual("ㅇ", model.Text);
+            Assert.IsTrue(model.IsComposing);
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+
+            // Focus leaves: the field commits the composition the platform is
+            // still holding, and arms the guards because it could not say so.
+            model.FlushCommit();
+            model.CommitComposition();
+            Assert.AreEqual("ㅇㅇ", model.Text);
+
+            // Focus returns, and the platform reopens the composition it held
+            // all along. Refused: the value already carries it.
+            for (int update = 0; update < 4; update++)
+            {
+                model.SetComposition("ㅇ");
+                Assert.IsFalse(model.IsComposing,
+                    "the reopened composition was adopted over the value that already holds it");
+                model.Tick();
+            }
+
+            // The third press: the platform pays the held jamo off on the
+            // character channel — the echo, swallowed — and composes the new
+            // press, which reads as exactly the same string.
+            Assert.IsFalse(model.AcceptCharacter('ㅇ', out _), "the echo of the focus-loss commit was inserted");
+            Assert.AreEqual("ㅇㅇ", model.Text);
+            model.SetComposition("ㅇ");
+            Assert.IsTrue(model.IsComposing, "the press after the paid echo was refused as its replay");
+            model.Tick(); model.Tick();
+
+            // The fourth press pays the third and composes on, unmoved report
+            // and all: four presses, four on the screen.
+            Assert.IsTrue(model.AcceptCharacter('ㅇ', out _));
+            Assert.AreEqual("ㅇㅇㅇ", model.Text);
+            Assert.IsTrue(model.IsComposing);
+            Assert.AreEqual("ㅇㅇㅇㅇ", model.DisplayText);
+        }
+
+        /// <summary>
+        /// Scenario 3 of the same run, which begins where scenario 2 ends: with
+        /// a composition adopted after the paid echo. The backspace that
+        /// empties it is eaten whole by the IMM, so the report goes from ㅇ to
+        /// nothing, unpaid and keyless — the deletion shape — and the press
+        /// must delete exactly the composing jamo and nothing else. On the run
+        /// before the fix it deleted nothing at all, because the phantom the
+        /// backspace emptied had never been adopted and was never on screen.
+        /// </summary>
+        [Test]
+        public void Where_Every_Commit_Pays_A_Backspace_After_The_Refocus_Deletes_One()
+        {
+            var model = new TextEditingModel { PlatformPaysEveryCommit = true };
+            model.SetComposition("ㅇ");
+            model.Tick(); model.Tick();
+            model.AcceptCharacter('ㅇ', out _);
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+            model.FlushCommit();
+            model.CommitComposition();
+            model.SetComposition("ㅇ");                  // the reopened phantom, refused
+            model.Tick();
+            model.AcceptCharacter('ㅇ', out _);           // the echo, paid off
+            model.SetComposition("ㅇ");                  // the third press, adopted
+            model.Tick(); model.Tick();
+            model.AcceptCharacter('ㅇ', out _);           // the fourth, paying the third
+            Assert.AreEqual("ㅇㅇㅇㅇ", model.DisplayText);
+
+            model.SetComposition(string.Empty);          // the backspace the IMM ate
+            Assert.IsFalse(model.IsComposing);
+            for (int update = 0; update < ImeCommitArbiter.DefaultGraceUpdates + 4; update++)
+                Assert.IsFalse(model.Tick(), "the deleted jamo was inserted on expiry");
+
+            Assert.AreEqual("ㅇㅇㅇ", model.Text, "one press of backspace must delete exactly one");
+            Assert.AreEqual("ㅇㅇㅇ", model.DisplayText);
+        }
+
+        /// <summary>
+        /// The other platforms keep the shape every recording was read from: a
+        /// character is not evidence that the platform let go of the
+        /// composition it is showing, and clearing the replay register on one
+        /// is a recorded bug — the next poll adopts the composition still being
+        /// held and draws the syllable a second time. The paid echo retires the
+        /// window and nothing else there.
+        /// </summary>
+        [Test]
+        public void The_Paid_Echo_Retires_No_Replay_Where_A_Commit_Can_Arrive_Unpaid()
+        {
+            var model = new TextEditingModel();
+            model.SetComposition("ㅇ");
+            model.Tick(); model.Tick();
+            model.AcceptCharacter('ㅇ', out _);
+            for (int idle = 0; idle < 4; idle++) model.Tick();
+            model.FlushCommit();
+            model.CommitComposition();
+            Assert.AreEqual("ㅇㅇ", model.Text);
+
+            model.SetComposition("ㅇ");                  // still held, refused
+            Assert.IsFalse(model.IsComposing);
+            model.Tick();
+            Assert.IsFalse(model.AcceptCharacter('ㅇ', out _), "the echo was inserted");
+
+            model.SetComposition("ㅇ");
+            Assert.IsFalse(model.IsComposing,
+                "the composition the platform is still holding was adopted off the echo alone");
+            Assert.AreEqual("ㅇㅇ", model.Text);
+        }
+
+        /// <summary>
         /// The same shape, paid for: a syllable splitting shrinks the report to
         /// a prefix of itself too, and that one is a commit. What tells them
         /// apart is the character arriving to pay for what was dropped, so the
@@ -821,6 +952,16 @@ namespace OneText.Tests
             /// standing in for the pushed cache is not.
             /// </summary>
             public bool ReportsPlatformState => KeepsComposingAfterEnd;
+
+            /// <summary>
+            /// The platform this fake pretends to be pays commits the measured
+            /// macOS way unless a test says otherwise — deliberately not read
+            /// from the machine the test runs on, so the suite asserts the
+            /// same behaviour on every OS it runs under.
+            /// </summary>
+            public bool PaysEveryCommit;
+
+            public bool PlatformPaysEveryCommit => PaysEveryCommit;
 
             public bool IsAvailable => true;
 

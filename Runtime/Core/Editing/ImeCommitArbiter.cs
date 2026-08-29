@@ -131,6 +131,22 @@ namespace OneText
         // AwaitPlatformCommit.
         private bool _pendingOwedOnlyToFlush;
 
+        // Whether a completed echo retires the replay register along with the
+        // window. Set on the same platform as above, and for the refocus it
+        // measured (run 33238252563): the IMM holds a composition across a
+        // focus loss and reopens it when focus returns, so the field's
+        // focus-loss commit is echoed not "this update or the next" but on the
+        // first keystroke back — and that keystroke also starts the user's next
+        // composition, which, typed on the same key, reads as exactly the
+        // string the register refuses. Nothing ever differs, the refusal never
+        // retires, and every press after it is invisible. On the platform that
+        // pays every commit, the character that completes the echo is the
+        // platform settling up and moving on, so the composition it reports
+        // from here on is the user's — even when it reads the same. Off
+        // everywhere else: on macOS a character is not that evidence, and
+        // clearing the register on one is a recorded bug (see ShouldSwallow).
+        private bool _pendingEchoRetiresReplay;
+
         // The echo as it arrives, rather than an index into _pending. The
         // platform is not obliged to hand a syllable back in the shape it
         // reported composing it — macOS routinely delivers 한 as its three
@@ -259,13 +275,28 @@ namespace OneText
         /// evidence from the platform, so an onEndEdit listener that assigns a
         /// tidied-up value one line after the commit no longer takes the guard
         /// down with it.
+        ///
+        /// <paramref name="platformPaysEveryCommit"/> is the platform fact of
+        /// the same name on <c>TextEditingModel</c>, and it changes what the
+        /// echo's completion means. On the platform whose IME pays every commit
+        /// on the character channel, the character that completes this echo is
+        /// the platform paying the debt off and moving on — so it retires the
+        /// replay register too, and the composition reported after it is the
+        /// user's next keystroke even when it reads as exactly the same string.
+        /// Measured across a refocus (run 33238252563): the IMM holds the
+        /// syllable through the focus loss, echoes it on the first keystroke
+        /// back, and that keystroke's own composition — the same jamo on the
+        /// same key — was refused as the replay for as long as the user kept
+        /// typing it. False keeps the shape every macOS recording was read
+        /// from, where only the composition channel retires a refusal.
         /// </summary>
-        public void SuppressEchoOf(string committed)
+        public void SuppressEchoOf(string committed, bool platformPaysEveryCommit = false)
         {
             if (string.IsNullOrEmpty(committed)) { Reset(); return; }
             _mode = Mode.SuppressingEcho;
             _pending = committed;
             _pendingDecomposed = Decomposed(committed);
+            _pendingEchoRetiresReplay = platformPaysEveryCommit;
             _echo = string.Empty;
             _updatesLeft = GraceUpdates;
             RegisterReplay(committed);
@@ -349,7 +380,13 @@ namespace OneText
 
                     if (string.Equals(echo, _pendingDecomposed, StringComparison.Ordinal))
                     {
-                        // All of it, however many events it took.
+                        // All of it, however many events it took. On the
+                        // platform that pays every commit, paid in full is the
+                        // platform letting go, and the replay register retires
+                        // with the window — see SuppressEchoOf. Everywhere
+                        // else the register stands, and the comment at the top
+                        // of this method is why.
+                        if (_pendingEchoRetiresReplay) RegisterReplay(null);
                         Reset();
                         return true;
                     }
@@ -1025,6 +1062,7 @@ namespace OneText
             _pendingDecomposed = string.Empty;
             _pendingOwesNothing = false;
             _pendingOwedOnlyToFlush = false;
+            _pendingEchoRetiresReplay = false;
             _echo = string.Empty;
             _updatesLeft = 0;
         }

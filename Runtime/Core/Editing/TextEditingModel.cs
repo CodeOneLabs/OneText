@@ -96,8 +96,8 @@ namespace OneText
         /// but neither a key nor its expiry may insert, because what never
         /// paid was deleted. False by default, which is the measured macOS
         /// shape — there a commit can arrive with no character at all, and the
-        /// expiry insert is what keeps it. The field sets this from
-        /// <c>ImeInput.PlatformPaysEveryCommit</c>.
+        /// expiry insert is what keeps it. The field sets this from its
+        /// backend's <c>IImeInput.PlatformPaysEveryCommit</c>.
         /// </summary>
         public bool PlatformPaysEveryCommit { get; set; }
 
@@ -130,7 +130,7 @@ namespace OneText
                 // trims or uppercases the value on onEndEdit — assigning one
                 // line after the commit that armed the guard — used to hand the
                 // duplicate straight back.
-                if (_composition.Active) Arbiter.SuppressEchoOf(_composition.Text);
+                if (_composition.Active) Arbiter.SuppressEchoOf(_composition.Text, PlatformPaysEveryCommit);
                 else if (Arbiter.IsAwaitingPlatform) Arbiter.Cancel();
                 _composition = ImeComposition.None;
                 _text = ApplyLimit(value);
@@ -387,7 +387,7 @@ namespace OneText
             if (composed.Length == 0 || ReadOnly) return false;
 
             bool changed = InsertAtCaret(composed);
-            Arbiter.SuppressEchoOf(composed);
+            Arbiter.SuppressEchoOf(composed, PlatformPaysEveryCommit);
             return changed;
         }
 
@@ -405,7 +405,7 @@ namespace OneText
             // it refused rather than drawn back, and one that finishes it
             // anyway has the characters swallowed rather than typed into a
             // field the user had abandoned.
-            if (!string.IsNullOrEmpty(abandoned)) Arbiter.SuppressEchoOf(abandoned);
+            if (!string.IsNullOrEmpty(abandoned)) Arbiter.SuppressEchoOf(abandoned, PlatformPaysEveryCommit);
             else if (Arbiter.IsAwaitingPlatform) Arbiter.Cancel();
 
             if (wasActive) _displayDirty = true;

@@ -85,6 +85,12 @@ namespace OneText.UGUI
         /// </summary>
         public bool ReportsPlatformState => false;
 
+        /// <summary>
+        /// The same platform fact as the other backend's: it is about the IMM,
+        /// not about which stack the composition arrives through.
+        /// </summary>
+        public bool PlatformPaysEveryCommit => ImeInput.PlatformPaysEveryCommit;
+
         public bool TryGetComposition(out string text, out int caret, out int clauseStart, out int clauseLength)
         {
             text = _composition;

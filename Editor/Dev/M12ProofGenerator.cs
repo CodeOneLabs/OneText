@@ -38,6 +38,8 @@ namespace OneText.Editor
 
             public bool ReportsPlatformState => true;
 
+            public bool PlatformPaysEveryCommit => false;
+
             public void Begin() { }
 
             public void End() => Composition = string.Empty;

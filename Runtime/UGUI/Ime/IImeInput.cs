@@ -35,6 +35,19 @@ namespace OneText.UGUI
         /// </summary>
         bool ReportsPlatformState { get; }
 
+        /// <summary>
+        /// True when the input method behind this backend pays every commit it
+        /// makes on the character channel — the measured Windows IMM shape; see
+        /// <see cref="ImeInput.PlatformPaysEveryCommit"/> for the measurement.
+        /// A member of the interface rather than only a static, because the
+        /// field reads it where it reads everything else about the input
+        /// method: from whichever backend is standing in front of it. A test's
+        /// fake answers for the platform it is pretending to be, not for the
+        /// machine the test happens to run on — which is what keeps a suite
+        /// green on one OS green on another.
+        /// </summary>
+        bool PlatformPaysEveryCommit { get; }
+
         /// <summary>Starts accepting composition; called when a field takes focus.</summary>
         void Begin();
 
