@@ -121,9 +121,53 @@ namespace OneText
             }
         }
 
-        public OneFontAsset DefaultFont => _defaultFont;
+        /// <summary>
+        /// Font a label draws in when it has none of its own. Setting it from
+        /// code reaches every live label: each one rebuilds its font stack on
+        /// its next layout pass. Persisting the change is the caller's job, in
+        /// the editor, with <c>EditorUtility.SetDirty</c>.
+        /// </summary>
+        public OneFontAsset DefaultFont
+        {
+            get => _defaultFont;
+            set
+            {
+                if (_defaultFont == value) return;
+                _defaultFont = value;
+                Changed();
+            }
+        }
 
+        /// <summary>Consulted, in order, for characters a label's own fonts do not cover.</summary>
         public IReadOnlyList<OneFontAsset> FallbackFonts => _fallbackFonts;
+
+        /// <summary>
+        /// Replaces the fallback chain. Null entries are dropped; null or
+        /// empty clears it. Live labels pick the new chain up the same way
+        /// they pick up <see cref="DefaultFont"/>.
+        /// </summary>
+        public void SetFallbackFonts(IEnumerable<OneFontAsset> fonts)
+        {
+            _fallbackFonts.Clear();
+            if (fonts != null)
+                foreach (var font in fonts)
+                    if (font != null) _fallbackFonts.Add(font);
+            Changed();
+        }
+
+        /// <summary>
+        /// Bumped whenever the fonts above change, by whichever route: the
+        /// setters here, the inspector, or an editor writing the serialized
+        /// fields and calling <see cref="Invalidate"/>. A label compares it
+        /// with the value its font stack was built against and rebuilds when
+        /// they differ, which is what lets a settings change made at runtime
+        /// reach text that is already on screen.
+        /// </summary>
+        public static int Generation { get; private set; }
+
+        private static void Changed() => Generation++;
+
+        private void OnValidate() => Changed();
 
         public float DefaultFontSize => _defaultFontSize;
 
@@ -253,11 +297,16 @@ namespace OneText
             }
         }
 
-        /// <summary>Forgets the cached instance (editor use, after creating the asset).</summary>
+        /// <summary>
+        /// Forgets the cached instance and tells live labels the fonts may
+        /// have changed (editor use, after creating the asset or writing its
+        /// serialized fields directly).
+        /// </summary>
         public static void Invalidate()
         {
             s_instance = null;
             s_searched = false;
+            Changed();
         }
     }
 }

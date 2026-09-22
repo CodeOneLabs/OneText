@@ -18,6 +18,11 @@ namespace OneText.UGUI
     /// <c>&lt;link=id&gt;</c> ranges all line up with what is drawn.
     /// </summary>
     [AddComponentMenu("OneText/OneText Label")]
+    // Graphic requires only the RectTransform; the renderer is each graphic's
+    // own to ask for, and Image does. Without it a label added from code has
+    // nothing to hand its mesh to until the first geometry pass adds one, and
+    // a prefab baked in between is saved without it.
+    [RequireComponent(typeof(CanvasRenderer))]
     public sealed partial class OneTextLabel : MaskableGraphic, ILayoutElement, IPointerClickHandler,
         StyleInvalidation.IStyleUser
     {
@@ -135,6 +140,8 @@ namespace OneText.UGUI
         private byte[] _fontBytesOverride;
         private byte[][] _fallbackBytesOverride;
         private FontStack _fonts;
+        // The settings the stack was built against; see EnsureNativeState.
+        private int _settingsGeneration;
         private readonly List<FontData> _ownedFonts = new List<FontData>();
         // Faces borrowed from SharedFontBytes; released, never disposed.
         private readonly List<FontData> _sharedFonts = new List<FontData>();
@@ -1503,8 +1510,13 @@ namespace OneText.UGUI
             // — a placeholder somebody drops a .ttf into afterwards has to be
             // picked up, and rebuilding while there is nothing of the project's
             // own is how that happens.
+            // And whenever the project's settings have changed since this
+            // stack was built: the default and fallback fonts come from there,
+            // and a label that only rebuilds when its stack is broken keeps
+            // drawing in the old default for as long as it lives.
             if (_fonts == null || _fonts.Count == 0 ||
-                _fonts.Primary == null || !_fonts.Primary.IsValid)
+                _fonts.Primary == null || !_fonts.Primary.IsValid ||
+                _settingsGeneration != OneTextSettings.Generation)
                 BuildFontStack();
             if (_fonts?.Primary == null || !_fonts.Primary.IsValid)
             {
@@ -1636,6 +1648,7 @@ namespace OneText.UGUI
             // one lay out nothing.
             _facesBefore.Clear();
             if (_fonts != null) _facesBefore.AddRange(_fonts.Fonts);
+            _settingsGeneration = OneTextSettings.Generation;
 
             ReleaseFonts(bumpGeneration: false);
             _fonts = new FontStack();

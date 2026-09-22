@@ -257,7 +257,23 @@ namespace OneText.UGUI
             set { _characterLimit = Mathf.Max(0, value); PushSettings(); }
         }
 
-        public OneTextLabel textComponent => _textComponent;
+        /// <summary>
+        /// The label that shows the value. Settable from code, for a field
+        /// built at runtime: the caret graphic lives under this label and is
+        /// measured against it, so changing the label drops the caret and a
+        /// new one is built under the new label on the next visual update.
+        /// </summary>
+        public OneTextLabel textComponent
+        {
+            get => _textComponent;
+            set
+            {
+                if (_textComponent == value) return;
+                DropCaret();
+                _textComponent = value;
+                _visualsDirty = true;
+            }
+        }
 
         /// <summary>
         /// The masked box the text is kept inside, named as TextMesh Pro names
@@ -1164,6 +1180,19 @@ namespace OneText.UGUI
             // and the inspector is where that gets said.
         }
 
+        /// <summary>
+        /// Throws the caret graphic away. It is rebuilt under whatever label
+        /// the field has by the next <see cref="UpdateVisuals"/>.
+        /// </summary>
+        private void DropCaret()
+        {
+            if (_caret == null) return;
+            var go = _caret.gameObject;
+            _caret = null;
+            if (Application.isPlaying) Destroy(go);
+            else DestroyImmediate(go);
+        }
+
         private void EnsureCaretGraphic()
         {
             if (_caret != null || _textComponent == null) return;
@@ -1433,7 +1462,22 @@ namespace OneText.UGUI
         /// The label drawn while the field is empty. The field owns it: it is
         /// enabled and disabled as the value comes and goes.
         /// </summary>
-        public OneTextLabel placeholder => _placeholder;
+        /// <summary>
+        /// The label shown while the value is empty. Settable from code; the
+        /// label being replaced is shown again, since this field was the only
+        /// thing hiding it.
+        /// </summary>
+        public OneTextLabel placeholder
+        {
+            get => _placeholder;
+            set
+            {
+                if (_placeholder == value) return;
+                if (_placeholder != null) _placeholder.enabled = true;
+                _placeholder = value;
+                _visualsDirty = true;
+            }
+        }
 
         /// <summary>
         /// Colour of the highlight drawn behind selected text.
@@ -1471,6 +1515,30 @@ namespace OneText.UGUI
         {
             get => _clauseColor;
             set { _clauseColor = value; _visualsDirty = true; }
+        }
+
+        /// <summary>
+        /// Colour of the caret. Held here for the reason
+        /// <see cref="selectionColor"/> is, and named as TextMesh Pro names it.
+        /// </summary>
+        public Color caretColor
+        {
+            get => _caretColor;
+            set { _caretColor = value; _visualsDirty = true; }
+        }
+
+        /// <summary>Width of the caret, in the label's units.</summary>
+        public float caretWidth
+        {
+            get => _caretWidth;
+            set { _caretWidth = value; _visualsDirty = true; }
+        }
+
+        /// <summary>Blinks per second; 0 or less keeps the caret steady.</summary>
+        public float caretBlinkRate
+        {
+            get => _caretBlinkRate;
+            set { _caretBlinkRate = value; _visualsDirty = true; }
         }
 
         /// <summary>

@@ -102,6 +102,8 @@ namespace OneText
         private byte[] _fontBytesOverride;
         private byte[][] _fallbackBytesOverride;
         private FontStack _fonts;
+        // The settings the stack was built against; see EnsureNativeState.
+        private int _settingsGeneration;
         private readonly List<FontData> _ownedFonts = new List<FontData>();
         private readonly List<FontVariation> _variations = new List<FontVariation>();
         private TextLayoutEngine _engine;
@@ -448,6 +450,10 @@ namespace OneText
         private static void BindWorldMaterial(Material material)
         {
             var atlas = SharedGlyphAtlas.Atlas;
+            // A device with no array textures has an atlas with no texture:
+            // there is nothing to bind and nothing that would be drawn from it,
+            // and asking for its width would throw.
+            if (!atlas.IsUsable) return;
             material.SetTexture("_GlyphTex", atlas.Texture);
             float size = atlas.Texture.width;
             material.SetVector("_GlyphTexelSize",
@@ -508,6 +514,7 @@ namespace OneText
 
         private void BuildFontStack()
         {
+            _settingsGeneration = OneTextSettings.Generation;
             ReleaseFonts();
             _fonts = new FontStack();
 
@@ -564,8 +571,13 @@ namespace OneText
             // — a placeholder somebody drops a .ttf into afterwards has to be
             // picked up, and rebuilding while there is nothing of the project's
             // own is how that happens.
+            // And whenever the project's settings have changed since this
+            // stack was built: the default and fallback fonts come from there,
+            // and a label that only rebuilds when its stack is broken keeps
+            // drawing in the old default for as long as it lives.
             if (_fonts == null || _fonts.Count == 0 ||
-                _fonts.Primary == null || !_fonts.Primary.IsValid)
+                _fonts.Primary == null || !_fonts.Primary.IsValid ||
+                _settingsGeneration != OneTextSettings.Generation)
                 BuildFontStack();
             if (_fonts?.Primary == null || !_fonts.Primary.IsValid)
             {

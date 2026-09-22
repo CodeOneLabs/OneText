@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A UI built from code has a public surface for the things it used to
+  reach by reflection.** `OneTextInputField.textComponent` and `placeholder`
+  can be set, and setting the text component moves the caret under the new
+  label; `caretColor`, `caretWidth` and `caretBlinkRate` sit beside
+  `selectionColor`. `OneTextSettings.DefaultFont` can be set and
+  `SetFallbackFonts` replaces the chain, and either reaches every label
+  already on screen: the settings carry a `Generation` that a label compares
+  with the one its font stack was built against, so a default font changed
+  at runtime, or from an editor writing the serialized field and calling
+  `Invalidate`, is drawn on the next layout pass rather than never.
+
 ### Fixed
+
+- **A label added from code brings its own CanvasRenderer.** `Graphic`
+  requires only the RectTransform and leaves the renderer to each graphic,
+  which Image asks for and the label did not: a label added with
+  `AddComponent` had nothing to hand its mesh to until the first geometry
+  pass added one, and a prefab baked in between was saved without it. The
+  label requires it now, the way Image and TextMesh Pro do.
 
 - **A colour glyph keeps its own colours.** A red heading turned the 🙃 in it
   into a red blob: the label's colour was multiplied into colour-atlas quads
