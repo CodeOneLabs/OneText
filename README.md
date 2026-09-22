@@ -111,7 +111,7 @@ convert keeps working. Scan again whenever you want to see what is left.
 
 ## Status
 
-**v0.3.2.** Everything above is shipped. v0.1.0 was the first public release,
+**v0.3.3.** Everything above is shipped. v0.1.0 was the first public release,
 v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
 the Onboarding tab, and v0.3.0 was about coming from TextMesh Pro and finding
 less missing: a migration you can run on part of a project without the rest
@@ -127,8 +127,18 @@ drawing in a system font stopped re-laying-out every frame. On the editing
 side, eight bugs a Korean IME could produce — a backspace that took two
 characters, a syllable that came back doubled after a click away, the same
 syllable typed twice never advancing — turned out to be mostly one thing, and
-each fix is a test replaying the frames a real keyboard produced. What comes
-next is verification and reach, not features:
+each fix is a test replaying the frames a real keyboard produced.
+
+v0.3.3 is what two real projects found. One builds every screen from code and
+runs a headless server: a label now brings its own CanvasRenderer, the input
+field and the project fonts can be wired from a script instead of by reflection
+and a settings change reaches labels already on screen, a line that cannot wrap
+is cut at the box's edge with its ellipsis, a device with no array textures
+gets an atlas that holds nothing rather than an exception, and a colour emoji
+keeps its own colours under a coloured label. The other is Unity 6.6, where the
+64-bit `EntityId` made the old instance id a compile error; the package builds
+clean there and still on 2022.3. What comes next is verification and reach,
+not features:
 
 | | |
 |---|---|
