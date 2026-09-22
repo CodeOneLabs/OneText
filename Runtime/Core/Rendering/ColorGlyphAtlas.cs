@@ -44,6 +44,14 @@ namespace OneText
         {
             _textureSize = Mathf.NextPowerOfTwo(Mathf.Clamp(textureSize, 256, 4096));
             _layerCount = Mathf.Clamp(layerCount, 1, 8);
+            _layers = new LayerState[_layerCount];
+            for (int i = 0; i < _layerCount; i++) _layers[i] = new LayerState();
+
+            // Same bargain as the SDF atlas: a device with no array textures
+            // gets an atlas with no texture rather than a constructor that
+            // throws under every label's OnEnable. See
+            // <see cref="GlyphAtlas.SupportsAtlasTextures"/> for why.
+            if (!GlyphAtlas.SupportsAtlasTextures) return;
 
             Texture = new Texture2DArray(_textureSize, _textureSize, _layerCount,
                 TextureFormat.RGBA32, mipChain: false, linear: false)
@@ -56,12 +64,7 @@ namespace OneText
                 hideFlags = HideFlags.HideAndDontSave,
             };
 
-            _layers = new LayerState[_layerCount];
-            for (int i = 0; i < _layerCount; i++)
-            {
-                _layers[i] = new LayerState();
-                Clear(i);
-            }
+            for (int i = 0; i < _layerCount; i++) Clear(i);
             Texture.Apply(false, false);
         }
 
@@ -145,6 +148,10 @@ namespace OneText
         /// </summary>
         public ColorLocation GetOrAdd(long key, in ColorGlyph glyph)
         {
+            // No texture, no tile: the writing, evicting and clearing below all
+            // go through GetPixelData, and this is the only door into them.
+            if (!IsUsable) return default;
+
             if (_entries.TryGetValue(key, out var hit))
             {
                 Touch(hit);
@@ -313,13 +320,13 @@ namespace OneText
         /// <summary>Uploads pending writes. Cheap: colour tiles change rarely.</summary>
         public void Flush()
         {
-            if (!_dirty) return;
+            if (!IsUsable || !_dirty) return;
             Texture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
             _dirty = false;
         }
 
         /// <summary>True when tiles have been written but not uploaded.</summary>
-        public bool HasPendingUpload => _dirty;
+        public bool HasPendingUpload => IsUsable && _dirty;
 
         public void Dispose()
         {

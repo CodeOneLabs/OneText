@@ -46,11 +46,13 @@ namespace OneText
         {
             get
             {
-                if (s_colorAtlas != null && !s_colorAtlas.IsUsable) s_colorAtlas = null;
+                if (s_colorAtlas != null && !s_colorAtlas.IsUsable && GlyphAtlas.SupportsAtlasTextures)
+                    s_colorAtlas = null;
                 if (s_colorAtlas != null) return s_colorAtlas;
 
                 s_colorAtlas = new ColorGlyphAtlas();
-                if (s_material != null) s_material.SetTexture("_ColorTex", s_colorAtlas.Texture);
+                if (s_material != null && s_colorAtlas.IsUsable)
+                    s_material.SetTexture("_ColorTex", s_colorAtlas.Texture);
                 return s_colorAtlas;
             }
         }
@@ -72,7 +74,10 @@ namespace OneText
         {
             get
             {
-                if (s_preciseAtlas != null && !s_preciseAtlas.IsUsable) s_preciseAtlas = null;
+                // "Not usable" means two different things and only one of them
+                // is worth rebuilding for; see <see cref="DiscardIfUnusable"/>.
+                if (s_preciseAtlas != null && !s_preciseAtlas.IsUsable && GlyphAtlas.SupportsAtlasTextures)
+                    s_preciseAtlas = null;
                 if (s_preciseAtlas != null) return s_preciseAtlas;
 
                 var settings = OneTextSettings.Instance;
@@ -125,6 +130,12 @@ namespace OneText
         {
             if (s_atlas == null || s_atlas.IsUsable) return;
 
+            // An atlas that never had a texture is not a dead atlas, it is the
+            // only atlas this device can have, and rebuilding it would dispose
+            // and re-create it on every single access: an allocation loop with
+            // no exit, driven by the getter every label calls. Keep it.
+            if (!GlyphAtlas.SupportsAtlasTextures) return;
+
             // Dispose, not drop: the atlas owns staging textures that are
             // themselves DontSave, and nothing else will ever destroy them.
             s_atlas.Dispose();
@@ -148,6 +159,10 @@ namespace OneText
         /// </summary>
         private static void BindGlyphTexture(GlyphAtlas atlas)
         {
+            // Nothing to point at on a device with no array textures. Leaving
+            // the binding unset is right: the material draws nothing either way,
+            // and reading the texel size off a null texture would throw.
+            if (atlas == null || !atlas.IsUsable) return;
             s_material.SetTexture("_GlyphTex", atlas.Texture);
             float size = atlas.Texture.width;
             s_material.SetVector("_GlyphTexelSize",
@@ -162,6 +177,7 @@ namespace OneText
         /// </summary>
         private static void BindPreciseTexture(GlyphAtlas atlas)
         {
+            if (atlas == null || !atlas.IsUsable) return;
             s_material.SetTexture("_MsdfTex", atlas.Texture);
             float size = atlas.Texture.width;
             s_material.SetVector("_MsdfTexelSize",

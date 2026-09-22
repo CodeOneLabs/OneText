@@ -63,6 +63,13 @@ namespace OneText
                 codepoints == null || sizes == null || sizes.Count == 0)
                 return report;
 
+            // An atlas with no texture (a headless device; see
+            // GlyphAtlas.SupportsAtlasTextures) keeps nothing, so warming it is
+            // a whole charset shaped for nothing — and every cluster would
+            // still be counted as Baked, which is a startup log claiming work
+            // that did not happen.
+            if (!atlas.IsUsable) return report;
+
             // Evicting during a prewarm means the pass has started overwriting
             // its own work, the exact thrash prewarming exists to prevent, and
             // a truer "full" signal than occupancy, which a small atlas never

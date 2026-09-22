@@ -377,6 +377,65 @@ namespace OneText
         private bool _dirty;
         private bool _compactedSinceFlush;
 
+        // ------------------------------------------------------- device support
+
+        /// <summary>
+        /// Whether this device can hold an atlas at all.
+        ///
+        /// <para>Every atlas in the package is a <c>Texture2DArray</c>, and a
+        /// device without array textures does not merely draw them badly: the
+        /// constructor throws. It throws from the atlas a label acquires in
+        /// <c>OnEnable</c>, so a headless server, a <c>-nographics</c> player or
+        /// a GLES2-class GPU could not so much as switch a label on — even
+        /// though nothing above the atlas wants pixels. Layout, measurement, hit
+        /// testing and the input field are arithmetic over font tables and work
+        /// perfectly without a GPU.</para>
+        ///
+        /// <para>So the answer is an atlas that exists and holds nothing:
+        /// <see cref="IsUsable"/> false, every pixel path a no-op, every lookup
+        /// a location with no pixels. That is the same state an atlas reaches
+        /// when its texture dies at a play session boundary, which the whole
+        /// package already copes with, so the capability costs one branch per
+        /// entry point rather than a second code path.</para>
+        /// </summary>
+        internal static bool SupportsAtlasTextures =>
+            ForceUnsupportedForTests.HasValue
+                ? !ForceUnsupportedForTests.Value
+                : SystemInfo.supports2DArrayTextures;
+
+        /// <summary>
+        /// Makes the check above answer false regardless of the device.
+        ///
+        /// <c>SystemInfo</c> cannot be written to, and every machine that runs
+        /// the suite has array textures, so without this hook the headless path
+        /// would be the one part of the atlas no test ever enters. Null, the
+        /// default, asks the device. Tests set it in SetUp and clear it in
+        /// TearDown; nothing else should touch it.
+        /// </summary>
+        internal static bool? ForceUnsupportedForTests;
+
+        // Once per session, not once per label. The missing-shader message in
+        // SharedGlyphAtlas learned that lesson the expensive way: a property
+        // every label touches on enable turned one condition into eight
+        // thousand identical lines of CI log.
+        private static bool s_unsupportedReported;
+
+        /// <summary>
+        /// Says, once, that this process will lay text out but not draw it.
+        /// A warning rather than an error: on a headless device nothing is
+        /// wrong, and an error here fails every test that adds a label.
+        /// </summary>
+        private static void ReportUnsupported()
+        {
+            if (s_unsupportedReported) return;
+            s_unsupportedReported = true;
+            Debug.LogWarning("OneText: this device reports no 2D array texture support " +
+                $"(graphics device: {SystemInfo.graphicsDeviceType}), so no glyph atlas is " +
+                "allocated. Text still lays out, measures and edits; nothing will be drawn. " +
+                "This is the expected state in a headless or -nographics process and is not a " +
+                "fault in the package.");
+        }
+
         public GlyphAtlas() : this(GlyphAtlasSettings.Default) { }
 
         /// <param name="precise">
@@ -393,6 +452,19 @@ namespace OneText
             Precise = precise;
             _bytesPerTexel = precise ? 4 : 1;
 
+            // Shelves and bookkeeping exist either way: GetStats, Compact and
+            // the packer all walk the layer array, and an atlas that is missing
+            // its texture should differ from a live one in exactly one place.
+            for (int layer = 0; layer < _layerCount; layer++) _layers[layer] = new LayerState();
+
+            if (!SupportsAtlasTextures)
+            {
+                // Texture stays null, so IsUsable is false and every member
+                // that would touch a pixel returns without doing anything.
+                ReportUnsupported();
+                return;
+            }
+
             Texture = new Texture2DArray(_textureSize, _textureSize, _layerCount,
                 precise ? TextureFormat.RGBA32 : TextureFormat.R8, mipChain: false, linear: true)
             {
@@ -408,11 +480,7 @@ namespace OneText
                 hideFlags = HideFlags.HideAndDontSave,
             };
 
-            for (int layer = 0; layer < _layerCount; layer++)
-            {
-                _layers[layer] = new LayerState();
-                ClearLayerPixels(layer);
-            }
+            for (int layer = 0; layer < _layerCount; layer++) ClearLayerPixels(layer);
             Texture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
         }
 
@@ -447,6 +515,11 @@ namespace OneText
         /// </summary>
         public GlyphLocation GetOrAdd(FontData font, uint glyphId, float pixelsPerEm = 64f)
         {
+            // No texture, no tile. Answered before rasterizing rather than
+            // after: the field would have nowhere to go, and a headless frame
+            // must not pay for outlines it cannot keep.
+            if (!IsUsable) return default;
+
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
             var key = new Key(font, glyphId, ppem, Precise);
             if (TryTouch(key, out var hit)) return hit;
@@ -464,6 +537,8 @@ namespace OneText
         public GlyphLocation GetOrAddCluster(FontData font, float pixelsPerEm,
             List<PositionedGlyph> positioned, int start, int count, long hash)
         {
+            if (!IsUsable) return default;
+
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
             var key = new Key(font, hash, ppem, Precise);
             if (TryTouch(key, out var hit)) return hit;
@@ -522,6 +597,10 @@ namespace OneText
             List<GlyphLocation> locations)
         {
             locations?.Clear();
+            // Nothing can be baked without a texture, so answer the way a pass
+            // that baked something answers: false sends the caller back through
+            // GetOrAddCluster, which hands out no-pixel locations one at a time.
+            if (!IsUsable) return false;
             if (clusters == null || clusters.Count == 0) return locations != null;
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
             bool collecting = locations != null;
@@ -676,6 +755,11 @@ namespace OneText
 
         private GlyphLocation Commit(Key key, RasterizedGlyph raster, int ppem)
         {
+            // The single place a tile is written, so the single place that has
+            // to refuse when there is nowhere to write it. The callers above
+            // check too, to save the rasterization; this is what makes it safe.
+            if (!IsUsable) return default;
+
             // Empty content (spaces, control glyphs) is cached without a tile.
             if (raster.IsEmpty)
             {
@@ -737,8 +821,12 @@ namespace OneText
             return entry.Location;
         }
 
-        /// <summary>True when tiles have been written but not yet uploaded.</summary>
-        public bool HasPendingUpload => _dirty;
+        /// <summary>
+        /// True when tiles have been written but not yet uploaded. An atlas
+        /// with no texture has nothing pending and never will, so the schedulers
+        /// that ask this never reach a flush they cannot perform.
+        /// </summary>
+        public bool HasPendingUpload => IsUsable && _dirty;
 
         // ------------------------------------------------------------ allocation
 
@@ -1020,7 +1108,7 @@ namespace OneText
         /// </summary>
         public void Compact()
         {
-            if (_lru.Count == 0) return;
+            if (!IsUsable || _lru.Count == 0) return;
 
             var live = new List<Entry>(_lru.Count);
             foreach (var entry in _lru)
@@ -1209,7 +1297,7 @@ namespace OneText
         /// </summary>
         public void Flush()
         {
-            if (!_dirty) return;
+            if (!IsUsable || !_dirty) return;
             long uploadStart = AtlasDiagnostics.Now;
             if (AtlasDiagnostics.Enabled)
             {

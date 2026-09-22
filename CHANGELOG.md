@@ -17,6 +17,21 @@
 
 ### Fixed
 
+- **A device with no array textures can still switch a label on.** A headless
+  server, a `-nographics` player and a GLES2-class GPU all threw from
+  `OnEnable`: the label acquires the shared atlas there, and the atlas is a
+  `Texture2DArray` whose constructor throws where the device has none, before
+  the material check that would have said so. The atlas now asks
+  `SystemInfo.supports2DArrayTextures` first and, where the answer is no,
+  exists without a texture: every lookup returns a location with no pixels,
+  every upload, compaction and bake is a no-op, the material binds nothing,
+  and the shared atlas keeps it rather than rebuilding it on every access.
+  Layout, measurement, hit testing and the input field are arithmetic over
+  font tables and work as before; nothing is drawn, and the session says so
+  once. The macOS editor under `-nographics` reports a Null device but still
+  claims array-texture support, so the path is exercised by a test override,
+  not by the editor.
+
 - **A line with nowhere to wrap is cut at the box's edge.** `Truncate` and
   `Ellipsis` only ever spent the block-axis budget: they dropped lines past
   the bottom, and the first line was never dropped, so under `NoWrap` a long
