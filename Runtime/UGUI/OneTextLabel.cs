@@ -117,6 +117,11 @@ namespace OneText.UGUI
                  "ordinary single-channel SDF, which is right for body text.")]
         [SerializeField] private bool _precise;
 
+        [Tooltip("Multiply the label's colour into colour glyphs and inline sprites too. Off, an " +
+                 "emoji keeps its own colours and follows only the label's alpha, so a fade or a " +
+                 "mask still applies while a red label does not turn a yellow face red.")]
+        [SerializeField] private bool _tintColorGlyphs;
+
         [Tooltip("Minimum atlas texels per em, as a multiple of what the font size asks " +
                  "for. Canvas scaling and camera zoom are measured and compensated " +
                  "automatically; this floor is for setups the measurement cannot see. " +
@@ -632,6 +637,29 @@ namespace OneText.UGUI
                 // nothing about the layout changed, so this is a quad rebuild
                 // and not a re-layout.
                 _quadsValid = false;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>
+        /// Whether the label's colour, and a <c>&lt;color&gt;</c> tag's, is
+        /// multiplied into colour glyphs and inline sprites as it is into text.
+        ///
+        /// Off by default: a colour glyph is a picture with its own colours,
+        /// and what a red label means for a yellow face is almost never "a red
+        /// face". Its alpha still follows the label's, so fades, masks and
+        /// reveals treat it as text. On, it multiplies the way it always did,
+        /// for a monochrome sprite sheet a design tints on purpose.
+        /// </summary>
+        public bool TintColorGlyphs
+        {
+            get => _tintColorGlyphs;
+            set
+            {
+                if (_tintColorGlyphs == value) return;
+                _tintColorGlyphs = value;
+                // Applied on the way to the mesh, like the colour itself, so
+                // the cached quads are fine as they are.
                 SetVerticesDirty();
             }
         }
@@ -2796,7 +2824,17 @@ namespace OneText.UGUI
                 // custom modifier sees what the tags did and can override it.
                 if (!_animator.IsEmpty && !_animator.Modify(ref quad, context)) continue;
                 if (_modifier != null && !_modifier.Modify(ref quad, context)) continue;
-                if (tinted) quad.Color = Multiply(quad.Color, labelColor);
+                if (quad.IsColor && !_tintColorGlyphs)
+                {
+                    // A picture keeps its colours. Only the alpha is the
+                    // label's to give: a fade, a mask, a reveal, a tag that
+                    // makes the run translucent. The rgb the run carries in is
+                    // dropped here rather than never written, so a modifier
+                    // still sees the tag colours it was written against.
+                    byte alpha = tinted ? Multiply(quad.Color, labelColor).a : quad.Color.a;
+                    quad.Color = new Color32(255, 255, 255, alpha);
+                }
+                else if (tinted) quad.Color = Multiply(quad.Color, labelColor);
                 if (quad.Color.a == 0) continue;
 
                 _drawn.Add(quad);

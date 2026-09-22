@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **A colour glyph keeps its own colours.** A red heading turned the 🙃 in it
+  into a red blob: the label's colour was multiplied into colour-atlas quads
+  the same way it is into text, once in the emit and once more in the shader.
+  A picture's colours are its own now. What the label still gets to say about
+  it is the alpha, so a fade, a mask, a reveal and a translucent tag all take
+  the emoji with the text. Multiplying the colour in is an opt-in,
+  `TintColorGlyphs` on the label and on `OneTextMesh`, for a monochrome sprite
+  sheet a design tints on purpose. COLR layers that ask for the text colour
+  are baked with it at decode time and were never part of this.
+
 - **The package compiles on Unity 6.5 and 6.6.** Unity 6.4 widened the
   instance id to a 64-bit `EntityId`; 6.5 turned every read of the old id into
   a compile error, and 6.6 removed the conversion between the two, which is

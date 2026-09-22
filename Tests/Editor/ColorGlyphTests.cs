@@ -669,5 +669,76 @@ namespace OneText.Tests
 
             Assert.AreEqual(1, layout.Glyphs.Count, "the ligature did not survive layout");
         }
+
+        // ----------------------------------------------------------------- tint
+
+        private static OneTextLabel ColourLabel(out GameObject canvas)
+        {
+            canvas = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
+            var go = new GameObject("Label",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(OneTextLabel));
+            go.transform.SetParent(canvas.transform, false);
+            var label = go.GetComponent<OneTextLabel>();
+            label.rectTransform.sizeDelta = new Vector2(600f, 120f);
+            label.SetFont(File.ReadAllBytes(Path.GetFullPath(ColorFontPath)));
+            label.FontSize = 32f;
+            label.Text = "A";
+            return label;
+        }
+
+        private static TextQuad DrawOne(OneTextLabel label)
+        {
+            label.SetAllDirty();
+            label.Rebuild(CanvasUpdate.PreRender);
+            Assert.AreEqual(1, label.DrawnQuads.Count, "expected the one colour glyph");
+            Assert.IsTrue(label.DrawnQuads[0].IsColor, "'A' should come from the colour atlas");
+            return label.DrawnQuads[0];
+        }
+
+        [Test]
+        public void ColourGlyph_KeepsItsOwnColours_UnderALabelColour()
+        {
+            // Reported from a real build: a red heading turned the 🙃 in it
+            // into a red blob. A picture's colours are its own; what the label
+            // gets to say about it is the alpha, so a fade or a mask still
+            // takes the emoji with the text.
+            var label = ColourLabel(out var canvas);
+            try
+            {
+                label.color = new Color32(255, 0, 0, 128);
+                var quad = DrawOne(label);
+                Assert.AreEqual(new Color32(255, 255, 255, 128), quad.Color,
+                    "the label's rgb was multiplied into a colour glyph, or its alpha was lost");
+            }
+            finally
+            {
+                Object.DestroyImmediate(label.gameObject);
+                Object.DestroyImmediate(canvas);
+            }
+        }
+
+        [Test]
+        public void ColourGlyph_TakesTheLabelColour_OnlyWhenAsked()
+        {
+            var label = ColourLabel(out var canvas);
+            try
+            {
+                label.color = new Color32(255, 0, 0, 128);
+                label.TintColorGlyphs = true;
+                var quad = DrawOne(label);
+                Assert.AreEqual(new Color32(255, 0, 0, 128), quad.Color,
+                    "with the tint opted into, the colour multiplies the way text does");
+
+                label.TintColorGlyphs = false;
+                quad = DrawOne(label);
+                Assert.AreEqual(new Color32(255, 255, 255, 128), quad.Color,
+                    "turning the tint off must reach the next draw without a relayout");
+            }
+            finally
+            {
+                Object.DestroyImmediate(label.gameObject);
+                Object.DestroyImmediate(canvas);
+            }
+        }
     }
 }

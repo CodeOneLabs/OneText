@@ -75,6 +75,10 @@ namespace OneText
                  "more readily than on a UI label.")]
         [SerializeField] private bool _precise;
 
+        [Tooltip("Multiply the text colour into colour glyphs too. Off, an emoji keeps its own " +
+                 "colours and follows only the alpha.")]
+        [SerializeField] private bool _tintColorGlyphs;
+
         [Tooltip("Atlas texels per em, as a multiple of what the point size asks for. " +
                  "World text has no screen size until a camera picks one, so this is how " +
                  "you say the player will get close to it. Medium (2x) by default; " +
@@ -248,6 +252,16 @@ namespace OneText
         {
             get => _precise;
             set { _precise = value; _dirty = true; }
+        }
+
+        /// <summary>
+        /// Whether the colour is multiplied into colour glyphs as it is into
+        /// text. Off by default; see <see cref="OneTextLabel.TintColorGlyphs"/>.
+        /// </summary>
+        public bool TintColorGlyphs
+        {
+            get => _tintColorGlyphs;
+            set { _tintColorGlyphs = value; _dirty = true; }
         }
 
         /// <summary>The laid-out result of the last rebuild; lays out first if stale.</summary>
@@ -932,8 +946,10 @@ namespace OneText
                 {
                     frame.Place(along, glyph.YOffset, location.OriginUnits, location.SizeUnits,
                         out var position, out var size, out float rotation);
+                    // A picture keeps its colours and takes only the alpha;
+                    // see OneTextLabel.EmitQuads.
                     AddQuad(position, size, rotation, location.UvRect, location.Layer,
-                        color, 1f);
+                        _tintColorGlyphs ? color : new Color32(255, 255, 255, color.a), 1f);
                     continue;
                 }
 
