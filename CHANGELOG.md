@@ -17,6 +17,20 @@
 
 ### Fixed
 
+- **A line with nowhere to wrap is cut at the box's edge.** `Truncate` and
+  `Ellipsis` only ever spent the block-axis budget: they dropped lines past
+  the bottom, and the first line was never dropped, so under `NoWrap` a long
+  nickname ran out of its cell at full length however narrow the rect was.
+  The one workaround was to turn wrapping on and make the box one line tall.
+  Under `NoWrap` a line that reaches its paragraph's end is now cut to the
+  inline budget on a grapheme boundary, and `Ellipsis` leaves room for the
+  "…" that ends it; `isTextOverflowing` reports the cut. Vertical writing
+  cuts against the height, and a right-to-left line is cut at its logical end
+  with the ellipsis on its visual left. Mixed-direction lines are trimmed in
+  logical order, the same approximation the block-axis ellipsis always made.
+  Found on the way: the ellipsis run reused a measurement it never had and
+  came out with no glyphs and no width, on the existing block-axis path too.
+
 - **A label added from code brings its own CanvasRenderer.** `Graphic`
   requires only the RectTransform and leaves the renderer to each graphic,
   which Image asks for and the label did not: a label added with

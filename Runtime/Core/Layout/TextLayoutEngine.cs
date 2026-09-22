@@ -1040,7 +1040,7 @@ namespace OneText
         {
             if (start >= end)
             {
-                EmitLine(text, settings, result, start, end, true, false, paragraphLevel, ref cursorY);
+                EmitLine(text, settings, result, start, end, true, false, false, paragraphLevel, ref cursorY);
                 return;
             }
 
@@ -1048,10 +1048,84 @@ namespace OneText
             {
                 int lineEnd = FindLineEnd(text, settings, lineStart, end);
                 bool last = lineEnd >= end;
-                if (!EmitLine(text, settings, result, lineStart, lineEnd, last, false, paragraphLevel, ref cursorY))
+                // A line that runs to the end of its paragraph has nowhere
+                // left to wrap, so whatever still sticks out of the box is cut
+                // here rather than carried to a line that will never come.
+                bool ellipsis = false;
+                if (last && ClipInline(text, settings, lineStart, ref lineEnd, out ellipsis))
+                    result.Truncated = true;
+                if (!EmitLine(text, settings, result, lineStart, lineEnd, last, ellipsis, false,
+                        paragraphLevel, ref cursorY))
                     return; // the line did not fit the height budget
-                lineStart = lineEnd;
+                // The clip moved lineEnd back inside the paragraph, but the
+                // text behind it is cut, not pending: the paragraph is done.
+                lineStart = last ? end : lineEnd;
             }
+        }
+
+        /// <summary>
+        /// Cuts a line that has nowhere left to wrap down to the inline budget,
+        /// and says whether an ellipsis should be shaped onto its end.
+        ///
+        /// Under <see cref="TextWrap.Wrap"/> this does nothing, and deliberately:
+        /// the wrapper has already handed back an end that fits, and a line the
+        /// emergency break could not shorten is one no second cut would help.
+        /// Under <see cref="TextWrap.NoWrap"/> it is the whole feature. The
+        /// block-axis budget that <see cref="TextOverflow"/> otherwise spends
+        /// only ever sees the <em>stack</em> of lines, so a single unwrapped
+        /// line was never offered to it at all and ran out of the box at full
+        /// length however narrow the rect was.
+        ///
+        /// The walk is the one <see cref="ApplyEllipsis"/> makes: back by whole
+        /// grapheme clusters, never through one, until the visible width plus
+        /// the ellipsis fits. It walks logical indices, which is exactly right
+        /// for a line of one direction — the logical end of a right-to-left
+        /// line is its visual left edge, and the ellipsis run carries the
+        /// paragraph's level, so <see cref="ReorderVisually"/> puts it on that
+        /// same edge. It is approximate for a line that mixes directions:
+        /// cutting the logical tail can take its bite out of the visual middle.
+        /// Trimming in visual order would mean reordering runs before measuring
+        /// and re-measuring per candidate — a second wrapper, for a case the
+        /// block-axis ellipsis has never handled either.
+        /// </summary>
+        /// <returns>True if anything was cut.</returns>
+        private bool ClipInline(ReadOnlySpan<char> text, in TextLayoutSettings settings,
+            int start, ref int end, out bool withEllipsis)
+        {
+            withEllipsis = false;
+            if (settings.Wrap != TextWrap.NoWrap || settings.Overflow == TextOverflow.Overflow)
+                return false;
+
+            float limit = InlineLimit(settings);
+            if (limit <= 0f || end <= start) return false;
+            if (MeasureVisible(text, start, end) <= limit) return false;
+
+            // Shaped only once the line is known not to fit, so text that fits
+            // is never charged for an ellipsis it is not going to be given.
+            float ellipsisWidth = settings.Overflow == TextOverflow.Ellipsis
+                ? Measure(EllipsisText, settings, settings.Fonts.Resolve(EllipsisText[0]))
+                : 0f;
+
+            // Carried down the walk rather than re-summed per candidate. A
+            // NoWrap line is a whole paragraph long, and re-measuring it once
+            // per grapheme is quadratic in precisely the case this exists for.
+            float raw = 0f;
+            for (int i = start; i < end; i++) raw += _advances[i];
+
+            int fit = end;
+            while (fit > start &&
+                   raw - TrailingSpaceWidth(text, start, fit) - EdgeGive(start, fit)
+                       + ellipsisWidth > limit)
+            {
+                int next = fit - 1;
+                while (next > start && !_graphemeStart[next]) next--;
+                for (int i = next; i < fit; i++) raw -= _advances[i];
+                fit = next;
+            }
+
+            end = fit;
+            withEllipsis = settings.Overflow == TextOverflow.Ellipsis;
+            return true;
         }
 
         /// <summary>Greedy line breaking: the last opportunity whose line still fits.</summary>
@@ -1180,8 +1254,8 @@ namespace OneText
 
         /// <returns>False if the line was dropped because the box is full.</returns>
         private bool EmitLine(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
-            int start, int end, bool lastInParagraph, bool withEllipsis, byte paragraphLevel,
-            ref float cursorY)
+            int start, int end, bool lastInParagraph, bool withEllipsis, bool replacesLastLine,
+            byte paragraphLevel, ref float cursorY)
         {
             int runStart = result.Runs.Count;
             int glyphStart = result.Glyphs.Count;
@@ -1258,8 +1332,11 @@ namespace OneText
 
             // Height budget: keep at least one line, then stop. The re-emitted
             // ellipsis line is exempt; it replaces a line that already fit.
+            // Only that one: a line the inline clip shortened is an ordinary
+            // line that happens to carry an ellipsis, and it still has to earn
+            // its place in the block budget like any other.
             float blockLimit = BlockLimit(settings);
-            if (!withEllipsis && blockLimit > 0f && settings.Overflow != TextOverflow.Overflow &&
+            if (!replacesLastLine && blockLimit > 0f && settings.Overflow != TextOverflow.Overflow &&
                 result.Lines.Count > 0 && cursorY + height > blockLimit)
             {
                 result.Runs.RemoveRange(runStart, result.Runs.Count - runStart);
@@ -1921,6 +1998,13 @@ namespace OneText
                 Style = TextStyle.Default,
                 FontSize = settings.FontSize,
                 Rotated = IsVertical(settings) && IsRotated(font, EllipsisText[0]),
+                // Never measured: "…" is not in _items and has no slice of
+                // _measured to reuse. Saying so is not optional. The reuse test
+                // in ShapeRun is "the line took the whole item", which a
+                // zero-initialised MeasuredStart/Count passes by accident — so
+                // the run copied nothing, and the ellipsis came out with no
+                // glyphs and no width at all. It has to be asked for.
+                MeasuredCount = -1,
             };
             // No line edge: the indices here are into "…", not into the text,
             // so a line-edge rule keyed on them would be answering a different
@@ -1960,7 +2044,7 @@ namespace OneText
                 }
             }
 
-            EmitLine(text, settings, result, start, end, true, true, line.ParagraphLevel, ref cursorY);
+            EmitLine(text, settings, result, start, end, true, true, true, line.ParagraphLevel, ref cursorY);
         }
 
         private float Measure(ReadOnlySpan<char> text, in TextLayoutSettings settings, FontData font)

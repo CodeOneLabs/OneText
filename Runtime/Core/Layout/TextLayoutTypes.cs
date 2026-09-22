@@ -52,19 +52,47 @@ namespace OneText
     /// <summary>Whether lines wrap at the layout width.</summary>
     public enum TextWrap
     {
-        /// <summary>Only mandatory breaks (newlines) start a new line.</summary>
+        /// <summary>
+        /// Only mandatory breaks (newlines) start a new line.
+        ///
+        /// A line this long has nowhere to wrap, so it is where
+        /// <see cref="TextOverflow"/> stops being about the stack of lines and
+        /// becomes about the line itself: under
+        /// <see cref="TextOverflow.Truncate"/> or
+        /// <see cref="TextOverflow.Ellipsis"/> the line is cut to the inline
+        /// budget instead of running out of the box.
+        /// </summary>
         NoWrap,
         Wrap,
     }
 
-    /// <summary>What happens to lines that do not fit the layout height.</summary>
+    /// <summary>
+    /// What happens to text that does not fit the box.
+    ///
+    /// Two axes, one setting. Along the block axis — down the page, or across
+    /// the columns of 縦書き — it is lines that do not fit, and the ones past
+    /// the budget are dropped; the first line is always kept, because a box
+    /// too short for even one line should still show something. Along the
+    /// inline axis only a line with nowhere to wrap can overflow at all, so
+    /// this reaches there only under <see cref="TextWrap.NoWrap"/>, where it
+    /// cuts each line to the inline budget. Under <see cref="TextWrap.Wrap"/>
+    /// the wrapper has already fitted every line and nothing is cut.
+    /// </summary>
     public enum TextOverflow
     {
-        /// <summary>Keep every line; the block may exceed the box.</summary>
+        /// <summary>Keep every line whole; the block may exceed the box.</summary>
         Overflow,
-        /// <summary>Drop lines past the bottom of the box.</summary>
+        /// <summary>
+        /// Drop lines past the bottom of the box, and under
+        /// <see cref="TextWrap.NoWrap"/> cut each line at the box's inline
+        /// edge, on a grapheme cluster boundary.
+        /// </summary>
         Truncate,
-        /// <summary>Drop them, and mark the last visible line with an ellipsis.</summary>
+        /// <summary>
+        /// Drop them, and mark the last visible line with an ellipsis; under
+        /// <see cref="TextWrap.NoWrap"/> also cut each line to the inline
+        /// budget, leaving room for the ellipsis that ends it.
+        /// </summary>
         Ellipsis,
     }
 

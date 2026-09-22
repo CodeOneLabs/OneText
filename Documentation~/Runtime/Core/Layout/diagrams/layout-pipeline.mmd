@@ -19,7 +19,8 @@ flowchart TD
     I1 --> I2["MeasureRubies: shape annotations, pad base if wider"]
     I2 --> W["WrapParagraph"]
     W --> W1["FindLineEnd (greedy, then emergency break)"]
-    W1 --> W2["EmitLine: ShapeRun per item slice, metrics, overflow, Justify, ReorderVisually, PlaceRubies"]
+    W1 --> W1a["ClipInline: NoWrap only. Cut the line to the inline limit, Truncated = true"]
+    W1a --> W2["EmitLine: ShapeRun per item slice, metrics, overflow, Justify, ReorderVisually, PlaceRubies"]
     W2 --> W1
     W2 -->|height budget exceeded| X["Truncated = true, ApplyEllipsis if asked"]
     W2 -->|paragraph done| P

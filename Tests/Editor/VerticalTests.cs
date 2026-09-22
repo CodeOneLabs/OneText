@@ -244,6 +244,35 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void AnUnwrappedColumn_IsEllipsisedAtTheBoxHeight()
+        {
+            // The same claim as the horizontal NoWrap clip, made against the
+            // other axis: a column that cannot wrap is cut at the box's
+            // *height*, because that is the inline limit down here. Nothing in
+            // the clip is written about width, which is the only reason this
+            // works at all.
+            using var font = LoadFont(JapaneseFontPath);
+            using var fonts = FontStack.Single(font);
+            using var engine = new TextLayoutEngine();
+
+            var settings = Vertical(fonts, 40f, maxHeight: 130f);
+            settings.Wrap = TextWrap.NoWrap;
+            settings.Overflow = TextOverflow.Ellipsis;
+            var layout = Layout(engine, "一二三四五六七八", settings);
+
+            Assert.AreEqual(1, layout.Lines.Count, "NoWrap keeps it to one column");
+            Assert.IsTrue(layout.Truncated);
+            Assert.LessOrEqual(layout.Lines[0].Width, 130f + 0.5f, "the column fits the height");
+            Assert.LessOrEqual(layout.Height, 130f + 0.5f, "and so does the block it publishes");
+            Assert.Less(layout.Lines[0].TextLength, 8, "characters were cut");
+
+            bool ellipsis = false;
+            foreach (var run in layout.Runs)
+                ellipsis |= run.TextLength == 0 && run.GlyphCount > 0;
+            Assert.IsTrue(ellipsis, "the column ends in an ellipsis run");
+        }
+
+        [Test]
         public void KinsokuHoldsAtAColumnEnd()
         {
             // The line-break pipeline is shared whole: kinsoku is a tailoring
