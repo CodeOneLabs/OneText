@@ -116,12 +116,9 @@ namespace OneText.Editor
             values.Interactable = field.interactable;
             values.CaretColor = CaretColour(field);
 
-            values.TextComponentId = field.textComponent == null
-                ? 0 : field.textComponent.GetInstanceID();
-            values.PlaceholderId = field.placeholder == null
-                ? 0 : field.placeholder.GetInstanceID();
-            values.TargetGraphicId = field.targetGraphic == null
-                ? 0 : field.targetGraphic.GetInstanceID();
+            values.TextComponentId = ObjectId.Of(field.textComponent);
+            values.PlaceholderId = ObjectId.Of(field.placeholder);
+            values.TargetGraphicId = ObjectId.Of(field.targetGraphic);
 
             // uGUI's three are onValueChanged, onSubmit and onEndEdit, and the
             // serialized names do not match the properties: what the inspector
@@ -151,7 +148,7 @@ namespace OneText.Editor
                     "value-changed event.");
             }
 
-            if (values.TextComponentId == 0)
+            if (values.TextComponentId.IsNone)
             {
                 target.Note(DoctorSeverity.Warning, "no-counterpart",
                     "this input field has no text component assigned, so there is nothing for the " +

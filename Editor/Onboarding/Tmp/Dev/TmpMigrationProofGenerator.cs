@@ -211,12 +211,18 @@ namespace OneText.Editor
         /// </summary>
         private static void Verify()
         {
+#if UNITY_6000_5_OR_NEWER
+            var labels = UnityEngine.Object.FindObjectsByType<OneTextLabel>(FindObjectsInactive.Include);
+            var fields = UnityEngine.Object.FindObjectsByType<OneTextInputField>(FindObjectsInactive.Include);
+            var leftover = UnityEngine.Object.FindObjectsByType<TMP_Text>(FindObjectsInactive.Include);
+#else
             var labels = UnityEngine.Object.FindObjectsByType<OneTextLabel>(
                 FindObjectsInactive.Include, FindObjectsSortMode.None);
             var fields = UnityEngine.Object.FindObjectsByType<OneTextInputField>(
                 FindObjectsInactive.Include, FindObjectsSortMode.None);
             var leftover = UnityEngine.Object.FindObjectsByType<TMP_Text>(
                 FindObjectsInactive.Include, FindObjectsSortMode.None);
+#endif
 
             string wiring = "no input field";
             if (fields.Length > 0)
@@ -253,7 +259,7 @@ namespace OneText.Editor
             var target = new RenderTexture(Width, Half, 24, RenderTextureFormat.ARGB32);
             camera.targetTexture = target;
 
-            var canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
+            var canvas = UnityEngine.Object.FindAnyObjectByType<Canvas>();
             if (canvas != null)
             {
                 canvas.renderMode = RenderMode.ScreenSpaceCamera;

@@ -255,7 +255,8 @@ namespace OneText.Benchmarks
             };
         }
 
-        private readonly HashSet<(int material, int texture)> _groups = new HashSet<(int, int)>();
+        private readonly HashSet<(ObjectId material, ObjectId texture)> _groups =
+            new HashSet<(ObjectId, ObjectId)>();
         private readonly List<UnityEngine.UI.Graphic> _graphicsScratch = new List<UnityEngine.UI.Graphic>();
 
         /// <summary>
@@ -292,8 +293,7 @@ namespace OneText.Benchmarks
                 {
                     var material = renderer.GetMaterial(i);
                     if (material == null) continue;
-                    _groups.Add((material.GetInstanceID(),
-                        texture != null ? texture.GetInstanceID() : 0));
+                    _groups.Add((ObjectId.Of(material), ObjectId.Of(texture)));
                     graphics++;
                 }
             }

@@ -911,12 +911,12 @@ namespace OneText.Editor
             // them is built, or the field arrives pointing at nothing.
             convertible.Sort((a, b) => Rank(a.Kind).CompareTo(Rank(b.Kind)));
 
-            var replaced = new Dictionary<int, Component>();
+            var replaced = new Dictionary<ObjectId, Component>();
             var made = new List<(MigrationTarget Target, Component Component)>();
 
             foreach (var target in convertible)
             {
-                int oldId = target.Source.GetInstanceID();
+                var oldId = ObjectId.Of(target.Source);
                 try
                 {
                     var component = Replace(target, fonts, undo, report);
@@ -1062,7 +1062,7 @@ namespace OneText.Editor
             public string ReferrerPath;
             public string ReferrerType;
             public string PropertyPath;
-            public int OldId;
+            public ObjectId OldId;
             public MigrationTarget Target;
 
             /// <summary>The type the field is declared as, e.g. <c>Text</c>.</summary>
@@ -1096,9 +1096,9 @@ namespace OneText.Editor
             var stored = ContainerFile.Read(container);
             if (stored.Count == 0) return;
 
-            var byTarget = new Dictionary<int, MigrationTarget>();
+            var byTarget = new Dictionary<ObjectId, MigrationTarget>();
             foreach (var target in convertible)
-                if (target.Source != null) byTarget[target.Source.GetInstanceID()] = target;
+                if (target.Source != null) byTarget[ObjectId.Of(target.Source)] = target;
 
             Dictionary<long, Component> byId = null;
             foreach (var entry in stored)
@@ -1109,7 +1109,7 @@ namespace OneText.Editor
                 if (byId == null) byId = Inside(roots, container);
                 if (!byId.TryGetValue(entry.Referrer, out var referrer) || referrer == null) continue;
                 if (!byId.TryGetValue(entry.TargetFileId, out var found) || found == null) continue;
-                if (!byTarget.TryGetValue(found.GetInstanceID(), out var target)) continue;
+                if (!byTarget.TryGetValue(ObjectId.Of(found), out var target)) continue;
 
                 var serialized = new SerializedObject(referrer);
                 var property = serialized.FindProperty(entry.PropertyPath);
@@ -1126,7 +1126,7 @@ namespace OneText.Editor
                 }
 
                 // Still holding it, so the ordinary census already has this one.
-                if (property.objectReferenceInstanceIDValue != 0) continue;
+                if (!ObjectId.Of(property).IsNone) continue;
 
                 string declared = DeclaredTypeName(property);
                 into.Add(new Referrer
@@ -1135,7 +1135,7 @@ namespace OneText.Editor
                     ReferrerPath = PathOf(referrer.transform),
                     ReferrerType = referrer.GetType().Name,
                     PropertyPath = entry.PropertyPath,
-                    OldId = found.GetInstanceID(),
+                    OldId = ObjectId.Of(found),
                     Target = target,
                     DeclaredType = declared,
                     Holds = WouldHold(declared, Replacement(target.Kind)),
@@ -1335,8 +1335,8 @@ namespace OneText.Editor
         private static List<Referrer> CollectReferences(GameObject[] roots,
             List<MigrationTarget> targets)
         {
-            var byId = new Dictionary<int, MigrationTarget>();
-            foreach (var target in targets) byId[target.Source.GetInstanceID()] = target;
+            var byId = new Dictionary<ObjectId, MigrationTarget>();
+            foreach (var target in targets) byId[ObjectId.Of(target.Source)] = target;
 
             var found = new List<Referrer>();
             foreach (var root in roots)
@@ -1345,7 +1345,7 @@ namespace OneText.Editor
                 foreach (var component in root.GetComponentsInChildren<Component>(true))
                 {
                     if (component == null) continue;
-                    if (byId.ContainsKey(component.GetInstanceID())) continue;
+                    if (byId.ContainsKey(ObjectId.Of(component))) continue;
 
                     SerializedObject serialized;
                     try { serialized = new SerializedObject(component); }
@@ -1355,8 +1355,8 @@ namespace OneText.Editor
                     while (iterator.Next(true))
                     {
                         if (iterator.propertyType != SerializedPropertyType.ObjectReference) continue;
-                        int id = iterator.objectReferenceInstanceIDValue;
-                        if (id == 0 || !byId.TryGetValue(id, out var target)) continue;
+                        var id = ObjectId.Of(iterator);
+                        if (id.IsNone || !byId.TryGetValue(id, out var target)) continue;
 
                         string declared = DeclaredTypeName(iterator);
                         found.Add(new Referrer
@@ -1386,7 +1386,7 @@ namespace OneText.Editor
         /// module exists downstream of the script rewriter for, and the finding
         /// says so by name.
         /// </summary>
-        private static void Relink(List<Referrer> references, Dictionary<int, Component> replaced,
+        private static void Relink(List<Referrer> references, Dictionary<ObjectId, Component> replaced,
             MigrationReport report)
         {
             foreach (var reference in references)
@@ -1827,31 +1827,31 @@ namespace OneText.Editor
         /// every label in the container has become a OneText one.
         /// </summary>
         private static void WireInputField(Component field, MigrationTarget target,
-            Dictionary<int, Component> replaced, MigrationReport report)
+            Dictionary<ObjectId, Component> replaced, MigrationReport report)
         {
             var values = target.Values;
             var serialized = new SerializedObject(field);
 
             SetObject(serialized, "_textComponent", Resolve(values.TextComponentId, replaced));
             SetObject(serialized, "_placeholder", Resolve(values.PlaceholderId, replaced));
-            if (values.TargetGraphicId != 0)
+            if (!values.TargetGraphicId.IsNone)
             {
-                var graphic = EditorUtility.InstanceIDToObject(values.TargetGraphicId) as Component;
+                var graphic = values.TargetGraphicId.ToObject() as Component;
                 if (graphic != null) SetObject(serialized, "m_TargetGraphic", graphic);
             }
             // Looked up directly rather than through the replacement map: the
             // viewport is a bare RectTransform holding a mask, so nothing ever
             // replaced it and it is still the object it was before the labels
             // under it changed type.
-            if (values.ViewportId != 0)
+            if (!values.ViewportId.IsNone)
             {
-                var viewport = EditorUtility.InstanceIDToObject(values.ViewportId) as RectTransform;
+                var viewport = values.ViewportId.ToObject() as RectTransform;
                 if (viewport != null) SetObject(serialized, "_textViewport", viewport);
             }
             serialized.ApplyModifiedPropertiesWithoutUndo();
 
             serialized.Update();
-            if (values.TextComponentId != 0 &&
+            if (!values.TextComponentId.IsNone &&
                 serialized.FindProperty("_textComponent")?.objectReferenceValue == null)
             {
                 report.Add(target.Note(DoctorSeverity.Warning, "no-counterpart",
@@ -1876,7 +1876,7 @@ namespace OneText.Editor
         }
 
         private static void CarryListeners(SerializedObject serialized, string path,
-            List<MigrationPersistentCall> calls, Dictionary<int, Component> replaced,
+            List<MigrationPersistentCall> calls, Dictionary<ObjectId, Component> replaced,
             MigrationTarget target, MigrationReport report)
         {
             if (calls == null || calls.Count == 0) return;
@@ -1892,9 +1892,9 @@ namespace OneText.Editor
             report.Add(finding);
         }
 
-        private static Component Resolve(int id, Dictionary<int, Component> replaced)
+        private static Component Resolve(ObjectId id, Dictionary<ObjectId, Component> replaced)
         {
-            if (id == 0) return null;
+            if (id.IsNone) return null;
             return replaced.TryGetValue(id, out var made) ? made : null;
         }
 

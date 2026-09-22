@@ -234,7 +234,7 @@ namespace OneText.UGUI
         private int _quadsLayoutGeneration = -1;
         private int _quadsAtlasVersion = -1;
         private int _quadsColorVersion = -1;
-        private int _quadsSpriteVersion = -1;
+        private ObjectId _quadsSpriteVersion;
 
         // Bumped by anything the key cannot see: a font change, a style edit, a
         // markup re-parse. Cheaper and safer than trying to hash the world.
@@ -2612,12 +2612,33 @@ namespace OneText.UGUI
         /// serving the old picture until something evicts it.
         /// </summary>
         private static long SpriteKey(Sprite sprite, int ppem) =>
-            // The instance id is masked rather than cast: a runtime-created
-            // object's id is negative, and sign extension would flood the high
-            // bits and destroy the discriminator below.
             unchecked((long)0x4000000000000000L
-                | ((long)(uint)sprite.GetInstanceID() << 12)
+                | ((long)(uint)SpriteSlot(sprite) << 12)
                 | (uint)ppem);
+
+        /// <summary>
+        /// A small number that stands for one sprite for the life of the
+        /// domain, handed out in order of first use.
+        ///
+        /// The key above has 32 bits to say which sprite, and the object's own
+        /// identity no longer fits: from Unity 6.4 it is 64 bits wide, and
+        /// folding it to 32 would let two sprites share a tile. So the sprite
+        /// is given a slot instead. The table only ever grows by the number of
+        /// distinct sprites a session draws, and it is reset with the atlas
+        /// it indexes into, by the same domain reload.
+        /// </summary>
+        private static int SpriteSlot(Sprite sprite)
+        {
+            var id = ObjectId.Of(sprite);
+            if (!s_spriteSlots.TryGetValue(id, out int slot))
+            {
+                slot = s_spriteSlots.Count + 1;
+                s_spriteSlots.Add(id, slot);
+            }
+            return slot;
+        }
+
+        private static readonly Dictionary<ObjectId, int> s_spriteSlots = new Dictionary<ObjectId, int>();
 
         private bool TryEmitColorGlyph(FontData font, in ShapedGlyph glyph, int ppem,
             float pixelsPerUnit, Color32 runColor, ColorGlyphAtlas colorAtlas,
@@ -3364,7 +3385,7 @@ namespace OneText.UGUI
             int colorVersion = SharedGlyphAtlas.ColorAtlasExists
                 ? SharedGlyphAtlas.ColorAtlas.Version
                 : 0;
-            int spriteVersion = _sprites != null ? _sprites.GetInstanceID() : 0;
+            var spriteVersion = ObjectId.Of(_sprites);
 
             if (_quadsValid && _quadsLayoutGeneration == _layoutGeneration &&
                 _quadsAtlasVersion == atlas.Version && _quadsColorVersion == colorVersion &&

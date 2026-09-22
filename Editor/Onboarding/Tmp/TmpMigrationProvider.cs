@@ -339,7 +339,7 @@ namespace OneText.Editor
                     "code, on the value-changed event.");
             }
 
-            if (values.TextComponentId == 0)
+            if (values.TextComponentId.IsNone)
             {
                 target.Note(DoctorSeverity.Warning, "no-counterpart",
                     "this input field has no text component assigned, so there is nothing for the " +
@@ -358,8 +358,7 @@ namespace OneText.Editor
             catch (System.Exception) { return Color.white; }
         }
 
-        private static int InstanceId(Object component) =>
-            component == null ? 0 : component.GetInstanceID();
+        private static ObjectId InstanceId(Object component) => ObjectId.Of(component);
 
         // ------------------------------------------------------- decoration
 

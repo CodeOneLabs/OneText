@@ -1249,11 +1249,11 @@ namespace OneText.Editor
         /// </summary>
         private sealed class Cache
         {
-            private readonly Dictionary<int, MigrationKind> _kinds =
-                new Dictionary<int, MigrationKind>();
+            private readonly Dictionary<ObjectId, MigrationKind> _kinds =
+                new Dictionary<ObjectId, MigrationKind>();
 
-            private readonly Dictionary<int, string[]> _identities =
-                new Dictionary<int, string[]>();
+            private readonly Dictionary<ObjectId, string[]> _identities =
+                new Dictionary<ObjectId, string[]>();
 
             /// <summary>
             /// Which container a component really belongs to and where in it.
@@ -1274,7 +1274,7 @@ namespace OneText.Editor
                 nested = false;
                 if (component == null) return false;
 
-                int id = component.GetInstanceID();
+                var id = ObjectId.Of(component);
                 if (_identities.TryGetValue(id, out var known))
                 {
                     if (known == null) return false;
@@ -1309,7 +1309,7 @@ namespace OneText.Editor
             {
                 if (component == null) return MigrationKind.None;
 
-                int id = component.GetInstanceID();
+                var id = ObjectId.Of(component);
                 if (_kinds.TryGetValue(id, out var known)) return known;
 
                 var kind = MigrationKind.None;

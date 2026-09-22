@@ -192,7 +192,7 @@ namespace OneText.Editor
             int width = Mathf.CeilToInt(_boxWidth);
             int height = Mathf.CeilToInt(Mathf.Max(_layout.Height + _fontSize, _fontSize * 2f));
 
-            string key = $"{_text}|{font.GetInstanceID()}|{_language}|{_fontSize}|{_boxWidth}";
+            string key = $"{_text}|{ObjectId.Of(font)}|{_language}|{_fontSize}|{_boxWidth}";
             if (_preview == null || _previewKey != key)
             {
                 if (_preview != null) Object.DestroyImmediate(_preview);

@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **The package compiles on Unity 6.5 and 6.6.** Unity 6.4 widened the
+  instance id to a 64-bit `EntityId`; 6.5 turned every read of the old id into
+  a compile error, and 6.6 removed the conversion between the two, which is
+  the `CS0619` on `EntityId.implicit operator int` reported in
+  [#5](https://github.com/CodeOneLabs/OneText/issues/5). Every place the
+  package kept an object's id — the sprite tile key, the quad cache's
+  sprite-sheet stamp, the migration's map of what became what and the persistent
+  listeners it re-targets — now holds an `ObjectId`, one struct that is the
+  `EntityId` on 6.4 and later and the `int` before, so the choice is made once
+  and behind a single `#if`. The sprite tile key had 32 bits for the sprite and
+  keeps them: a sprite is given a small slot on first use rather than having
+  its 64-bit identity folded, which could have let two sprites share a tile.
+  2022.3 through 6.3 compile exactly as before.
+
 ## [0.3.2] - 2026-08-20
 
 ### Added

@@ -449,7 +449,7 @@ namespace OneText.Tests
         public void TheScan_DoesNotInstantiateAMaterial()
         {
             var text = Build(out var material);
-            int before = material.GetInstanceID();
+            var before = ObjectId.Of(material);
 
             ComponentMigration.ScanInPlace(new[] { _root }, "(test)");
 
@@ -458,7 +458,7 @@ namespace OneText.Tests
             // would be leaving a material asset behind for every label.
             var after = new SerializedObject(text).FindProperty("m_fontMaterial")
                 .objectReferenceValue;
-            Assert.AreEqual(before, after.GetInstanceID(),
+            Assert.AreEqual(before, ObjectId.Of(after),
                 "the scan replaced the label's material with an instance of it");
         }
     }

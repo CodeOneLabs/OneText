@@ -70,7 +70,7 @@ namespace OneText.Editor
         /// than by counting what was written.
         /// </summary>
         public static int Write(SerializedObject serialized, string eventPath,
-            IList<MigrationPersistentCall> source, IDictionary<int, Component> remap)
+            IList<MigrationPersistentCall> source, IDictionary<ObjectId, Component> remap)
         {
             if (source == null || source.Count == 0) return 0;
             var calls = serialized?.FindProperty(eventPath + CallsSuffix);
@@ -134,18 +134,15 @@ namespace OneText.Editor
         /// would send every carried listener down the "nothing to remap" path
         /// and write the corpse straight back.
         /// </summary>
-        private static Object Retarget(Object target, int id, IDictionary<int, Component> remap)
+        private static Object Retarget(Object target, ObjectId id, IDictionary<ObjectId, Component> remap)
         {
-            if (remap != null && id != 0 && remap.TryGetValue(id, out var replacement))
+            if (remap != null && !id.IsNone && remap.TryGetValue(id, out var replacement))
                 return replacement;
             return ReferenceEquals(target, null) || target == null ? null : target;
         }
 
-        private static int InstanceId(SerializedProperty parent, string name)
-        {
-            var property = parent?.FindPropertyRelative(name);
-            return property == null ? 0 : property.objectReferenceInstanceIDValue;
-        }
+        private static ObjectId InstanceId(SerializedProperty parent, string name) =>
+            ObjectId.Of(parent?.FindPropertyRelative(name));
 
         // ------------------------------------------------------------ getters
 

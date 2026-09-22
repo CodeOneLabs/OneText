@@ -135,7 +135,7 @@ namespace OneText.Editor
         /// <summary>The numbers the conversion actually wrote, in one log line.</summary>
         private static void ReportDecoration()
         {
-            var label = UnityEngine.Object.FindFirstObjectByType<OneTextLabel>(
+            var label = UnityEngine.Object.FindAnyObjectByType<OneTextLabel>(
                 FindObjectsInactive.Include);
             if (label == null)
             {
@@ -164,7 +164,7 @@ namespace OneText.Editor
             var target = new RenderTexture(Width, Half, 24, RenderTextureFormat.ARGB32);
             camera.targetTexture = target;
 
-            var canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
+            var canvas = UnityEngine.Object.FindAnyObjectByType<Canvas>();
             if (canvas != null)
             {
                 canvas.renderMode = RenderMode.ScreenSpaceCamera;

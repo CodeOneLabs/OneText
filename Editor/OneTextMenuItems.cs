@@ -288,7 +288,7 @@ namespace OneText.Editor
             if (context != null && context.GetComponentInParent<Canvas>() != null)
                 return context.transform;
 
-            var canvas = Object.FindFirstObjectByType<Canvas>();
+            var canvas = Object.FindAnyObjectByType<Canvas>();
             if (canvas == null)
             {
                 var canvasGo = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas),

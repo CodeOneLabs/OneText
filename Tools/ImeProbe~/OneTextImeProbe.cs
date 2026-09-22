@@ -108,7 +108,7 @@ public sealed class OneTextImeProbe : MonoBehaviour
     private bool _holdReported;
     private IMECompositionMode _mode;
     private bool _imeSelected;
-    private int _selectedId;
+    private OneText.ObjectId _selectedId;
     private int _marks;
     private int _lines;
 
@@ -192,7 +192,7 @@ public sealed class OneTextImeProbe : MonoBehaviour
     {
         var system = EventSystem.current;
         var selected = system != null ? system.currentSelectedGameObject : null;
-        int id = selected != null ? selected.GetInstanceID() : 0;
+        var id = OneText.ObjectId.Of(selected);
         if (id == _selectedId) return;
 
         _selectedId = id;

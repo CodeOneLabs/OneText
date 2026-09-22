@@ -105,14 +105,14 @@ namespace OneText.Editor
         /// while still being a perfectly good dictionary key — if you took the
         /// key first. This is that key.
         /// </summary>
-        public int TargetId;
+        public ObjectId TargetId;
 
         public string TargetAssemblyTypeName;
         public string MethodName;
         public int Mode;
         public int CallState;
         public Object ObjectArgument;
-        public int ObjectArgumentId;
+        public ObjectId ObjectArgumentId;
         public string ObjectArgumentAssemblyTypeName;
         public int IntArgument;
         public float FloatArgument;
@@ -193,9 +193,9 @@ namespace OneText.Editor
         /// the id is the only thing that survives long enough to be looked up
         /// in the map of what became what.
         /// </summary>
-        public int TextComponentId;
-        public int PlaceholderId;
-        public int TargetGraphicId;
+        public ObjectId TextComponentId;
+        public ObjectId PlaceholderId;
+        public ObjectId TargetGraphicId;
 
         /// <summary>
         /// The masked box the text scrolls inside — TMP's Text Area, which the
@@ -205,7 +205,7 @@ namespace OneText.Editor
         /// but it keeps the caret inside the label's rect rather than the
         /// viewport's, and a long value scrolls to the wrong edge.
         /// </summary>
-        public int ViewportId;
+        public ObjectId ViewportId;
 
         /// <summary>The defaults a label starts life with, so a partial read is still sane.</summary>
         public static MigrationValues Default => new MigrationValues

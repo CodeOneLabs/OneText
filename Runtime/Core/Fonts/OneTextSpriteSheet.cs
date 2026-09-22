@@ -28,7 +28,7 @@ namespace OneText
 
         public IReadOnlyList<Sprite> Sprites => _sprites;
 
-        private HashSet<int> _unreadable;
+        private HashSet<ObjectId> _unreadable;
 
         public int Count => _sprites.Count;
 
@@ -76,8 +76,8 @@ namespace OneText
                 // Once per sprite, not once per rebuild: a typewriter re-runs
                 // the mesh build on every revealed cluster, and an error per
                 // character is how a useful message becomes noise.
-                _unreadable ??= new HashSet<int>();
-                if (_unreadable.Add(sprite.GetInstanceID()))
+                _unreadable ??= new HashSet<ObjectId>();
+                if (_unreadable.Add(ObjectId.Of(sprite)))
                 {
                     Debug.LogError($"OneText: sprite '{sprite.name}' cannot be drawn inline " +
                         $"because its texture '{sprite.texture.name}' is not readable. Tick " +

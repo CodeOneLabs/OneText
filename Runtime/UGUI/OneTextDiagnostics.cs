@@ -222,6 +222,12 @@ namespace OneText.UGUI
             FindAnyObjectByType<OneTextDiagnostics>();
 
         private static OneTextLabel[] AllLabels() =>
+#if UNITY_6000_5_OR_NEWER
+            // The sort-mode overload is obsolete from 6.5: it ordered by
+            // instance id, which no longer exists to order by.
+            FindObjectsByType<OneTextLabel>(FindObjectsInactive.Exclude);
+#else
             FindObjectsByType<OneTextLabel>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+#endif
     }
 }
