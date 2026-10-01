@@ -14,8 +14,8 @@ namespace OneText
     /// fonts' worth of bytes to show one. A font reached through a key is
     /// loaded when somebody asks and can be let go of when nobody does.</para>
     ///
-    /// <para>Two ship with the package: <see cref="ResourcesFontSource"/>,
-    /// always, and an Addressables one in
+    /// <para>Three ship with the package: <see cref="ResourcesFontSource"/> and
+    /// <see cref="FileFontSource"/>, always, and an Addressables one in
     /// <c>OneText.Integrations.Addressables</c>, which compiles only in a
     /// project that has the Addressables package. A project with its own asset
     /// pipeline implements this and sets <see cref="FontResidency.Source"/>.</para>
@@ -51,6 +51,16 @@ namespace OneText
 
         /// <summary>Keys are Addressables addresses. Needs the Addressables package.</summary>
         Addressables = 1,
+
+        /// <summary>
+        /// Keys are Resources paths, and the font is read from a font file at
+        /// <c>StreamingAssets/OneTextFonts/&lt;key&gt;.ttf|.otf|.ttc</c> by mapping it,
+        /// so it costs the pages that are drawn rather than the whole font on
+        /// the managed heap. Where StreamingAssets is not a folder of files
+        /// (Android, inside the APK; Web) or a key has no file, the font comes
+        /// from Resources instead. See <see cref="FileFontSource"/>.
+        /// </summary>
+        StreamingAssets = 2,
     }
 
     /// <summary>

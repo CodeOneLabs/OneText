@@ -111,7 +111,9 @@ namespace OneText
                 if (s_source != null) return s_source;
                 var settings = OneTextSettings.Instance;
                 var kind = settings != null ? settings.FontSource : OneFontSourceKind.Resources;
-                if (kind != OneFontSourceKind.Resources &&
+                if (kind == OneFontSourceKind.StreamingAssets)
+                    s_source = FileFontSource.StreamingAssets();
+                else if (kind != OneFontSourceKind.Resources &&
                     s_factories.TryGetValue(kind, out var factory) && factory != null)
                     s_source = factory();
                 if (s_source == null)

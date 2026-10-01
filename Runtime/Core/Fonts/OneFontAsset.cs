@@ -287,8 +287,52 @@ namespace OneText
                 long unpacked = _unpacked != null && !ReferenceEquals(_unpacked, _data)
                     ? _unpacked.LongLength
                     : 0;
-                return packed + unpacked;
+                // A file-backed asset's face holds the file itself only where
+                // the platform could not map it (Web); mapped, this is zero.
+                long read = IsFileBacked && _font != null ? _font.ManagedBytes : 0;
+                return packed + unpacked + read;
             }
+        }
+
+        /// <summary>
+        /// Address space a file-backed asset's face has mapped (the file's
+        /// length), zero otherwise. Not managed memory and not all resident:
+        /// see <see cref="FontData.ResidentFileBytes"/>.
+        /// </summary>
+        public long MappedBytes => _font != null && _font.IsValid ? _font.MappedBytes : 0;
+
+        // Set on an asset made at runtime over a font file on disk; see FromFile.
+        [System.NonSerialized] private string _filePath;
+        [System.NonSerialized] private uint _fileFaceIndex;
+
+        /// <summary>The font file a runtime asset reads from, or null for an asset in the project.</summary>
+        public string FilePath => _filePath;
+
+        /// <summary>Whether this asset reads its font from a file on disk rather than from its own bytes.</summary>
+        public bool IsFileBacked => !string.IsNullOrEmpty(_filePath);
+
+        /// <summary>
+        /// A font asset over a font file on disk, made at runtime: no bytes of
+        /// its own, a face that maps the file (<see cref="FontData.LoadFile"/>)
+        /// when first used, and nothing on the managed heap for the font.
+        /// <see cref="FileFontSource"/> makes these. The caller owns the object
+        /// and destroys it; <see cref="Unload"/> lets go of the face and the
+        /// mapping, and the next use maps the file again.
+        /// </summary>
+        public static OneFontAsset FromFile(string path, string language = null, uint faceIndex = 0)
+        {
+            if (string.IsNullOrEmpty(path)) throw new System.ArgumentException("No font file path.", nameof(path));
+            var asset = CreateInstance<OneFontAsset>();
+            asset.name = Path.GetFileNameWithoutExtension(path);
+            asset.hideFlags = HideFlags.DontSave;
+            asset._filePath = path;
+            asset._fileFaceIndex = faceIndex;
+            asset._familyName = asset.name;
+            asset._sourcePath = path;
+            asset._language = language;
+            try { asset._uncompressedLength = (int)System.Math.Min(int.MaxValue, new FileInfo(path).Length); }
+            catch (System.Exception) { asset._uncompressedLength = 0; }
+            return asset;
         }
 
         /// <summary>
@@ -332,6 +376,7 @@ namespace OneText
         {
             get
             {
+                if ((_font == null || !_font.IsValid) && IsFileBacked) return LoadFromFile();
                 if (_font == null || !_font.IsValid)
                 {
                     var bytes = Unpacked();
@@ -340,6 +385,29 @@ namespace OneText
                 }
                 return _font;
             }
+        }
+
+        private FontData LoadFromFile()
+        {
+            try
+            {
+                _font = FontData.LoadFile(_filePath, _fileFaceIndex);
+                if (!_font.IsValid)
+                {
+                    _font.Dispose();
+                    _font = null;
+                }
+            }
+            catch (System.Exception e)
+            {
+                _font = null;
+                if (!_warned)
+                {
+                    _warned = true;
+                    Debug.LogWarning($"OneText: could not load the font file '{_filePath}': {e.Message}", this);
+                }
+            }
+            return _font;
         }
 
         /// <summary>
@@ -520,6 +588,8 @@ namespace OneText
         /// </summary>
         public byte[] GetFontBytes()
         {
+            // A file-backed asset has no copy to hand out; the file is one.
+            if (IsFileBacked) return File.Exists(_filePath) ? File.ReadAllBytes(_filePath) : null;
             var bytes = Unpacked();
             return bytes == null ? null : (byte[])bytes.Clone();
         }

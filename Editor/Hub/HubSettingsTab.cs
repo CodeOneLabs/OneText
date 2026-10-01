@@ -204,14 +204,17 @@ namespace OneText.Editor
 
             var kind = _settings.FontSource;
             card.Add(HubUI.Field("Loaded from",
-                HubUI.Segments(new[] { "Resources", "Addressables" }, (int)kind,
+                HubUI.Segments(new[] { "Resources", "Addressables", "Font files" }, (int)kind,
                     index =>
                     {
                         Edit("_fontSource", p => p.enumValueIndex = index);
                         Refresh();
                     }),
                 "Resources keys are paths under a Resources folder; Addressables keys are " +
-                "addresses, and need the Addressables package in the project."));
+                "addresses, and need the Addressables package in the project. Font files takes " +
+                "Resources keys, writes each font to StreamingAssets/OneTextFonts when a player is " +
+                "built, and maps the file at runtime so only the pages drawn are in memory; " +
+                "Android and Web, which cannot map StreamingAssets, load from Resources."));
 
             var references = _settings.OnDemandFonts;
             for (int i = 0; i < references.Count; i++)
