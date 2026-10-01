@@ -1,15 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-10-01
 
 ### Added
 
 - **Fonts can be loaded and unloaded at runtime.** A localised project lists
   a fallback per language in the settings, and the settings asset is loaded at
   startup, so every font it references came with it and stayed: a Korean
-  player carried the Chinese and Japanese faces too — measured in a five-
-  language game at about 16 MB each unpacked, plus the 11 MB packed copy of
-  each until the first label unpacked it. `OneTextSettings` now has a second
+  player carried the Chinese and Japanese faces too: 16 MB each unpacked, plus
+  an 11 MB packed copy of each until the first label unpacked it. Measured in
+  a five-language macOS player, live managed memory with both resident was
+  57.4 MB against 25.9 MB with neither, and the Mono heap peaked at 90.9 MB
+  against 31.2 MB. `OneTextSettings` now has a second
   list, *on-demand fonts*, that names fonts by key instead of by reference, and
   `FontResidency` loads them only while something wants them:
   `Acquire`/`AcquireAsync`/`Release`, reference-counted, for code that knows

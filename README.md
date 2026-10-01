@@ -111,7 +111,7 @@ convert keeps working. Scan again whenever you want to see what is left.
 
 ## Status
 
-**v0.3.3.** Everything above is shipped. v0.1.0 was the first public release,
+**v0.4.0.** Everything above is shipped. v0.1.0 was the first public release,
 v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
 the Onboarding tab, and v0.3.0 was about coming from TextMesh Pro and finding
 less missing: a migration you can run on part of a project without the rest
@@ -137,8 +137,16 @@ is cut at the box's edge with its ellipsis, a device with no array textures
 gets an atlas that holds nothing rather than an exception, and a colour emoji
 keeps its own colours under a coloured label. The other is Unity 6.6, where the
 64-bit `EntityId` made the old instance id a compile error; the package builds
-clean there and still on 2022.3. What comes next is verification and reach,
-not features:
+clean there and still on 2022.3.
+
+v0.4.0 lets a localised game keep one language's fonts in memory instead of
+all of them. Fallbacks can be named by key rather than referenced, and
+`FontResidency` loads them for the languages in play, for code that asks, or
+for a character nothing loaded draws, and unloads them — face, bytes, atlas
+tiles and asset — when nothing wants them, a frame after every label has been
+given the chance to take them back. They come from Resources, or from
+Addressables in a project that has it. What comes next is verification and
+reach, not features:
 
 | | |
 |---|---|
