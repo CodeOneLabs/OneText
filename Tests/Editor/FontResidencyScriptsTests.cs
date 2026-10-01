@@ -296,10 +296,15 @@ namespace OneText.Tests
             }
         }
 
+        /// <summary>
+        /// Whether the text has a character whose shape depends on the reader:
+        /// Han, kana, or CJK punctuation (a Traditional Chinese comma is centred
+        /// in its em, a Korean or Japanese one is not).
+        /// </summary>
         private static bool HasIdeograph(string text)
         {
             foreach (char c in text)
-                if (Unicode.AsianTypography.IsIdeographic(c)) return true;
+                if (FontStack.IsReaderDependent(c)) return true;
             return false;
         }
 
@@ -478,6 +483,47 @@ namespace OneText.Tests
             _created.Add(sheet);
             Save(sheet, "all-scripts-per-language.png");
             WriteLog("per-language-log.txt");
+            AssertNoProblems();
+        }
+
+        [Test]
+        public void Cjk_Punctuation_Follows_The_Labels_Language_After_Another_Language_Drew_First()
+        {
+            var lines = new[]
+            {
+                new ScriptLine("ko  first", "ko", "한국어，문장「인용」。（괄호）", "Scripts/Korean"),
+                new ScriptLine("zh-Hant", "zh-Hant", "繁體中文，我們說「漢語」。（括號）", "Scripts/TraditionalChinese"),
+                new ScriptLine("zh-Hans", "zh-Hans", "简体中文，我们说「汉语」。（括号）", "Scripts/SimplifiedChinese"),
+                new ScriptLine("ja", "ja", "日本語、「かぎ括弧」・（括弧）。", "Scripts/Japanese"),
+            };
+            foreach (var line in lines)
+                if (!_fonts.ContainsKey(line.Key)) Assert.Ignore($"no font on this machine for {line.Key}");
+
+            using var scene = new GoldenScene(Width, Mathf.CeilToInt(SheetHeight(lines)));
+            var rows = BuildSheet(scene, lines);
+            // The Korean line alone first, so its face is resident and covers
+            // every punctuation mark the other lines are about to ask for.
+            for (int i = 1; i < rows.Count; i++) rows[i].Sample.Text = "";
+            Object.DestroyImmediate(scene.Render());
+            Expect(FontResidency.IsResident("Scripts/Korean"), "the Korean line did not load its font");
+            for (int i = 1; i < rows.Count; i++) rows[i].Sample.Text = lines[i].Text;
+
+            var sheet = scene.Render();
+            _created.Add(sheet);
+            Save(sheet, "cjk-punctuation.png");
+            CheckSheet("punctuation", rows);
+
+            var names = FaceNames();
+            foreach (var row in rows)
+            {
+                var font = _fonts[row.Line.Key];
+                Drawn(row.Sample, names, out _, out var runs);
+                foreach (var (family, text) in runs)
+                    foreach (char c in text)
+                        if (FontStack.IsCjkPunctuation(c) && family != font.Family)
+                            _problems.Add($"{row.Line.Caption}: '{c}' drawn by {family}, not {font.Family}");
+            }
+            WriteLog("cjk-punctuation-log.txt");
             AssertNoProblems();
         }
 

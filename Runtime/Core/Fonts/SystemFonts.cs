@@ -201,6 +201,96 @@ namespace OneText
             }
         }
 
+        // (codepoint, CJK locale) -> the face made for that locale that draws
+        // it, or null for "this machine has none". Kept apart from s_resolved:
+        // the language-neutral answer is still the right one for a label that
+        // names no language.
+        private static readonly Dictionary<long, SystemFace> s_resolvedForLanguage =
+            new Dictionary<long, SystemFace>();
+
+        /// <summary>
+        /// The system face made for <paramref name="language"/> that draws this
+        /// character, for the characters whose shape depends on the reader; or
+        /// null when the language has no opinion, the character is not one of
+        /// those, or this machine has no face for that language.
+        ///
+        /// <para>Han, kana and CJK punctuation are one code point each and
+        /// several designs: 直 and 骨 are drawn differently for a Japanese and a
+        /// Chinese reader, and a Chinese full-width comma sits in the middle of
+        /// its em where a Japanese one sits at the bottom left. The neutral
+        /// <see cref="Resolve(int)"/> picks one face for every reader; this
+        /// looks only among the faces made for this one (Hiragino and Yu Gothic
+        /// for <c>ja</c>, PingFang SC and Hiragino Sans GB for <c>zh-Hans</c>,
+        /// Heiti TC and Microsoft JhengHei for <c>zh-Hant</c>, Apple SD Gothic
+        /// Neo and Malgun Gothic for <c>ko</c>).</para>
+        ///
+        /// <para>For <c>ko</c>, punctuation only. Han in a Korean label is
+        /// nearly always somebody's Chinese or Japanese name, and the Hanja a
+        /// Korean face happens to carry would split that name between two
+        /// fonts.</para>
+        /// </summary>
+        public static FontData ResolveForLanguage(int codepoint, string language)
+        {
+            if (!Enabled) return null;
+            var locale = LocaleOf(language);
+            if (locale == CjkLocale.None || !FontStack.IsReaderDependent(codepoint)) return null;
+            bool punctuation = FontStack.IsCjkPunctuation(codepoint);
+            if (locale == CjkLocale.Korean && !punctuation) return null;
+
+            long key = (uint)codepoint | (long)locale << 32;
+            lock (s_sync)
+            {
+                if (s_resolvedForLanguage.TryGetValue(key, out var cached))
+                {
+                    if (cached == null) return null;
+                    var live = Use(cached);
+                    if (live != null) return live;
+                    s_resolvedForLanguage.Remove(key);
+                }
+
+                SystemFace found = null;
+                try { found = ProbeForLanguage(codepoint, locale); }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"OneText: system font fallback failed for U+{codepoint:X4} ({language}): {e.Message}");
+                }
+                s_resolvedForLanguage[key] = found;
+                return found?.Font;
+            }
+        }
+
+        /// <summary>The CJK reading a language tag asks for, by its primary subtag and script.</summary>
+        internal enum CjkLocale
+        {
+            None,
+            Japanese,
+            SimplifiedChinese,
+            TraditionalChinese,
+            Korean,
+        }
+
+        internal static CjkLocale LocaleOf(string language)
+        {
+            if (string.IsNullOrEmpty(language) || language.Length < 2) return CjkLocale.None;
+            string tag = language.Replace('_', '-');
+            if (tag.StartsWith("ja", StringComparison.OrdinalIgnoreCase) && (tag.Length == 2 || tag[2] == '-'))
+                return CjkLocale.Japanese;
+            if (tag.StartsWith("ko", StringComparison.OrdinalIgnoreCase) && (tag.Length == 2 || tag[2] == '-'))
+                return CjkLocale.Korean;
+            if (!tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase) || tag.Length > 2 && tag[2] != '-')
+                return CjkLocale.None;
+            // zh-Hant, zh-TW, zh-HK, zh-MO read traditional; everything else simplified.
+            foreach (string part in tag.Split('-'))
+            {
+                if (part.Equals("Hant", StringComparison.OrdinalIgnoreCase) ||
+                    part.Equals("TW", StringComparison.OrdinalIgnoreCase) ||
+                    part.Equals("HK", StringComparison.OrdinalIgnoreCase) ||
+                    part.Equals("MO", StringComparison.OrdinalIgnoreCase))
+                    return CjkLocale.TraditionalChinese;
+            }
+            return CjkLocale.SimplifiedChinese;
+        }
+
         /// <summary>True if this face came from the operating system rather than the project.</summary>
         public static bool IsSystemFont(FontData font)
         {
@@ -373,6 +463,7 @@ namespace OneText
                 foreach (var face in s_faces.Values) face.Font?.Dispose();
                 s_faces.Clear();
                 s_resolved.Clear();
+                s_resolvedForLanguage.Clear();
                 s_live.Clear();
                 s_answered.Clear();
                 FilesProbed = 0;
@@ -499,6 +590,110 @@ namespace OneText
             return null;
         }
 
+        /// <summary>
+        /// The files made for this locale, in the order a reader of it would
+        /// choose, and nothing else: no generic tail and no scan of the rest,
+        /// because a face that merely covers the character is what the neutral
+        /// answer already is.
+        /// </summary>
+        private static SystemFace ProbeForLanguage(int codepoint, CjkLocale locale)
+        {
+            var files = SystemFontIndex.Files();
+            if (files.Length == 0) return null;
+            int memory = 100 * (int)locale + ScriptOf(codepoint);
+            var tried = new HashSet<string>(StringComparer.Ordinal);
+
+            if (RememberAnswers && s_answered.TryGetValue(memory, out var answered))
+            {
+                for (int i = 0; i < answered.Count; i++)
+                {
+                    string path = answered[i];
+                    if (!tried.Add(path)) continue;
+                    var face = TryFile(path, codepoint, locale);
+                    if (face != null) { Remember(memory, path); return face; }
+                }
+            }
+
+            var stems = SystemFontIndex.Stems();
+            foreach (string preferred in LocaleStems(locale))
+            {
+                for (int i = 0; i < files.Length; i++)
+                {
+                    if (!Matches(stems[i], preferred)) continue;
+                    string path = files[i];
+                    if (!tried.Add(path)) continue;
+                    var face = TryFile(path, codepoint, locale);
+                    if (face != null) { Remember(memory, path); return face; }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// File-name fragments of the faces made for a locale, on macOS,
+        /// Windows, Linux and Android. The Japanese Hiragino files are named in
+        /// Japanese on macOS, which is why the katakana is here.
+        /// </summary>
+        private static string[] LocaleStems(CjkLocale locale)
+        {
+            switch (locale)
+            {
+                case CjkLocale.Japanese:
+                    return new[]
+                    {
+                        "ヒラギノ角ゴ", "HiraginoSans", "Hiragino Kaku", "YuGothic", "YuGoth", "meiryo", "msgothic",
+                        "NotoSansCJKjp", "NotoSansJP", "NotoSansCJK", "DroidSansJapanese",
+                    };
+                case CjkLocale.SimplifiedChinese:
+                    return new[]
+                    {
+                        "PingFang", "Hiragino Sans GB", "STHeiti", "msyh", "simsun", "NotoSansCJKsc", "NotoSansSC",
+                        "NotoSansCJK", "DroidSansFallback",
+                    };
+                case CjkLocale.TraditionalChinese:
+                    return new[]
+                    {
+                        "PingFang", "STHeiti", "msjh", "mingliu", "NotoSansCJKtc", "NotoSansTC", "NotoSansCJKhk",
+                        "NotoSansCJK",
+                    };
+                case CjkLocale.Korean:
+                    return new[]
+                    {
+                        "AppleSDGothicNeo", "AppleGothic", "malgun", "NotoSansCJKkr", "NotoSansKR", "NanumGothic",
+                        "NotoSansCJK",
+                    };
+                default:
+                    return None;
+            }
+        }
+
+        /// <summary>
+        /// Words in a face's family name that say which reading it was made
+        /// for: in a collection that holds several (PingFang SC/TC/HK, Heiti
+        /// SC/TC, Noto Sans CJK in all five), the face to load.
+        /// </summary>
+        private static string[] LocaleNameHints(CjkLocale locale)
+        {
+            switch (locale)
+            {
+                case CjkLocale.Japanese: return new[] { "JP", "J", "Japanese" };
+                case CjkLocale.SimplifiedChinese: return new[] { "SC", "GB", "CN", "Simplified" };
+                case CjkLocale.TraditionalChinese: return new[] { "TC", "HK", "TW", "Traditional" };
+                case CjkLocale.Korean: return new[] { "KR", "K", "Korean" };
+                default: return None;
+            }
+        }
+
+        private static bool NameHints(string family, CjkLocale locale)
+        {
+            if (string.IsNullOrEmpty(family)) return false;
+            var words = family.Split(' ', '-', '_');
+            foreach (string hint in LocaleNameHints(locale))
+                foreach (string word in words)
+                    if (string.Equals(word, hint, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         /// <summary>Moves a file to the front of what its script has answered with.</summary>
         private static void Remember(int script, string path)
         {
@@ -564,17 +759,25 @@ namespace OneText
         /// </summary>
         public static int FilesProbed { get; private set; }
 
-        private static SystemFace TryFile(string path, int codepoint)
+        private static SystemFace TryFile(string path, int codepoint, CjkLocale locale = CjkLocale.None)
         {
             FilesProbed++;
-            foreach (var coverage in SystemFontIndex.Coverage(path))
+            var faces = SystemFontIndex.Coverage(path);
+            // In a collection made for several readings, the face whose name
+            // says this one first; then any, for files that hold one reading
+            // and do not say so in the name (Hiragino, Malgun Gothic).
+            for (int pass = locale == CjkLocale.None || faces.Length < 2 ? 1 : 0; pass < 2; pass++)
             {
-                if (!coverage.Covers(codepoint)) continue;
-                var face = Slot(path, coverage);
-                var font = Use(face);
-                // The cmap ranges over-estimate on purpose; the loaded face is
-                // where the question gets its real answer.
-                if (font != null && font.HasGlyph(codepoint)) return face;
+                foreach (var coverage in faces)
+                {
+                    if (!coverage.Covers(codepoint)) continue;
+                    var face = Slot(path, coverage);
+                    if (pass == 0 && !NameHints(face.Name, locale)) continue;
+                    var font = Use(face);
+                    // The cmap ranges over-estimate on purpose; the loaded face is
+                    // where the question gets its real answer.
+                    if (font != null && font.HasGlyph(codepoint)) return face;
+                }
             }
             return null;
         }

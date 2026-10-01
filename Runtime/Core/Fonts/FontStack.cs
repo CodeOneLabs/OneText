@@ -246,6 +246,7 @@ namespace OneText
             // A font that arrives after a character was answered by the
             // operating system may well cover it; the project's own font wins.
             _system?.Clear();
+            _systemForLanguage?.Clear();
             // And the head of the stack is now a real font rather than the
             // system face that was standing in for one.
             _systemPrimary = null;
@@ -272,6 +273,7 @@ namespace OneText
             // SystemFonts, not to whichever stack happened to ask for one. The
             // stand-in Primary is one of those and goes the same way.
             _system?.Clear();
+            _systemForLanguage?.Clear();
             _systemPrimary = null;
             _systemPrimarySearched = false;
         }
@@ -342,7 +344,32 @@ namespace OneText
             // device happens to have. Not cached here: the answer is a face
             // FontResidency may unload, and it keeps its own cheap answer.
             return (UseOnDemandFonts ? FontResidency.ResolveOnDemand(codepoint, language) : null) ??
-                   ResolveFromSystem(codepoint) ?? Primary;
+                   ResolveFromSystem(codepoint, language) ?? Primary;
+        }
+
+        // The same, for reader-dependent characters in a label that names its
+        // language: the system face made for that language, where the
+        // machine has one. Kept apart from _system because one stack can lay
+        // out labels in two languages.
+        private Dictionary<(int, string), FontData> _systemForLanguage;
+
+        private FontData ResolveFromSystem(int codepoint, string language)
+        {
+            if (string.IsNullOrEmpty(language) || !IsReaderDependent(codepoint))
+                return ResolveFromSystem(codepoint);
+            return ResolveFromSystemForLanguage(codepoint, language) ?? ResolveFromSystem(codepoint);
+        }
+
+        private FontData ResolveFromSystemForLanguage(int codepoint, string language)
+        {
+            if (!SystemFonts.Enabled || string.IsNullOrEmpty(language)) return null;
+            SyncSystemGeneration();
+            _systemForLanguage ??= new Dictionary<(int, string), FontData>();
+            var key = (codepoint, language);
+            if (_systemForLanguage.TryGetValue(key, out var cached)) return cached;
+            var font = SystemFonts.ResolveForLanguage(codepoint, language);
+            _systemForLanguage[key] = font;
+            return font;
         }
 
         // Characters the chain missed and the operating system answered for.
@@ -362,6 +389,7 @@ namespace OneText
             if (_systemGeneration == generation) return;
             _systemGeneration = generation;
             _system?.Clear();
+            _systemForLanguage?.Clear();
             _systemPrimary = null;
             _systemPrimarySearched = false;
         }
@@ -434,13 +462,19 @@ namespace OneText
                 // Korean shapes and the Japanese face was never loaded at all.
                 // Only that case: a font the label or the settings name
                 // directly keeps the character, as it did before.
+                //
+                // And when the project declares no font for this language, the
+                // operating system's face for it is a better answer than
+                // another language's: a zh-Hant comma from Heiti TC rather than
+                // from the Korean face that happened to be loaded first.
                 if (UseOnDemandFonts && !string.IsNullOrEmpty(language) &&
                     IsReaderDependent(codepoint) &&
                     FontResidency.IsOnDemandFace(regular, out string servedLanguage) &&
                     !LanguageMatches(servedLanguage, language))
                 {
                     regular = FontResidency.ResolveOnDemand(codepoint, language,
-                        FontResidency.Want.Language) ?? regular;
+                                  FontResidency.Want.Language) ??
+                              ResolveFromSystemForLanguage(codepoint, language) ?? regular;
                 }
             }
             if (!bold && !italic) return regular;
@@ -557,8 +591,9 @@ namespace OneText
             // "ja" covers ASCII too, so letting the language decide every
             // codepoint would silently move a Japanese label's Latin text,
             // digits and punctuation into the CJK face, a whole-label font
-            // swap dressed up as a Han-unification fix. Han and kana are the
-            // characters whose correct shape depends on the reader.
+            // swap dressed up as a Han-unification fix. Han, kana and CJK
+            // punctuation are the characters whose correct shape depends on
+            // the reader.
             if (!IsReaderDependent(codepoint)) return null;
 
             foreach (var entry in _entries)
@@ -569,8 +604,26 @@ namespace OneText
             return null;
         }
 
-        private static bool IsReaderDependent(int codepoint) =>
-            codepoint <= char.MaxValue && Unicode.AsianTypography.IsIdeographic((char)codepoint);
+        /// <summary>
+        /// Characters whose correct glyph depends on who is reading: Han and
+        /// kana, and the CJK punctuation whose form and placement differ by
+        /// language — a Chinese full-width comma sits in the middle of its em,
+        /// a Japanese or Korean one at the bottom left, and 「」 turn and move.
+        /// </summary>
+        internal static bool IsReaderDependent(int codepoint) =>
+            codepoint <= char.MaxValue &&
+            (Unicode.AsianTypography.IsIdeographic((char)codepoint) || IsCjkPunctuation(codepoint));
+
+        /// <summary>
+        /// CJK Symbols and Punctuation, the full-width and half-width forms,
+        /// the vertical and compatibility forms, and the katakana middle dot.
+        /// </summary>
+        internal static bool IsCjkPunctuation(int codepoint) =>
+            codepoint >= 0x3000 && codepoint <= 0x303F ||
+            codepoint >= 0xFF00 && codepoint <= 0xFFEF ||
+            codepoint >= 0xFE30 && codepoint <= 0xFE4F ||
+            codepoint >= 0xFE10 && codepoint <= 0xFE1F ||
+            codepoint == 0x30FB;
 
         /// <summary>
         /// Prefix matching on the primary subtag: a font declared "zh" serves
