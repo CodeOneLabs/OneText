@@ -90,6 +90,7 @@ namespace OneText
         private sealed class Entry
         {
             public long Key;
+            public int Owner;
             public int Layer, X, Y, Width, Height, ShelfIndex;
             public ColorLocation Location;
             public LinkedListNode<Entry> Node;
@@ -146,7 +147,15 @@ namespace OneText
         /// content: the caller mixes font, glyph and size into it, exactly as
         /// the SDF atlas does.
         /// </summary>
-        public ColorLocation GetOrAdd(long key, in ColorGlyph glyph)
+        public ColorLocation GetOrAdd(long key, in ColorGlyph glyph) => GetOrAdd(key, glyph, 0);
+
+        /// <summary>
+        /// Same, remembering which face the tile came from
+        /// (<see cref="FontData.CacheId"/>), so <see cref="Forget"/> can find
+        /// it. The key cannot be asked: it is a hash, and a tint folded into
+        /// it reaches the bits the face id sits in.
+        /// </summary>
+        public ColorLocation GetOrAdd(long key, in ColorGlyph glyph, int owner)
         {
             // No texture, no tile: the writing, evicting and clearing below all
             // go through GetPixelData, and this is the only door into them.
@@ -173,6 +182,7 @@ namespace OneText
             var entry = new Entry
             {
                 Key = key,
+                Owner = owner,
                 Layer = layer, X = x, Y = y,
                 Width = glyph.Width, Height = glyph.Height,
                 ShelfIndex = shelf,
@@ -248,12 +258,35 @@ namespace OneText
             return false;
         }
 
+        /// <summary>
+        /// Frees every tile a face left here and returns how many there were:
+        /// the colour half of <see cref="GlyphAtlas.Forget"/>, for a face about
+        /// to be destroyed whose id is never issued again. Tiles added without
+        /// an owner (sprites) are never matched.
+        /// </summary>
+        public int Forget(int owner)
+        {
+            if (owner == 0 || !IsUsable || _entries.Count == 0) return 0;
+            List<Entry> doomed = null;
+            foreach (var entry in _entries.Values)
+                if (entry.Owner == owner) (doomed ??= new List<Entry>()).Add(entry);
+            if (doomed == null) return 0;
+            foreach (var entry in doomed) Remove(entry);
+            return doomed.Count;
+        }
+
         private bool EvictOne()
         {
             var node = _lru.First;
             if (node == null) return false;
-            var entry = node.Value;
+            Remove(node.Value);
+            _evictions++;
+            return true;
+        }
 
+        private void Remove(Entry entry)
+        {
+            var node = entry.Node;
             _entries.Remove(entry.Key);
             _lru.Remove(node);
             entry.Node = null;
@@ -277,9 +310,7 @@ namespace OneText
                 shelf.X = 0;
                 shelf.Height = shelf.Capacity;
             }
-            _evictions++;
             Version++;
-            return true;
         }
 
         private void Write(int layer, int x, int y, in ColorGlyph glyph)

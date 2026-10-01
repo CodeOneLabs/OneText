@@ -964,7 +964,7 @@ namespace OneText
                 else if (ColorGlyphs.TryDecode(font, glyph.GlyphId, pixelsPerUnit, color,
                              out var decoded))
                 {
-                    location = colorAtlas.GetOrAdd(key, decoded);
+                    location = colorAtlas.GetOrAdd(key, decoded, font.CacheId);
                     haveColor = true;
                 }
 

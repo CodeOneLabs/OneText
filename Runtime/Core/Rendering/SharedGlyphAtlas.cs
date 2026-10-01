@@ -349,7 +349,7 @@ namespace OneText
         }
 
         /// <summary>
-        /// Frees the tiles a face left in the shared atlases, ahead of the face
+        /// Frees the tiles a face left in the shared atlases, colour included, ahead of the face
         /// being destroyed. Does not create an atlas that does not exist yet.
         /// </summary>
         public static void Forget(FontData font)
@@ -357,6 +357,7 @@ namespace OneText
             if (font == null) return;
             if (s_atlas != null && s_atlas.IsUsable) s_atlas.Forget(font);
             if (s_preciseAtlas != null && s_preciseAtlas.IsUsable) s_preciseAtlas.Forget(font);
+            if (s_colorAtlas != null && s_colorAtlas.IsUsable) s_colorAtlas.Forget(font.CacheId);
         }
 
         /// <summary>Takes a reference to the shared atlas; pair with <see cref="Release"/>.</summary>

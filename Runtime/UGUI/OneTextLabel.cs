@@ -2712,7 +2712,7 @@ namespace OneText.UGUI
             ColorGlyphAtlas.ColorLocation location;
             if (colorAtlas.Contains(key)) location = colorAtlas.GetOrAdd(key, default);
             else if (ColorGlyphs.TryDecode(font, glyph.GlyphId, pixelsPerUnit, runColor, out var decoded))
-                location = colorAtlas.GetOrAdd(key, decoded);
+                location = colorAtlas.GetOrAdd(key, decoded, font.CacheId);
             else return false;
 
             if (!location.HasPixels) return false;
