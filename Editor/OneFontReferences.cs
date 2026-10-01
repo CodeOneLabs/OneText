@@ -57,8 +57,9 @@ namespace OneText.Editor
 
             var font = asset.Font;
             var coverage = font != null && font.IsValid ? FontCoverage.Of(font) : Array.Empty<int>();
+            bool color = font != null && font.IsValid && ColorGlyphs.IsColorFont(font);
             return new OneFontReference(key,
-                string.IsNullOrEmpty(language) ? asset.Language : language, coverage);
+                string.IsNullOrEmpty(language) ? asset.Language : language, coverage, color);
         }
 
         /// <summary>

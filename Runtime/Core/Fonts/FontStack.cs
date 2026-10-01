@@ -402,6 +402,16 @@ namespace OneText
             string language)
         {
             var regular = ResolveForLanguage(codepoint, language);
+            // Then an unloaded font declared for that language, ahead of
+            // whatever else the stack holds. Before fonts came and went this
+            // was the same question — every fallback was in the stack — and
+            // without it the answer depends on what was shown first: a Korean
+            // face loaded for the line above covers 漢 and 直, so the Japanese
+            // line below was drawn in Korean shapes and the Japanese face was
+            // never loaded at all.
+            if (regular == null && UseOnDemandFonts && !string.IsNullOrEmpty(language) &&
+                IsReaderDependent(codepoint))
+                regular = FontResidency.ResolveOnDemand(codepoint, language, FontResidency.Want.Language);
             if (regular == null)
             {
                 regular = presentation == Presentation.Any
@@ -524,8 +534,7 @@ namespace OneText
             // digits and punctuation into the CJK face, a whole-label font
             // swap dressed up as a Han-unification fix. Han and kana are the
             // characters whose correct shape depends on the reader.
-            if (codepoint > char.MaxValue ||
-                !Unicode.AsianTypography.IsIdeographic((char)codepoint)) return null;
+            if (!IsReaderDependent(codepoint)) return null;
 
             foreach (var entry in _entries)
             {
@@ -534,6 +543,9 @@ namespace OneText
             }
             return null;
         }
+
+        private static bool IsReaderDependent(int codepoint) =>
+            codepoint <= char.MaxValue && Unicode.AsianTypography.IsIdeographic((char)codepoint);
 
         /// <summary>
         /// Prefix matching on the primary subtag: a font declared "zh" serves
@@ -556,6 +568,14 @@ namespace OneText
             {
                 if (!font.HasGlyph(codepoint)) continue;
                 if (ColorGlyphs.IsColorFont(font) == wantColor) return font;
+            }
+            // An unloaded colour font can, if one is declared that covers it:
+            // a keycap's "1" is in every text face, so the plain miss below
+            // would never get as far as asking.
+            if (wantColor && UseOnDemandFonts)
+            {
+                var color = FontResidency.ResolveOnDemand(codepoint, language, FontResidency.Want.Color);
+                if (color != null) return color;
             }
             // Nothing in the stack can honour the request; drawing the
             // character in the wrong presentation beats drawing tofu.

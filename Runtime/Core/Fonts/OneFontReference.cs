@@ -32,18 +32,39 @@ namespace OneText
         // a font with unknown coverage is never loaded on demand.
         [SerializeField, HideInInspector] private int[] _coverage;
 
+        // Whether the font draws in colour (CBDT or COLR), recorded with the
+        // coverage and for the same reason: a keycap or a heart written with
+        // VS16 asks for the emoji presentation of a character a text font also
+        // covers, and only an answer written down ahead of time can send it to
+        // an unloaded colour font rather than to the first text face that has
+        // a "1".
+        [SerializeField, HideInInspector] private bool _color;
+
         public OneFontReference(string key, string language, int[] coverage)
+            : this(key, language, coverage, false)
+        {
+        }
+
+        public OneFontReference(string key, string language, int[] coverage, bool color)
         {
             _key = key;
             _language = language;
             _coverage = coverage;
+            _color = color;
         }
+
+        /// <summary>The same reference declared for another language.</summary>
+        public OneFontReference WithLanguage(string language) =>
+            new OneFontReference(_key, language, _coverage, _color);
 
         /// <summary>What <see cref="IFontSource"/> loads this font by.</summary>
         public string Key => _key;
 
         /// <summary>BCP 47 tag the font serves, or null.</summary>
         public string Language => string.IsNullOrEmpty(_language) ? null : _language;
+
+        /// <summary>Whether the font draws in colour, as recorded with its coverage.</summary>
+        public bool IsColor => _color;
 
         /// <summary>Whether the coverage was recorded. Without it, no on-demand loading.</summary>
         public bool HasCoverage => _coverage != null && _coverage.Length >= 2;

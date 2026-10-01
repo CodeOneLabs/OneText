@@ -224,7 +224,7 @@ namespace OneText.Editor
                     value => Replace(index, value, reference.Language),
                     reference.Key ?? "empty slot"));
                 row.Add(HubUI.Input(reference.Language, "language (zh-Hans, ja, ...)",
-                    value => Rewrite(index, r => new OneFontReference(r.Key, value, Ranges(r)))));
+                    value => Rewrite(index, r => r.WithLanguage(value))));
                 row.Add(HubUI.Quiet("Remove", () =>
                 {
                     var list = new List<OneFontReference>(_settings.OnDemandFonts);
@@ -272,13 +272,6 @@ namespace OneText.Editor
             if (index < 0 || index >= list.Count) return;
             list[index] = change(list[index]);
             OneFontReferences.Assign(_settings, list);
-        }
-
-        private static int[] Ranges(OneFontReference reference)
-        {
-            var ranges = new int[reference.Coverage.Count];
-            for (int i = 0; i < ranges.Length; i++) ranges[i] = reference.Coverage[i];
-            return ranges;
         }
 
         // ------------------------------------------------------------ new text
