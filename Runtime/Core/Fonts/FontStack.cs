@@ -402,21 +402,28 @@ namespace OneText
             string language)
         {
             var regular = ResolveForLanguage(codepoint, language);
-            // Then an unloaded font declared for that language, ahead of
-            // whatever else the stack holds. Before fonts came and went this
-            // was the same question — every fallback was in the stack — and
-            // without it the answer depends on what was shown first: a Korean
-            // face loaded for the line above covers 漢 and 直, so the Japanese
-            // line below was drawn in Korean shapes and the Japanese face was
-            // never loaded at all.
-            if (regular == null && UseOnDemandFonts && !string.IsNullOrEmpty(language) &&
-                IsReaderDependent(codepoint))
-                regular = FontResidency.ResolveOnDemand(codepoint, language, FontResidency.Want.Language);
             if (regular == null)
             {
                 regular = presentation == Presentation.Any
                     ? Resolve(codepoint, language)
                     : ResolveForPresentation(codepoint, presentation, language);
+
+                // A face FontResidency loaded for another language is not an
+                // answer for a reader-dependent character when one is declared
+                // for this label's language. Without this the answer depends on
+                // what was shown first: a Korean face loaded for the line above
+                // covers 漢 and 直, so the Japanese line below was drawn in
+                // Korean shapes and the Japanese face was never loaded at all.
+                // Only that case: a font the label or the settings name
+                // directly keeps the character, as it did before.
+                if (UseOnDemandFonts && !string.IsNullOrEmpty(language) &&
+                    IsReaderDependent(codepoint) &&
+                    FontResidency.IsOnDemandFace(regular, out string servedLanguage) &&
+                    !LanguageMatches(servedLanguage, language))
+                {
+                    regular = FontResidency.ResolveOnDemand(codepoint, language,
+                        FontResidency.Want.Language) ?? regular;
+                }
             }
             if (!bold && !italic) return regular;
 
@@ -554,6 +561,7 @@ namespace OneText
         /// </summary>
         private static bool LanguageMatches(string fontLanguage, string wanted)
         {
+            if (string.IsNullOrEmpty(fontLanguage)) return false;
             if (string.Equals(fontLanguage, wanted, StringComparison.OrdinalIgnoreCase)) return true;
             return wanted.Length > fontLanguage.Length &&
                    wanted.StartsWith(fontLanguage, StringComparison.OrdinalIgnoreCase) &&

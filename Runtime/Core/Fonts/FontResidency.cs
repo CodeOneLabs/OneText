@@ -316,12 +316,11 @@ namespace OneText
 
         /// <summary>
         /// Which on-demand fonts a stack is asking among. <see cref="Want.Any"/>
-        /// is the plain miss; the other two are asked <em>before</em> the
-        /// stack's own fonts, for the two cases where a font that is merely
-        /// loaded is not good enough: a Han or kana character in a label that
-        /// says its language, which a resident font of another language would
-        /// draw in the wrong shape, and a character asked for in its emoji
-        /// presentation, which a resident text face would draw in black.
+        /// is the plain miss; the other two are for the cases where a font
+        /// that is merely loaded is not good enough: a Han or kana character in
+        /// a label that says its language, which a resident font of another
+        /// language would draw in the wrong shape, and a character asked for
+        /// in its emoji presentation, which a text face would draw in black.
         /// </summary>
         internal enum Want
         {
@@ -373,6 +372,36 @@ namespace OneText
             entry.Demanded = true;
             var font = entry.Asset.Font;
             return font != null && font.IsValid ? font : null;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="face"/> is the face of a font this class
+        /// loaded, and if so the language it was declared for (null when none
+        /// was). Nothing is loaded to answer.
+        /// </summary>
+        internal static bool IsOnDemandFace(FontData face, out string language)
+        {
+            language = null;
+            if (face == null || s_entries.Count == 0) return false;
+            foreach (var entry in s_entries.Values)
+            {
+                var asset = entry.Asset;
+                if (asset == null || !asset.IsLoaded || !ReferenceEquals(asset.Font, face)) continue;
+                language = DeclaredLanguage(entry.Key) ?? asset.Language;
+                return true;
+            }
+            return false;
+        }
+
+        private static string DeclaredLanguage(string key)
+        {
+            var settings = OneTextSettings.Instance;
+            var references = settings != null ? settings.OnDemandFonts : null;
+            if (references != null)
+                for (int i = 0; i < references.Count; i++)
+                    if (string.Equals(references[i].Key, key, StringComparison.Ordinal))
+                        return references[i].Language;
+            return null;
         }
 
         private static bool Fits(in OneFontReference reference, int codepoint, Want want) =>
