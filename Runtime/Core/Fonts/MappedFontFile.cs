@@ -150,6 +150,10 @@ namespace OneText
                 // the runtime does not have: the platform's, and permanent.
                 s_unsupported = true;
                 error = $"{e.GetType().Name}: {e.Message}";
+                // Said once: from here every font file is read whole, which is
+                // the memory this class exists to save, and nothing else shows it.
+                UnityEngine.Debug.LogWarning("OneText: this platform cannot map font files (" + error +
+                                             "); system and file fonts will be read whole into memory.");
                 mapped?.Dispose();
                 stream?.Dispose();
                 return null;
