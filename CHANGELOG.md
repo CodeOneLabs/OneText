@@ -11,8 +11,10 @@
   showed Korean first, the Traditional Chinese and Japanese lines were drawn
   in Apple SD Gothic Neo's Hanja and kana, and the Chinese and Japanese faces
   were never loaded. Which picture a player saw depended on which screen came
-  first. The language's unloaded font is now asked before the stack's other
-  fonts, for the same characters the stack's own language rule covers.
+  first. When a reader-dependent character would go to a face FontResidency
+  loaded for another language, and an on-demand font is declared for the
+  label's, that one is loaded and used instead. A font the label or the
+  settings name directly still keeps the character.
 - **A keycap, or any character written with VS16, reaches an unloaded colour
   emoji font.** "1️⃣" asks for the emoji presentation of a "1" every text face
   has, so the plain on-demand miss never happened and the keycap was drawn as
@@ -24,6 +26,12 @@
   a face's SDF tiles but not its colour ones, which stayed until LRU pressure
   pushed them out. `ColorGlyphAtlas.Forget` does for colour tiles what
   `GlyphAtlas.Forget` does for SDF ones.
+- **Loading a font on demand in the editor no longer trips uGUI's rebuild
+  guard.** `Resources.Load` validates the asset it reads, `OneFontAsset`'s
+  OnValidate tells every label its font changed, and FontResidency loads in
+  the middle of a layout pass, so the first on-demand load in edit mode logged
+  "already inside a graphic rebuild loop". The news now waits for the next
+  editor tick when it arrives during a canvas rebuild.
 - **The Addressables font source is registered in edit mode.** It registered
   only at the start of a play session, so labels laid out in the editor with
   the settings on Addressables fell back to Resources, warned, and found none

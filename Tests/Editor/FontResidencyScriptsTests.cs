@@ -398,8 +398,9 @@ namespace OneText.Tests
                 int sdf = (SharedGlyphAtlas.Exists ? SharedGlyphAtlas.Atlas.Forget(face) : 0) +
                           (SharedGlyphAtlas.PreciseAtlasExists ? SharedGlyphAtlas.PreciseAtlas.Forget(face) : 0);
                 if (sdf > 0) leftovers.Add($"released: {family}: {sdf} SDF tile(s) left in the atlas");
+                int colour = SharedGlyphAtlas.ColorAtlasExists ? SharedGlyphAtlas.ColorAtlas.Forget(face.CacheId) : 0;
+                if (colour > 0) leftovers.Add($"released: {family}: {colour} colour tile(s) left in the atlas");
             }
-            Expect(ColorTiles() == 0, $"released: {ColorTiles()} colour tile(s) of the unloaded emoji face still in the atlas");
 
             // c. The text comes back; so do the fonts, and the picture.
             for (int i = 0; i < rows.Count; i++) rows[i].Sample.Text = texts[i];
