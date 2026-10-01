@@ -2,7 +2,71 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Operating-system fonts are mapped, not read.** A character no project font
+  draws used to cost the whole file of the system face that drew it, on the
+  managed heap, for the rest of the process: Apple SD Gothic Neo is 55 MB,
+  Hiragino Sans GB 23 MB, Apple Color Emoji 192 MB, and a collection was read
+  whole for the one face a label used. `FontData.LoadFile(path, faceIndex)`
+  maps the file read-only (`System.IO.MemoryMappedFiles`, which il2cpp and Mono
+  both implement) and builds the face over the view, so only the pages HarfBuzz
+  reads become resident — the face's table directory, cmap, layout tables and
+  the glyphs drawn — clean and file-backed, which the system can drop and
+  macOS does not count in a process's footprint. Measured in the 6000.0.77f1
+  editor on macOS with a Korean, a Chinese, a Japanese and a Korean-plus-emoji
+  nickname drawn from system fonts over a Latin-only project font: managed
+  heap +259.4 MB before, +1.0 MB after; phys_footprint +264 MB before, +11 MB
+  after (most of that the atlas textures); the three faces' 258 MB of files
+  have about 4–8 MB in memory, shared with every other process reading them.
+  HarfBuzz's own `hb_blob_create_from_file` is not used because the bundled
+  macOS, iOS and Android binaries implement it with `fread` (see
+  `Docs/NATIVES.md`). `FontData.IsMapped`, `ManagedBytes`, `MappedBytes`,
+  `ResidentFileBytes` and `SourcePath` say how a face is held.
+- **`FontResidency.Trim` lets go of system faces nothing on screen uses.**
+  System faces were kept for the process (`SystemFonts.Forget` was for tests
+  only). They now go through the same two steps as on-demand fonts: the trim
+  marks every one, labels lay out again and take back the faces they still
+  draw with, and the rest are destroyed a tick later with their SDF and colour
+  atlas tiles. What the tier learned stays — which face drew which character,
+  which files answered for a script, and which characters nothing has — so the
+  text coming back maps the file again without probing. A stack that outlives
+  the trim notices through `SystemFonts.Generation`. A font file that is gone
+  by then is probed past rather than losing the character. `SystemFonts.Describe`,
+  `ManagedBytes`, `MappedBytes` and `ResidentFileBytes` report the faces for a
+  log; `FontResidency.Describe` includes them.
+- **Bundled fonts can be read from font files on disk.** `FileFontSource` is an
+  `IFontSource` over a folder of font files (default
+  `StreamingAssets/OneTextFonts/<key>.ttf|.otf|.ttc`), keyed like Resources and
+  mapped like system fonts (`OneFontAsset.FromFile`), so a 16 MB CJK face costs
+  the pages drawn instead of 16 MB of heap. Any key it cannot serve goes to
+  its fallback: a key with no file, and every key where StreamingAssets is not
+  a folder of files — Android, where it is compressed inside the APK, and Web.
+  `OneFontSourceKind.StreamingAssets` (Project Settings > OneText > Loaded
+  from > Font files) is one over `ResourcesFontSource`, and
+  `Editor/OneFontFiles` writes the on-demand fonts out as files before a player
+  build for a target that can map them and removes them after, so nothing is
+  kept twice in the project. The disk cost is the uncompressed file.
+- **A reader-dependent character in a label that names its language reaches
+  the system face made for that language.** `SystemFonts.ResolveForLanguage`
+  looks only among faces for ja, zh-Hans, zh-Hant or ko (Hiragino or Yu Gothic,
+  PingFang SC or Hiragino Sans GB, Heiti TC or Microsoft JhengHei, Apple SD
+  Gothic Neo or Malgun Gothic), and in a collection prefers the face whose
+  name says the reading. A Japanese label's kana came out of Hiragino Sans GB
+  before. For Korean only punctuation: Han in a Korean label is usually a
+  foreign name, and the Hanja a Korean face carries would split it.
+
 ### Fixed
+
+- **CJK punctuation in a label that names its language is drawn in that
+  language's form.** The language rule covered Han and kana only, so on a sheet
+  that showed Korean first, the full-width comma, brackets and stops of the
+  Traditional Chinese line came from the resident Korean face: "，" sat at the
+  bottom left of its em instead of in the middle. CJK Symbols and Punctuation,
+  the full-width forms, the vertical and compatibility forms and U+30FB now
+  follow the same rule (`FontStack.IsReaderDependent`), and when no on-demand
+  font is declared for the language the system face made for it is used. A
+  font the label or the settings name directly still keeps the character.
 
 - **A Han or kana character in a label that names its language is drawn by
   that language's on-demand font, not by whichever resident font covers it.**

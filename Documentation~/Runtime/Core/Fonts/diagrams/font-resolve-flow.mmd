@@ -1,12 +1,12 @@
 flowchart TD
     A["FontStack.Resolve(cp, bold, italic, presentation, language)"] --> B["ResolveForLanguage(cp, language)"]
-    B --> C{"language set and cp is ideographic and a tagged entry covers it?"}
+    B --> C{"language set, cp reader-dependent (Han, kana, CJK punctuation) and a tagged entry covers it?"}
     C -- yes --> R["regular = that entry's Regular"]
     C -- no --> D{"presentation == Any?"}
     D -- yes --> E["Resolve(cp): _coverage cache, else first font with HasGlyph, else -1"]
     E --> F{"index >= 0?"}
     F -- yes --> R
-    F -- no --> G["ResolveFromSystem(cp) via SystemFonts.Resolve"]
+    F -- no --> G["on-demand font, then system tier: SystemFonts.ResolveForLanguage for reader-dependent cp, then SystemFonts.Resolve"]
     G --> H{"system face found?"}
     H -- yes --> R
     H -- no --> I["Primary (head of stack, or SystemPrimary probed with 'A')"]

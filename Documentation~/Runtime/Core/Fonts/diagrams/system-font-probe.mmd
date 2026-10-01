@@ -16,11 +16,11 @@ sequenceDiagram
         IX->>IX: ReadCoverage: FaceOffsets (ttcf), ReadFace, ParseCmap (12 over 4 over 6 over 0)
         IX-->>SF: FaceCoverage[] ranges
         SF->>SF: face.Covers(codepoint) binary search
-        SF->>FD: Load(File.ReadAllBytes(path), faceIndex)
-        FD-->>SF: face, kept in s_faces keyed by path and face index
-        SF->>IX: FamilyName(path, face) for s_names
+        SF->>IX: FamilyName(path, face) for the slot in s_faces (path, face index)
+        SF->>FD: LoadFile(path, faceIndex) maps the file, only touched pages resident
+        FD-->>SF: face, live in the slot until a trim releases it
         SF->>FD: HasGlyph(codepoint) confirms the cmap estimate
     end
-    SF->>SF: Remember(script, path), s_resolved[codepoint] = face or null
+    SF->>SF: Remember(script, path), s_resolved[codepoint] = slot or null
     SF-->>S: FontData or null
     S->>S: _system[codepoint] = answer, then Primary if null

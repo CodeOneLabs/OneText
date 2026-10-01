@@ -659,6 +659,33 @@ collision check is what catches that; it compares against the editor's actual
 `TextRenderingModule` and refuses to write an archive that would not link. Run
 it after any version bump and believe the result rather than this paragraph.
 
+## Reading font files: mapped by managed code, not by HarfBuzz
+
+Operating-system fonts (`SystemFonts`) and font files under StreamingAssets
+(`FileFontSource`) are loaded by mapping the file and handing HarfBuzz the
+address (`FontData.LoadFile`, `MappedFontFile`), so only the pages a face
+actually reads become resident and none of the file goes on the managed heap.
+HarfBuzz has its own way to do this, `hb_blob_create_from_file`, and the
+binaries were checked for it before choosing not to use it (14.2.1.1,
+2026-10-01):
+
+| Binary | `hb_blob_create_from_file[_or_fail]`, `hb_face_create_from_file_or_fail` | What the file API does |
+|---|---|---|
+| macOS | exported | imports `fopen`/`fread`, no `mmap`: reads the whole file into malloc'd memory |
+| iOS (both slices) | exported | same: `fread`, no `mmap` |
+| Android (all three ABIs) | exported | same: `fread`, no `mmap` |
+| Windows (x86, x64, ARM64) | exported | imports `CreateFileMappingW`/`MapViewOfFile`: maps |
+| Linux x64 (built here) | **not exported** (the build's export list stops at 84 `hb_*` symbols) | — |
+| Web (`onetext_` prefix) | not built (`HB_NO_OPEN`); `hb_face_create_for_tables` and `hb_blob_create_sub_blob` are | no file system |
+
+SkiaSharp builds HarfBuzz without `HAVE_MMAP`, so on three of the five
+platforms the "file" API is exactly the cost being removed, moved off the
+managed heap onto the native one. `System.IO.MemoryMappedFiles` maps on every
+platform with files, in the Mono editor and in il2cpp players, and the face is
+then an ordinary `hb_blob_create` over the view. Web has no files to map and no
+system fonts; `FileFontSource` sends every key to its fallback there, and
+`FontData.LoadFile` reads the file whole if anything asks.
+
 ## Licence
 
 Two notices, both MIT, both at `Runtime/Plugins/` because they cover every
