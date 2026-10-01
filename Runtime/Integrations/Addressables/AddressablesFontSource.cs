@@ -28,8 +28,15 @@ namespace OneText
 
         /// <summary>
         /// Makes this the source the project settings get when they say
-        /// Addressables. Runs before anything can ask for a font.
+        /// Addressables. Runs before anything can ask for a font: at the start
+        /// of a play session, and in the editor after every domain reload too,
+        /// because labels lay out in edit mode — the scene view, prefab mode,
+        /// the Hub's previews — and without it they would fall back to
+        /// Resources with a warning and find none of the addresses.
         /// </summary>
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod]
+#endif
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void Register() =>
             FontResidency.RegisterSource(OneFontSourceKind.Addressables,
