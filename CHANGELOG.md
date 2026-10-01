@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-10-01
 
 ### Added
 
@@ -56,6 +56,36 @@
   before. For Korean only punctuation: Han in a Korean label is usually a
   foreign name, and the Hanja a Korean face carries would split it.
 
+- **Fonts can be loaded and unloaded at runtime.** A localised project lists
+  a fallback per language in the settings, and the settings asset is loaded at
+  startup, so every font it references came with it and stayed: a Korean
+  player carried the Chinese and Japanese faces too: 16 MB each unpacked, plus
+  an 11 MB packed copy of each until the first label unpacked it. Measured in
+  a five-language macOS player, live managed memory with both resident was
+  57.4 MB against 25.9 MB with neither, and the Mono heap peaked at 90.9 MB
+  against 31.2 MB. `OneTextSettings` now has a second
+  list, *on-demand fonts*, that names fonts by key instead of by reference, and
+  `FontResidency` loads them only while something wants them:
+  `Acquire`/`AcquireAsync`/`Release`, reference-counted, for code that knows
+  what it is about to show; `SetLanguages`, which loads the fonts declared for
+  the languages in play and lets go of the rest; and a label that meets a
+  character none of the loaded fonts draws, which loads the one font whose
+  recorded coverage has it (`LoadOnDemand`, on by default) before the device's
+  own fonts are asked. `Trim` lets go of what was only loaded that way.
+  Unloading destroys the face and its variants, drops the unpacked bytes,
+  frees the font's atlas tiles (`GlyphAtlas.Forget`) and hands the asset back
+  to its source, and it is two steps a frame apart so it is never done under a
+  label: the font leaves the chain, every label lays out again and may take it
+  back, and what nobody took is unloaded on the next frame. Where the fonts
+  come from is an `IFontSource`: `ResourcesFontSource` (paths under a
+  Resources folder; `Resources.UnloadAsset` on release in a player), or
+  `AddressablesFontSource` in the new `OneText.Integrations.Addressables`
+  assembly, which compiles only when `com.unity.addressables` 1.17 or later is
+  in the project. Project Settings > OneText has a card for the list, the
+  source and the on-demand switch; `OneFontReferences.Make` does the same from
+  an editor script, coverage included. Doctor, the string gallery and the
+  label diagnostics count a character an on-demand font draws as covered.
+
 ### Fixed
 
 - **CJK punctuation in a label that names its language is drawn in that
@@ -100,42 +130,6 @@
   only at the start of a play session, so labels laid out in the editor with
   the settings on Addressables fell back to Resources, warned, and found none
   of the addresses.
-
-## [0.4.0] - 2026-10-01
-
-### Added
-
-- **Fonts can be loaded and unloaded at runtime.** A localised project lists
-  a fallback per language in the settings, and the settings asset is loaded at
-  startup, so every font it references came with it and stayed: a Korean
-  player carried the Chinese and Japanese faces too: 16 MB each unpacked, plus
-  an 11 MB packed copy of each until the first label unpacked it. Measured in
-  a five-language macOS player, live managed memory with both resident was
-  57.4 MB against 25.9 MB with neither, and the Mono heap peaked at 90.9 MB
-  against 31.2 MB. `OneTextSettings` now has a second
-  list, *on-demand fonts*, that names fonts by key instead of by reference, and
-  `FontResidency` loads them only while something wants them:
-  `Acquire`/`AcquireAsync`/`Release`, reference-counted, for code that knows
-  what it is about to show; `SetLanguages`, which loads the fonts declared for
-  the languages in play and lets go of the rest; and a label that meets a
-  character none of the loaded fonts draws, which loads the one font whose
-  recorded coverage has it (`LoadOnDemand`, on by default) before the device's
-  own fonts are asked. `Trim` lets go of what was only loaded that way.
-  Unloading destroys the face and its variants, drops the unpacked bytes,
-  frees the font's atlas tiles (`GlyphAtlas.Forget`) and hands the asset back
-  to its source, and it is two steps a frame apart so it is never done under a
-  label: the font leaves the chain, every label lays out again and may take it
-  back, and what nobody took is unloaded on the next frame. Where the fonts
-  come from is an `IFontSource`: `ResourcesFontSource` (paths under a
-  Resources folder; `Resources.UnloadAsset` on release in a player), or
-  `AddressablesFontSource` in the new `OneText.Integrations.Addressables`
-  assembly, which compiles only when `com.unity.addressables` 1.17 or later is
-  in the project. Project Settings > OneText has a card for the list, the
-  source and the on-demand switch; `OneFontReferences.Make` does the same from
-  an editor script, coverage included. Doctor, the string gallery and the
-  label diagnostics count a character an on-demand font draws as covered.
-
-### Fixed
 
 - **A world text hears about a settings change.** `OneTextMesh` rebuilt its
   font stack when the settings generation moved only if something else had
