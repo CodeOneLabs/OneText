@@ -68,8 +68,26 @@ namespace OneText.UGUI
         }
 
 #if UNITY_EDITOR
+        private static bool s_fontChangeDeferred;
+
         private static void OnAnyFontChanged()
         {
+            // Loading a font asset off disk validates it too, and
+            // FontResidency loads one in the middle of a layout pass when a
+            // label meets a character only that font draws. Dirtying labels
+            // there is uGUI's "already inside a graphic rebuild loop" error,
+            // so the news waits for the editor's next tick.
+            if (CanvasUpdateRegistry.IsRebuildingLayout() || CanvasUpdateRegistry.IsRebuildingGraphics())
+            {
+                if (s_fontChangeDeferred) return;
+                s_fontChangeDeferred = true;
+                UnityEditor.EditorApplication.delayCall += () =>
+                {
+                    s_fontChangeDeferred = false;
+                    OnAnyFontChanged();
+                };
+                return;
+            }
             for (int i = s_users.Count - 1; i >= 0; i--)
             {
                 var user = s_users[i];
