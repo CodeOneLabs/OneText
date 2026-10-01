@@ -291,7 +291,14 @@ namespace OneText
         /// project turns it off. It is a last resort in the literal sense:
         /// every font the project actually ships has already said no.
         /// </summary>
-        public FontData Resolve(int codepoint)
+        public FontData Resolve(int codepoint) => Resolve(codepoint, (string)null);
+
+        /// <summary>
+        /// Same, with the language of the text, which decides between two
+        /// unloaded fonts that both cover a Han character when the stack has to
+        /// reach for one; see <see cref="FontResidency"/>.
+        /// </summary>
+        private FontData Resolve(int codepoint, string language)
         {
             // No early return on an empty stack. It used to be here, and it is
             // the reason a label with no font drew nothing on a machine full of
@@ -312,7 +319,11 @@ namespace OneText
                 _coverage[codepoint] = index;
             }
             if (index >= 0) return _fonts[index];
-            return ResolveFromSystem(codepoint) ?? Primary;
+            // A font the project ships but has not loaded comes before one the
+            // device happens to have. Not cached here: the answer is a face
+            // FontResidency may unload, and it keeps its own cheap answer.
+            return FontResidency.ResolveOnDemand(codepoint, language) ??
+                   ResolveFromSystem(codepoint) ?? Primary;
         }
 
         // Characters the chain missed and the operating system answered for.
@@ -376,8 +387,8 @@ namespace OneText
             if (regular == null)
             {
                 regular = presentation == Presentation.Any
-                    ? Resolve(codepoint)
-                    : ResolveForPresentation(codepoint, presentation);
+                    ? Resolve(codepoint, language)
+                    : ResolveForPresentation(codepoint, presentation, language);
             }
             if (!bold && !italic) return regular;
 
@@ -519,7 +530,8 @@ namespace OneText
                    wanted[fontLanguage.Length] == '-';
         }
 
-        private FontData ResolveForPresentation(int codepoint, Presentation presentation)
+        private FontData ResolveForPresentation(int codepoint, Presentation presentation,
+            string language)
         {
             bool wantColor = presentation == Presentation.Emoji;
             foreach (var font in _fonts)
@@ -529,7 +541,7 @@ namespace OneText
             }
             // Nothing in the stack can honour the request; drawing the
             // character in the wrong presentation beats drawing tofu.
-            return Resolve(codepoint);
+            return Resolve(codepoint, language);
         }
 
         /// <summary>

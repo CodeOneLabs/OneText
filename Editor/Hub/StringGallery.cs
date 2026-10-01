@@ -137,7 +137,7 @@ namespace OneText.Editor
             foreach (int codepoint in TextDoctor.Codepoints(text))
             {
                 if (codepoint == '\n' || codepoint == '\t' || codepoint == ' ') continue;
-                if (!fonts.Covers(codepoint)) missing++;
+                if (!fonts.Covers(codepoint) && !FontResidency.CoversOnDemand(codepoint)) missing++;
             }
             return missing;
         }

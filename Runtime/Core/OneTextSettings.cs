@@ -35,6 +35,23 @@ namespace OneText
             "no font folder to look in, so the option finds nothing there.")]
         [SerializeField] private bool _systemFontFallback = true;
 
+        [Header("On-demand fonts")]
+        [Tooltip("Fonts named by key rather than referenced, so they are not loaded with this " +
+            "asset. FontResidency loads them for the languages the game is in, for code that " +
+            "acquires them, and for a character nothing loaded can draw; and unloads them when " +
+            "none of those wants them any more. The usual place for the other languages' fallbacks.")]
+        [SerializeField] private List<OneFontReference> _onDemandFonts = new List<OneFontReference>();
+
+        [Tooltip("What the keys above are: paths under a Resources folder, or Addressables " +
+            "addresses (needs the Addressables package).")]
+        [SerializeField] private OneFontSourceKind _fontSource = OneFontSourceKind.Resources;
+
+        [Tooltip("When a label meets a character no loaded font draws and an on-demand font " +
+            "above does, load that font on the spot rather than asking the device. Costs a " +
+            "hitch the first time — unpacking a CJK face is tens of milliseconds — and is what " +
+            "keeps a Chinese name in a Korean game in the project's own typeface.")]
+        [SerializeField] private bool _loadOnDemand = true;
+
         // The fields a new label or a new world text starts with. They are here
         // rather than only as C# field initializers because "every label in this
         // project starts at 24 and does not take clicks" is a project decision,
@@ -156,6 +173,38 @@ namespace OneText
         }
 
         /// <summary>
+        /// Fonts this project names by key. See <see cref="FontResidency"/>.
+        /// </summary>
+        public IReadOnlyList<OneFontReference> OnDemandFonts => _onDemandFonts;
+
+        /// <summary>
+        /// Replaces the on-demand list. Entries without a key are dropped. Fonts
+        /// already loaded stay until <see cref="FontResidency"/> next lets go.
+        /// </summary>
+        public void SetOnDemandFonts(IEnumerable<OneFontReference> fonts)
+        {
+            _onDemandFonts.Clear();
+            if (fonts != null)
+                foreach (var font in fonts)
+                    if (!string.IsNullOrEmpty(font.Key)) _onDemandFonts.Add(font);
+            Changed();
+        }
+
+        /// <summary>Which source the on-demand keys are for.</summary>
+        public OneFontSourceKind FontSource
+        {
+            get => _fontSource;
+            set => _fontSource = value;
+        }
+
+        /// <summary>Whether a label may load an on-demand font for a character nothing loaded draws.</summary>
+        public bool LoadOnDemand
+        {
+            get => _loadOnDemand;
+            set => _loadOnDemand = value;
+        }
+
+        /// <summary>
         /// Bumped whenever the fonts above change, by whichever route: the
         /// setters here, the inspector, or an editor writing the serialized
         /// fields and calling <see cref="Invalidate"/>. A label compares it
@@ -166,6 +215,12 @@ namespace OneText
         public static int Generation { get; private set; }
 
         private static void Changed() => Generation++;
+
+        /// <summary>
+        /// For <see cref="FontResidency"/>: the set of loaded fallbacks moved, so
+        /// every stack built before now is out of date.
+        /// </summary>
+        internal static void NotifyFontsChanged() => Changed();
 
         private void OnValidate() => Changed();
 

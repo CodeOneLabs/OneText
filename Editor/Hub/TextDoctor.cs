@@ -244,7 +244,7 @@ namespace OneText.Editor
                             missing[codepoint] = (seen.Locale, seen.Key, seen.Source, seen.Count + 1);
                         continue;
                     }
-                    if (fonts.Covers(codepoint)) continue;
+                    if (fonts.Covers(codepoint) || FontResidency.CoversOnDemand(codepoint)) continue;
                     missing[codepoint] = (entry.Locale, entry.Key, entry.Source, 1);
                 }
             }

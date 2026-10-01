@@ -317,6 +317,9 @@ namespace OneText
                 _precise = precise;
             }
 
+            /// <summary>The <see cref="FontData.CacheId"/> the tile was baked from.</summary>
+            public int FontId => _font;
+
             public bool Equals(Key o) => _font == o._font && _id == o._id &&
                 _ppem == o._ppem && _generation == o._generation && _outline == o._outline &&
                 _raster == o._raster && _precise == o._precise;
@@ -555,6 +558,28 @@ namespace OneText
 
             var raster = GlyphRasterizer.RasterizeContours(s_merged, s_mergedGroups, pixelsPerUnit, Precise);
             return Commit(key, raster, ppem);
+        }
+
+        /// <summary>
+        /// Frees every tile baked from <paramref name="font"/>, at every size,
+        /// and returns how many there were. For a face that is about to be
+        /// destroyed: its cache id is never issued again, so its tiles could
+        /// only ever be evicted, and until then they take room a live font
+        /// needs. <see cref="Version"/> moves when anything is freed, so a mesh
+        /// that somehow still points at one rebuilds rather than drawing
+        /// whatever is written there next.
+        /// </summary>
+        public int Forget(FontData font)
+        {
+            if (font == null || _entries.Count == 0) return 0;
+            int id = font.CacheId;
+            List<Entry> doomed = null;
+            foreach (var entry in _entries.Values)
+                if (entry.Key.FontId == id) (doomed ??= new List<Entry>()).Add(entry);
+            if (doomed == null) return 0;
+            foreach (var entry in doomed) Release(entry);
+            Version++;
+            return doomed.Count;
         }
 
         /// <summary>True if the atlas already holds this glyph at this size.</summary>

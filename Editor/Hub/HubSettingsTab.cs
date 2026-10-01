@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEditor;
 using UnityEngine;
@@ -62,6 +63,7 @@ namespace OneText.Editor
             }
 
             content.Add(FontCard());
+            content.Add(OnDemandCard());
             content.Add(NewTextCard());
             content.Add(AtlasCard());
             content.Add(PrewarmCard());
@@ -182,6 +184,101 @@ namespace OneText.Editor
                 "Doctor lists every character that ended up here for exactly that reason. Web has " +
                 "no font folder to look in, so there it finds nothing."));
             return card.Root;
+        }
+
+        // ----------------------------------------------------- on-demand fonts
+
+        /// <summary>
+        /// Fonts the settings name by key, so they are not loaded with the
+        /// settings. Picking an asset here records its key and its coverage in
+        /// one go; the coverage is what a label reads to know an unloaded font
+        /// draws a character, so it is re-read whenever the asset is re-picked.
+        /// </summary>
+        private VisualElement OnDemandCard()
+        {
+            var card = HubUI.MakeCard("On-demand fonts",
+                "Fallbacks that are loaded only while something needs them: the languages the " +
+                "game is in (FontResidency.SetLanguages), code that acquires them, or a character " +
+                "nothing loaded draws. A five-language game keeps one language's fonts in memory " +
+                "instead of five.");
+
+            var kind = _settings.FontSource;
+            card.Add(HubUI.Field("Loaded from",
+                HubUI.Segments(new[] { "Resources", "Addressables" }, (int)kind,
+                    index =>
+                    {
+                        Edit("_fontSource", p => p.enumValueIndex = index);
+                        Refresh();
+                    }),
+                "Resources keys are paths under a Resources folder; Addressables keys are " +
+                "addresses, and need the Addressables package in the project."));
+
+            var references = _settings.OnDemandFonts;
+            for (int i = 0; i < references.Count; i++)
+            {
+                int index = i;
+                var reference = references[i];
+                var row = HubUI.Box("row");
+                row.Add(HubUI.AssetPicker<OneFontAsset>(
+                    () => OneFontReferences.Find(reference, kind),
+                    value => Replace(index, value, reference.Language),
+                    reference.Key ?? "empty slot"));
+                row.Add(HubUI.Input(reference.Language, "language (zh-Hans, ja, ...)",
+                    value => Rewrite(index, r => new OneFontReference(r.Key, value, Ranges(r)))));
+                row.Add(HubUI.Quiet("Remove", () =>
+                {
+                    var list = new List<OneFontReference>(_settings.OnDemandFonts);
+                    list.RemoveAt(index);
+                    OneFontReferences.Assign(_settings, list);
+                    Refresh();
+                }));
+                string note = reference.HasCoverage
+                    ? $"{FontCoverage.Count(reference.Coverage):N0} characters"
+                    : "no coverage recorded: never loaded on demand";
+                card.Add(HubUI.Field(index == 0 ? "Fonts" : " ", row, $"{reference.Key} · {note}"));
+            }
+
+            card.Add(HubUI.AssetPicker<OneFontAsset>(() => null,
+                value => Replace(-1, value, null), "Add an on-demand font"));
+
+            card.Add(HubUI.Field("On demand",
+                HubUI.Pill("Load for characters nothing loaded draws", _settings.LoadOnDemand,
+                    on => Edit("_loadOnDemand", p => p.boolValue = on)),
+                "A label that meets such a character loads the font on the spot, which is a " +
+                "hitch the first time. Off, it falls through to the device's fonts instead."));
+            return card.Root;
+        }
+
+        private void Replace(int index, OneFontAsset asset, string language)
+        {
+            if (asset == null) return;
+            OneFontReference made;
+            try { made = OneFontReferences.Make(asset, _settings.FontSource, language); }
+            catch (ArgumentException e)
+            {
+                Say(e.Message);
+                return;
+            }
+            var list = new List<OneFontReference>(_settings.OnDemandFonts);
+            if (index >= 0 && index < list.Count) list[index] = made;
+            else list.Add(made);
+            OneFontReferences.Assign(_settings, list);
+            Refresh();
+        }
+
+        private void Rewrite(int index, Func<OneFontReference, OneFontReference> change)
+        {
+            var list = new List<OneFontReference>(_settings.OnDemandFonts);
+            if (index < 0 || index >= list.Count) return;
+            list[index] = change(list[index]);
+            OneFontReferences.Assign(_settings, list);
+        }
+
+        private static int[] Ranges(OneFontReference reference)
+        {
+            var ranges = new int[reference.Coverage.Count];
+            for (int i = 0; i < ranges.Length; i++) ranges[i] = reference.Coverage[i];
+            return ranges;
         }
 
         // ------------------------------------------------------------ new text

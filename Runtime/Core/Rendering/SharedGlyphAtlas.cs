@@ -348,6 +348,17 @@ namespace OneText
             return shader != null ? shader : Shader.Find(ShaderName);
         }
 
+        /// <summary>
+        /// Frees the tiles a face left in the shared atlases, ahead of the face
+        /// being destroyed. Does not create an atlas that does not exist yet.
+        /// </summary>
+        public static void Forget(FontData font)
+        {
+            if (font == null) return;
+            if (s_atlas != null && s_atlas.IsUsable) s_atlas.Forget(font);
+            if (s_preciseAtlas != null && s_preciseAtlas.IsUsable) s_preciseAtlas.Forget(font);
+        }
+
         /// <summary>Takes a reference to the shared atlas; pair with <see cref="Release"/>.</summary>
         public static GlyphAtlas Acquire()
         {

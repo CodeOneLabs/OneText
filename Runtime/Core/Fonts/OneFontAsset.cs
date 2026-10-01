@@ -266,6 +266,67 @@ namespace OneText
         /// </summary>
         public int StoredSize => _data?.Length ?? 0;
 
+        /// <summary>
+        /// Whether the parsed face is in memory right now. False before the
+        /// first use and after <see cref="Unload"/>; reading <see cref="Font"/>
+        /// loads it.
+        /// </summary>
+        public bool IsLoaded => _font != null && _font.IsValid;
+
+        /// <summary>
+        /// Bytes of font file this asset holds in managed memory right now: the
+        /// packed copy, if it still has it, plus the unpacked one the face reads
+        /// through, if it has been unpacked. What <see cref="Unload"/> gives back,
+        /// apart from the face's own native tables.
+        /// </summary>
+        public long ResidentBytes
+        {
+            get
+            {
+                long packed = _data?.LongLength ?? 0;
+                long unpacked = _unpacked != null && !ReferenceEquals(_unpacked, _data)
+                    ? _unpacked.LongLength
+                    : 0;
+                return packed + unpacked;
+            }
+        }
+
+        /// <summary>
+        /// Lets go of the parsed face, every variant made from it, and the
+        /// unpacked font file. Labels that were drawing with it must have let go
+        /// of it first; <see cref="FontResidency"/> arranges that, and is the
+        /// way to call this.
+        ///
+        /// <para>In a player the packed copy was already dropped when the font
+        /// was unpacked, so after this the asset holds no font at all and has to
+        /// be read back off disk to be used again — which is what unloading it
+        /// through its <see cref="IFontSource"/> does. In the editor the packed
+        /// bytes are the asset file and stay, so the next use simply unpacks
+        /// again.</para>
+        /// </summary>
+        public void Unload()
+        {
+            bool packedGone = _compressed && (_data == null || _data.Length == 0);
+            Release();
+            _unpacked = null;
+            if (packedGone) _unloaded = true;
+        }
+
+        /// <summary>The faces this asset has loaded: the font and its variants.</summary>
+        internal void ForEachLoadedFace(System.Action<FontData> visit)
+        {
+            if (visit == null) return;
+            if (_font != null && _font.IsValid) visit(_font);
+            if (_variants == null) return;
+            foreach (var variant in _variants.Values)
+                if (variant != null && variant.IsValid) visit(variant);
+        }
+
+        // Set by Unload in a player, where there is nothing left to unpack
+        // from: it turns the "lost its font file" canary below into the
+        // explanation that applies.
+        [System.NonSerialized] private bool _unloaded;
+
         /// <summary>The shared parsed font. Never dispose it; the asset owns it.</summary>
         public FontData Font
         {
@@ -484,6 +545,14 @@ namespace OneText
                 // Release keeps the unpacked array whenever it is the last copy
                 // of the font. It is said this loudly because it is a canary
                 // for some path that got past that rule.
+                if (_unloaded)
+                {
+                    Debug.LogError($"OneText: the font '{FamilyName}' was unloaded and then used " +
+                                   "again without being loaded back from disk, so text using it " +
+                                   "will not draw. Load it through FontResidency rather than " +
+                                   "keeping the asset reference past its release.", this);
+                    return null;
+                }
                 if (_compressed && _uncompressedLength > 0)
                     Debug.LogError($"OneText: the font '{FamilyName}' unpacked its font file and " +
                                    "then lost it, so text using it will not draw. This is a bug in " +

@@ -973,6 +973,10 @@ namespace OneText.UGUI
             // And a style is a reference, so editing the asset has to reach the
             // labels pointing at it.
             StyleInvalidation.Register(this);
+            // And fonts come and go at runtime now: a label showing tofu has to
+            // hear that the font for it arrived, and one drawing with a font
+            // that is leaving has to lay out without it before it is destroyed.
+            FontInvalidation.Register(this);
             // And the screen scale is a fact about cameras and canvases, which
             // change without dirtying any label; the watcher re-measures once
             // a canvas pass and this label re-bakes only when it escapes the
@@ -1000,6 +1004,7 @@ namespace OneText.UGUI
         {
             AtlasInvalidation.Unregister(this);
             StyleInvalidation.Unregister(this);
+            FontInvalidation.Unregister(this);
             ScreenPpem.Unregister(this);
             base.OnDisable();
         }
@@ -1209,6 +1214,7 @@ namespace OneText.UGUI
         {
             AtlasInvalidation.Unregister(this);
             StyleInvalidation.Unregister(this);
+            FontInvalidation.Unregister(this);
             ReleaseFonts();
             _engine?.Dispose();
             _engine = null;
@@ -1648,6 +1654,13 @@ namespace OneText.UGUI
             // one lay out nothing.
             _facesBefore.Clear();
             if (_fonts != null) _facesBefore.AddRange(_fonts.Fonts);
+            // A move in the settings generation always lays out again, faces or
+            // no faces: a font that joined or left the chain may have drawn
+            // part of the last layout without being in this stack — the
+            // on-demand tier hands faces out that way — and a layout that keeps
+            // a face FontResidency has since destroyed is a crash waiting for
+            // the next atlas rebuild.
+            bool settingsMoved = _settingsGeneration != OneTextSettings.Generation;
             _settingsGeneration = OneTextSettings.Generation;
 
             ReleaseFonts(bumpGeneration: false);
@@ -1736,9 +1749,16 @@ namespace OneText.UGUI
                         if (asset != null)
                             _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
                 }
+
+                // Then whatever FontResidency has loaded: the fonts the
+                // settings name by key, for the languages in play or because
+                // some text needed them.
+                foreach (var asset in FontResidency.Resident)
+                    if (asset != null)
+                        _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
             }
 
-            if (!SameFaces(_facesBefore, _fonts.Fonts)) _layoutGeneration++;
+            if (settingsMoved || !SameFaces(_facesBefore, _fonts.Fonts)) _layoutGeneration++;
             _facesBefore.Clear();
         }
 

@@ -561,6 +561,11 @@ namespace OneText
                         if (asset != null)
                             _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
                 }
+
+                // Then whatever FontResidency has loaded; see OneTextLabel.
+                foreach (var asset in FontResidency.Resident)
+                    if (asset != null)
+                        _fonts.Add(asset.Font, asset.Language, asset.LetterSpacingEm);
             }
         }
 
@@ -771,6 +776,15 @@ namespace OneText
                 if (current != _builtAtlas || current == null ||
                     current.Version != _builtAtlasVersion || colorVersion != _builtColorVersion)
                     _dirty = true;
+            }
+            // And a move in the settings generation means a font joined or left
+            // the chain. A mesh that drew with one that left must lay out
+            // without it before FontResidency destroys it; an empty one just
+            // lets its stack go, so it does not wake every frame to find out.
+            if (!_dirty && _fonts != null && _settingsGeneration != OneTextSettings.Generation)
+            {
+                if (string.IsNullOrEmpty(_text)) ReleaseFonts();
+                else _dirty = true;
             }
             if (!_dirty) return;
             _dirty = false;
