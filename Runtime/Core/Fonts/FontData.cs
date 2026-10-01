@@ -9,13 +9,21 @@ using UnityEngine;
 namespace OneText
 {
     /// <summary>
-    /// A font loaded from raw bytes (TTF/OTF/TTC), holding the native
-    /// HarfBuzz blob/face/font handles. Fonts load from memory only:
-    /// no file I/O at runtime.
+    /// A font (TTF/OTF/TTC) holding the native HarfBuzz blob/face/font
+    /// handles, read either from bytes the caller has
+    /// (<see cref="Load(byte[], uint)"/>: the array is pinned and read in
+    /// place) or from a file mapped into memory
+    /// (<see cref="LoadFile(string, uint)"/>: only the pages HarfBuzz reads
+    /// become resident, and none of them on the managed heap).
     /// </summary>
     public sealed class FontData : IDisposable
     {
         private GCHandle _bytesHandle;
+        private long _managedBytes;
+
+        // The mapped file the blob reads through, when the font came from
+        // LoadFile. Disposed after the blob, never before.
+        private MappedFontFile _mapping;
         // Variant instances borrow the face and blob from the font they came from.
         private bool _ownsFace;
 
@@ -97,6 +105,34 @@ namespace OneText
         /// <summary>True if the font carries an OpenType variations table.</summary>
         public bool IsVariable => Face != IntPtr.Zero && HarfBuzzApi.hb_ot_var_has_data(Face) != 0;
 
+        /// <summary>
+        /// The file this face reads from, or null for one loaded from bytes.
+        /// </summary>
+        public string SourcePath { get; private set; }
+
+        /// <summary>Whether the face reads a mapped file rather than a managed array.</summary>
+        public bool IsMapped => _mapping != null;
+
+        /// <summary>
+        /// Bytes of managed heap this face keeps pinned: the whole array it was
+        /// loaded from, or zero for a mapped file.
+        /// </summary>
+        public long ManagedBytes => _managedBytes;
+
+        /// <summary>
+        /// Address space the mapped file takes, which is its length; zero for a
+        /// face loaded from bytes. Not memory in use: see <see cref="ResidentFileBytes"/>.
+        /// </summary>
+        public long MappedBytes => _mapping?.Length ?? 0;
+
+        /// <summary>
+        /// How much of the mapped file is in physical memory right now, or -1
+        /// where the platform will not say (Windows, iOS) or the face is not
+        /// mapped. Clean, file-backed pages: the system can drop them and read
+        /// them back. A diagnostic that asks the kernel; not for a hot path.
+        /// </summary>
+        public long ResidentFileBytes => _mapping != null ? _mapping.ResidentBytes() : -1;
+
         public static FontData Load(byte[] fontBytes, uint faceIndex = 0)
         {
             if (fontBytes == null || fontBytes.Length == 0)
@@ -105,21 +141,60 @@ namespace OneText
             var data = new FontData();
             // Pin the managed array instead of copying; the blob reads it in place.
             data._bytesHandle = GCHandle.Alloc(fontBytes, GCHandleType.Pinned);
-            data.Blob = HarfBuzzApi.hb_blob_create(
-                data._bytesHandle.AddrOfPinnedObject(), (uint)fontBytes.Length,
+            data._managedBytes = fontBytes.LongLength;
+            data.Open(data._bytesHandle.AddrOfPinnedObject(), (uint)fontBytes.Length, faceIndex);
+            return data;
+        }
+
+        /// <summary>
+        /// Loads face <paramref name="faceIndex"/> of the font file at
+        /// <paramref name="path"/> by mapping the file, so a 55 MB collection
+        /// costs the pages of the one face that is read rather than 55 MB of
+        /// managed heap. Where the platform cannot map files (Web) the file is
+        /// read whole, as <see cref="Load(byte[], uint)"/> would; a file that
+        /// is missing or unreadable throws, as reading it would.
+        /// </summary>
+        public static FontData LoadFile(string path, uint faceIndex = 0)
+        {
+            var mapping = MappedFontFile.TryOpen(path, out string error);
+            if (mapping == null)
+            {
+                if (MappedFontFile.IsSupported && !System.IO.File.Exists(path))
+                    throw new System.IO.FileNotFoundException(error ?? "no such font file", path);
+                var whole = Load(System.IO.File.ReadAllBytes(path), faceIndex);
+                whole.SourcePath = path;
+                return whole;
+            }
+
+            // Owning from the start, so a failure below still unmaps.
+            var data = new FontData { _mapping = mapping, SourcePath = path, _ownsFace = true };
+            try
+            {
+                data.Open(mapping.Pointer, (uint)mapping.Length, faceIndex);
+            }
+            catch
+            {
+                data.Dispose();
+                throw;
+            }
+            return data;
+        }
+
+        private void Open(IntPtr bytes, uint length, uint faceIndex)
+        {
+            Blob = HarfBuzzApi.hb_blob_create(bytes, length,
                 HarfBuzzApi.HB_MEMORY_MODE_READONLY, IntPtr.Zero, IntPtr.Zero);
-            data.Face = HarfBuzzApi.hb_face_create(data.Blob, faceIndex);
-            data.Font = HarfBuzzApi.hb_font_create(data.Face);
-            data.UnitsPerEm = HarfBuzzApi.hb_face_get_upem(data.Face);
-            data._ownsFace = true;
+            Face = HarfBuzzApi.hb_face_create(Blob, faceIndex);
+            Font = HarfBuzzApi.hb_font_create(Face);
+            UnitsPerEm = HarfBuzzApi.hb_face_get_upem(Face);
+            _ownsFace = true;
             // HarfBuzz's own rule for sharing: an object may be read from any
             // number of threads once it can no longer be modified. The face is
             // the expensive, shared half of a font, and nothing here ever edits
             // it after load; say so, so concurrent shaping is legal rather than
             // merely lucky.
-            HarfBuzzApi.hb_face_make_immutable(data.Face);
-            data.ReadMetrics();
-            return data;
+            HarfBuzzApi.hb_face_make_immutable(Face);
+            ReadMetrics();
         }
 
         /// <summary>
@@ -459,6 +534,10 @@ namespace OneText
                 if (Face != IntPtr.Zero) { HarfBuzzApi.hb_face_destroy(Face); }
                 if (Blob != IntPtr.Zero) { HarfBuzzApi.hb_blob_destroy(Blob); }
                 if (_bytesHandle.IsAllocated) _bytesHandle.Free();
+                // Last: the blob and the face were reading through it.
+                _mapping?.Dispose();
+                _mapping = null;
+                _managedBytes = 0;
             }
             Face = IntPtr.Zero;
             Blob = IntPtr.Zero;

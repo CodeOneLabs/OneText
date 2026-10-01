@@ -43,6 +43,14 @@ namespace OneText
     /// Japanese word once does not keep the Japanese face for the session.
     /// <see cref="Collect"/> does it all now, for tests and teardown.</para>
     ///
+    /// <para>Faces the operating system lent (<see cref="SystemFonts"/>) are
+    /// in it too. They are never wanted by key or by language, only by text,
+    /// so <see cref="Trim"/> offers every one of them up the same way: the
+    /// labels lay out again, a label still drawing a nickname in Thai takes
+    /// its face back, and the rest are destroyed on the following frame with
+    /// their atlas tiles. The answers stay, so the next Thai nickname maps the
+    /// file again without probing.</para>
+    ///
     /// <para>Fonts referenced directly — the default font, the settings'
     /// fallback list, a label's Font field — are outside all of this: they are
     /// loaded with whatever references them, as before.</para>
@@ -278,15 +286,22 @@ namespace OneText
 
         /// <summary>
         /// Lets go of every font that is resident only because a label once
-        /// needed it: not acquired, not required by a language. A label that
-        /// still shows one of its characters takes it back on its next layout,
-        /// so what is on screen keeps drawing; the rest is unloaded next frame.
-        /// A good thing to call on a scene change.
+        /// needed it: not acquired, not required by a language, and every face
+        /// the operating system lent. A label that still shows one of its
+        /// characters takes it back on its next layout, so what is on screen
+        /// keeps drawing; the rest is unloaded next frame. A good thing to call
+        /// on a scene change.
         /// </summary>
         public static void Trim()
         {
             foreach (var entry in s_entries.Values)
                 if (entry.Asset != null && !entry.Candidate && !Wanted(entry)) Retire(entry);
+
+            if (SystemFonts.BeginRelease())
+            {
+                s_sweepPending = true;
+                MarkChanged(notify: true);
+            }
         }
 
         /// <summary>
@@ -561,6 +576,8 @@ namespace OneText
                 }
                 Source.Release(entry.Key, asset);
             }
+            // The system faces no layout took back since Trim marked them.
+            if (SystemFonts.FinishRelease() > 0) any = true;
             if (any) OneTextSettings.NotifyFontsChanged();
         }
 
@@ -609,6 +626,8 @@ namespace OneText
             int waiting = 0;
             foreach (var entry in s_entries.Values) if (entry.Candidate) waiting++;
             if (waiting > 0) builder.Append(" | unloading=").Append(waiting);
+            if (SystemFonts.LoadedFaceCount > 0)
+                builder.Append(" | ").Append(SystemFonts.Describe());
             return builder.ToString();
         }
 
@@ -644,6 +663,8 @@ namespace OneText
             s_missing.Clear();
             s_changePending = false;
             s_sweepPending = false;
+            // A trim nobody finished belongs to the session that started it.
+            SystemFonts.CancelRelease();
             s_nextOrder = 1 << 20;
             if (!s_sourceExplicit) s_source = null;
         }

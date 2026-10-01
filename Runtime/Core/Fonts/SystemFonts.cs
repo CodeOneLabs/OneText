@@ -35,38 +35,80 @@ namespace OneText
     /// occurrence of a character costs a dictionary lookup and allocates
     /// nothing.</para>
     ///
+    /// <para><b>Memory.</b> The face that answers is loaded by mapping its
+    /// file (<see cref="FontData.LoadFile"/>), not by reading it: a system
+    /// font is a 55 MB Korean collection or a 192 MB emoji one, and what a
+    /// nickname needs of it is a few hundred kilobytes of tables and glyphs.
+    /// Those pages are file-backed and off the managed heap. And a face is
+    /// held only while text uses it: <see cref="FontResidency.Trim"/> lets go
+    /// of every system face nothing on screen drew with, by the same two
+    /// steps it lets go of on-demand fonts (labels lay out again, then what no
+    /// label took back is destroyed and its atlas tiles freed). The answers
+    /// stay — which face drew which character, which files answered for a
+    /// script, and which characters nothing has — so meeting the text again
+    /// maps the file again and probes nothing.</para>
+    ///
     /// <para><b>Web.</b> A browser has no font directory to walk, so on Web the
     /// tier finds nothing and a missing character stays tofu. That is a
     /// platform fact rather than a decision, and it is recorded in
     /// <c>Docs/NATIVES.md</c>.</para>
     ///
-    /// <para><b>Colour.</b> A system face that carries CBDT or COLRv0 goes
-    /// through the same colour path as a bundled one; nothing here knows the
-    /// difference. Apple Color Emoji is the exception, and not because of this
-    /// class: its payload is sbix, which <see cref="ColorGlyphs"/> deliberately
-    /// does not read, so on macOS and iOS an emoji resolved from the system
-    /// draws as an outline or as nothing. Bundle a colour emoji font for
-    /// emoji.</para>
+    /// <para><b>Colour.</b> A system face that carries CBDT, sbix or COLRv0
+    /// goes through the same colour path as a bundled one; nothing here knows
+    /// the difference. HarfBuzz hands over the PNG of an sbix strike the way it
+    /// does a CBDT one, so Apple Color Emoji draws in colour on macOS.</para>
     /// </summary>
     public static class SystemFonts
     {
         private static readonly object s_sync = new object();
 
+        /// <summary>
+        /// One face of one file the tier has used: where it is, what it is
+        /// called, and the loaded face while something wants it. The slot
+        /// outlives the face. Letting go of a face nulls <see cref="Font"/>
+        /// and keeps the rest, so every answer that pointed here still does,
+        /// and the next character that needs it maps the file again.
+        /// </summary>
+        private sealed class SystemFace
+        {
+            public string Path;
+            public uint FaceIndex;
+            public string Name;
+            public FontData Font;
+
+            /// <summary>Could not be loaded (missing, unreadable, not a font). Not retried.</summary>
+            public bool Failed;
+
+            /// <summary>
+            /// Trimmed: destroyed at the next sweep unless a layout asks for
+            /// it first, which clears this. The two-step unload of
+            /// <see cref="FontResidency"/>, for system faces.
+            /// </summary>
+            public bool Releasing;
+
+            /// <summary>How many times this face has been loaded, reloads included.</summary>
+            public int Loads;
+
+            public bool IsLive => Font != null && Font.IsValid;
+        }
+
         // Codepoint -> the face that draws it, or null for "asked, nothing
         // has it". Negative answers are cached too: without that, a string
         // full of one unrenderable character would rescan the disk per
-        // occurrence.
-        private static readonly Dictionary<int, FontData> s_resolved = new Dictionary<int, FontData>();
+        // occurrence. Slots, not faces: an answer survives its face being
+        // let go of.
+        private static readonly Dictionary<int, SystemFace> s_resolved = new Dictionary<int, SystemFace>();
 
-        // Loaded faces, keyed "path#faceIndex", so two characters found in one
-        // font share one parse and one set of atlas tiles.
-        private static readonly Dictionary<string, FontData> s_faces =
-            new Dictionary<string, FontData>(StringComparer.Ordinal);
+        // Every face the tier has looked at, keyed "path#faceIndex", so two
+        // characters found in one font share one load and one set of atlas
+        // tiles.
+        private static readonly Dictionary<string, SystemFace> s_faces =
+            new Dictionary<string, SystemFace>(StringComparer.Ordinal);
 
-        // Family names by FontData.CacheId, what a diagnostic prints. Keyed by
-        // cache id rather than by the native pointer for the reason
-        // ColorGlyphs is: a freed face's address comes straight back.
-        private static readonly Dictionary<int, string> s_names = new Dictionary<int, string>();
+        // Live faces by FontData.CacheId, what IsSystemFont and a diagnostic
+        // ask. Keyed by cache id rather than by the native pointer for the
+        // reason ColorGlyphs is: a freed face's address comes straight back.
+        private static readonly Dictionary<int, SystemFace> s_live = new Dictionary<int, SystemFace>();
 
         /// <summary>
         /// Which files have answered for a script, most recent first.
@@ -132,8 +174,20 @@ namespace OneText
             if (!Enabled) return null;
             lock (s_sync)
             {
-                if (s_resolved.TryGetValue(codepoint, out var cached)) return cached;
-                FontData found = null;
+                if (s_resolved.TryGetValue(codepoint, out var cached))
+                {
+                    if (cached == null) return null;
+                    // The face may have been let go of since it answered; this
+                    // brings it back, and takes it off the list of faces about
+                    // to be let go of, because a layout is using it.
+                    var live = Use(cached);
+                    if (live != null) return live;
+                    // Its file is gone. Ask again rather than lose the
+                    // character: something else on the machine may draw it.
+                    s_resolved.Remove(codepoint);
+                }
+
+                SystemFace found = null;
                 try { found = Probe(codepoint); }
                 catch (Exception e)
                 {
@@ -143,7 +197,7 @@ namespace OneText
                     Debug.LogWarning($"OneText: system font fallback failed for U+{codepoint:X4}: {e.Message}");
                 }
                 s_resolved[codepoint] = found;
-                return found;
+                return found?.Font;
             }
         }
 
@@ -151,17 +205,18 @@ namespace OneText
         public static bool IsSystemFont(FontData font)
         {
             if (font == null) return false;
-            lock (s_sync) return s_names.ContainsKey(font.CacheId);
+            lock (s_sync) return s_live.ContainsKey(font.CacheId);
         }
 
         /// <summary>
         /// The family name of a face this class supplied ("Apple SD Gothic
-        /// Neo", "Segoe UI Emoji"), or null for a font it did not supply.
+        /// Neo", "Segoe UI Emoji"), or null for a font it did not supply or
+        /// has since let go of.
         /// </summary>
         public static string NameOf(FontData font)
         {
             if (font == null) return null;
-            lock (s_sync) return s_names.TryGetValue(font.CacheId, out string name) ? name : null;
+            lock (s_sync) return s_live.TryGetValue(font.CacheId, out var face) ? face.Name : null;
         }
 
         /// <summary>
@@ -170,11 +225,120 @@ namespace OneText
         /// </summary>
         public static string NameFor(int codepoint) => NameOf(Resolve(codepoint));
 
-        /// <summary>Faces loaded from the system so far. Diagnostics and tests.</summary>
+        /// <summary>System faces loaded right now. Diagnostics and tests.</summary>
         public static int LoadedFaceCount
         {
-            get { lock (s_sync) return s_faces.Count; }
+            get { lock (s_sync) return s_live.Count; }
         }
+
+        /// <summary>
+        /// Bumped whenever a system face is let go of. A <see cref="FontStack"/>
+        /// remembers the system's answers per character, and a face in that
+        /// memory may since have been destroyed; the stack compares this with
+        /// the value it remembered against and asks again when they differ.
+        /// </summary>
+        public static int Generation { get; private set; }
+
+        /// <summary>
+        /// Managed heap the loaded system faces hold: zero when every one is
+        /// mapped, the whole file of each one that is not (Web).
+        /// </summary>
+        public static long ManagedBytes
+        {
+            get
+            {
+                lock (s_sync)
+                {
+                    long total = 0;
+                    foreach (var face in s_live.Values) total += face.Font.ManagedBytes;
+                    return total;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Address space the loaded system faces have mapped: the sum of their
+        /// files' lengths. Reserved, not resident; see <see cref="ResidentFileBytes"/>.
+        /// </summary>
+        public static long MappedBytes
+        {
+            get
+            {
+                lock (s_sync)
+                {
+                    long total = 0;
+                    foreach (var face in s_live.Values) total += face.Font.MappedBytes;
+                    return total;
+                }
+            }
+        }
+
+        /// <summary>
+        /// How much of the mapped files is in physical memory, or -1 where the
+        /// platform will not say. Asks the kernel per page; a diagnostic.
+        /// </summary>
+        public static long ResidentFileBytes
+        {
+            get
+            {
+                lock (s_sync)
+                {
+                    long total = 0;
+                    foreach (var face in s_live.Values)
+                    {
+                        if (!face.Font.IsMapped) continue;
+                        long resident = face.Font.ResidentFileBytes;
+                        if (resident < 0) return -1;
+                        total += resident;
+                    }
+                    return total;
+                }
+            }
+        }
+
+        /// <summary>
+        /// One line per loaded system face, for a log: family, file and face
+        /// index, how it is held (mapped: the file's length and how much of it
+        /// is resident; managed: the array), how many times it has been
+        /// loaded, and whether it is about to be let go of.
+        /// </summary>
+        public static string Describe()
+        {
+            lock (s_sync)
+            {
+                var builder = new System.Text.StringBuilder();
+                builder.Append("system faces=").Append(s_live.Count)
+                    .Append(" managed=").Append(Megabytes(ManagedBytes))
+                    .Append(" mapped=").Append(Megabytes(MappedBytes));
+                long resident = ResidentFileBytes;
+                builder.Append(" resident=").Append(resident < 0 ? "?" : Megabytes(resident))
+                    .Append(" known=").Append(s_faces.Count)
+                    .Append(" answers=").Append(s_resolved.Count);
+                foreach (var face in s_faces.Values)
+                {
+                    if (!face.IsLive) continue;
+                    var font = face.Font;
+                    builder.Append(" | ").Append(face.Name).Append(" (")
+                        .Append(System.IO.Path.GetFileName(face.Path)).Append('#').Append(face.FaceIndex).Append(") ");
+                    if (font.IsMapped)
+                    {
+                        long faceResident = font.ResidentFileBytes;
+                        builder.Append("mapped ").Append(Megabytes(font.MappedBytes)).Append(" resident ")
+                            .Append(faceResident < 0 ? "?" : Megabytes(faceResident));
+                    }
+                    else
+                    {
+                        builder.Append("managed ").Append(Megabytes(font.ManagedBytes));
+                    }
+                    if (face.Loads > 1) builder.Append(" loads=").Append(face.Loads);
+                    if (face.Releasing) builder.Append(" releasing");
+                }
+                return builder.ToString();
+            }
+        }
+
+        private static string Megabytes(long bytes) =>
+            (bytes / (1024.0 * 1024.0)).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "MB";
 
         /// <summary>
         /// Where this platform keeps its fonts. Empty on Web, which is the
@@ -198,20 +362,85 @@ namespace OneText
         /// Anything still holding a run shaped with a system face is stale
         /// afterwards, exactly as it would be if the font asset it came from
         /// had been unloaded, which is why this is for tests and for the
-        /// editor's assembly reload, not for a running game.
+        /// editor's assembly reload, not for a running game. A running game
+        /// lets go of faces through <see cref="FontResidency.Trim"/>, which
+        /// tells the labels first and keeps the answers.
         /// </summary>
         public static void Forget()
         {
             lock (s_sync)
             {
-                foreach (var font in s_faces.Values) font?.Dispose();
+                foreach (var face in s_faces.Values) face.Font?.Dispose();
                 s_faces.Clear();
                 s_resolved.Clear();
-                s_names.Clear();
+                s_live.Clear();
                 s_answered.Clear();
                 FilesProbed = 0;
+                Generation++;
                 SystemFontIndex.Forget();
             }
+        }
+
+        // ----------------------------------------------------------- letting go
+
+        /// <summary>
+        /// The first half of letting go: marks every loaded face as leaving.
+        /// A layout that resolves a character to one of them in the meantime
+        /// takes it back; <see cref="FinishRelease"/> destroys the rest. True
+        /// when there was anything to mark. Called by <see cref="FontResidency.Trim"/>.
+        /// </summary>
+        internal static bool BeginRelease()
+        {
+            lock (s_sync)
+            {
+                bool any = false;
+                foreach (var face in s_live.Values)
+                {
+                    face.Releasing = true;
+                    any = true;
+                }
+                return any;
+            }
+        }
+
+        /// <summary>Takes back a <see cref="BeginRelease"/> that nothing has finished.</summary>
+        internal static void CancelRelease()
+        {
+            lock (s_sync)
+                foreach (var face in s_faces.Values) face.Releasing = false;
+        }
+
+        /// <summary>
+        /// The second half: destroys every face still marked as leaving, with
+        /// its atlas tiles, colour included, and returns how many went. Their
+        /// slots stay, so the characters they answered for still know where to
+        /// look.
+        /// </summary>
+        internal static int FinishRelease()
+        {
+            List<FontData> leaving = null;
+            lock (s_sync)
+            {
+                foreach (var face in s_faces.Values)
+                {
+                    if (!face.Releasing) continue;
+                    face.Releasing = false;
+                    if (!face.IsLive) continue;
+                    (leaving ??= new List<FontData>()).Add(face.Font);
+                    s_live.Remove(face.Font.CacheId);
+                    face.Font = null;
+                }
+                if (leaving == null) return 0;
+                Generation++;
+            }
+            // Outside the lock: the atlas is main-thread state with locks of
+            // its own, and a face is only destroyed after its tiles are gone.
+            foreach (var font in leaving)
+            {
+                SharedGlyphAtlas.Forget(font);
+                font.Dispose();
+            }
+            return leaving.Count;
         }
 
 #if UNITY_EDITOR
@@ -222,7 +451,7 @@ namespace OneText
 
         // --------------------------------------------------------------- probing
 
-        private static FontData Probe(int codepoint)
+        private static SystemFace Probe(int codepoint)
         {
             var files = SystemFontIndex.Files();
             if (files.Length == 0) return null;
@@ -243,8 +472,8 @@ namespace OneText
                 {
                     string path = answered[i];
                     if (!tried.Add(path)) continue;
-                    var font = TryFile(path, codepoint);
-                    if (font != null) { Remember(script, path); return font; }
+                    var face = TryFile(path, codepoint);
+                    if (face != null) { Remember(script, path); return face; }
                 }
             }
 
@@ -256,16 +485,16 @@ namespace OneText
                     if (!Matches(stems[i], preferred)) continue;
                     string path = files[i];
                     if (!tried.Add(path)) continue;
-                    var font = TryFile(path, codepoint);
-                    if (font != null) { Remember(script, path); return font; }
+                    var face = TryFile(path, codepoint);
+                    if (face != null) { Remember(script, path); return face; }
                 }
             }
 
             foreach (string path in files)
             {
                 if (!tried.Add(path)) continue;
-                var font = TryFile(path, codepoint);
-                if (font != null) { Remember(script, path); return font; }
+                var face = TryFile(path, codepoint);
+                if (face != null) { Remember(script, path); return face; }
             }
             return null;
         }
@@ -335,30 +564,52 @@ namespace OneText
         /// </summary>
         public static int FilesProbed { get; private set; }
 
-        private static FontData TryFile(string path, int codepoint)
+        private static SystemFace TryFile(string path, int codepoint)
         {
             FilesProbed++;
-            foreach (var face in SystemFontIndex.Coverage(path))
+            foreach (var coverage in SystemFontIndex.Coverage(path))
             {
-                if (!face.Covers(codepoint)) continue;
-                var font = Load(path, face);
+                if (!coverage.Covers(codepoint)) continue;
+                var face = Slot(path, coverage);
+                var font = Use(face);
                 // The cmap ranges over-estimate on purpose; the loaded face is
                 // where the question gets its real answer.
-                if (font != null && font.HasGlyph(codepoint)) return font;
+                if (font != null && font.HasGlyph(codepoint)) return face;
             }
             return null;
         }
 
-        private static FontData Load(string path, SystemFontIndex.FaceCoverage face)
+        private static SystemFace Slot(string path, SystemFontIndex.FaceCoverage coverage)
         {
-            string key = path + "#" + face.FaceIndex;
-            if (s_faces.TryGetValue(key, out var cached)) return cached;
+            string key = path + "#" + coverage.FaceIndex;
+            if (s_faces.TryGetValue(key, out var face)) return face;
+            face = new SystemFace
+            {
+                Path = path,
+                FaceIndex = coverage.FaceIndex,
+                Name = SystemFontIndex.FamilyName(path, coverage),
+            };
+            s_faces[key] = face;
+            return face;
+        }
+
+        /// <summary>
+        /// The face in this slot, loading it if it was let go of, and no longer
+        /// leaving if it was about to be. Null when it cannot be loaded.
+        /// </summary>
+        private static FontData Use(SystemFace face)
+        {
+            face.Releasing = false;
+            if (face.IsLive) return face.Font;
+            if (face.Failed) return null;
 
             FontData font = null;
             try
             {
-                var bytes = System.IO.File.ReadAllBytes(path);
-                font = FontData.Load(bytes, face.FaceIndex);
+                // Mapped, not read: only the pages of this one face that
+                // HarfBuzz touches come into memory, and none onto the managed
+                // heap. A collection's other faces cost nothing.
+                font = FontData.LoadFile(face.Path, face.FaceIndex);
                 if (!font.IsValid) { font.Dispose(); font = null; }
             }
             catch (Exception)
@@ -366,8 +617,14 @@ namespace OneText
                 font = null;
             }
 
-            s_faces[key] = font;
-            if (font != null) s_names[font.CacheId] = SystemFontIndex.FamilyName(path, face);
+            if (font == null)
+            {
+                face.Failed = true;
+                return null;
+            }
+            face.Font = font;
+            face.Loads++;
+            s_live[font.CacheId] = face;
             return font;
         }
 

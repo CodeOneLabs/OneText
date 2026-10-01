@@ -146,6 +146,7 @@ namespace OneText
         {
             get
             {
+                SyncSystemGeneration();
                 if (_systemPrimarySearched) return _systemPrimary;
                 _systemPrimarySearched = true;
                 _systemPrimary = ResolveFromSystem('A');
@@ -349,6 +350,22 @@ namespace OneText
         // dictionary lookup on this side of the lock.
         private Dictionary<int, FontData> _system;
 
+        // SystemFonts.Generation when _system was filled. A trim destroys the
+        // system faces nothing used, and a stack that outlived it (one a
+        // caller keeps, rather than a label's, which is rebuilt) must not hand
+        // one of them out again.
+        private int _systemGeneration = int.MinValue;
+
+        private void SyncSystemGeneration()
+        {
+            int generation = SystemFonts.Generation;
+            if (_systemGeneration == generation) return;
+            _systemGeneration = generation;
+            _system?.Clear();
+            _systemPrimary = null;
+            _systemPrimarySearched = false;
+        }
+
         /// <summary>
         /// The operating system's answer for a character no font in this stack
         /// covers, or null: when the tier is switched off, when the platform
@@ -363,6 +380,7 @@ namespace OneText
         public FontData ResolveFromSystem(int codepoint)
         {
             if (!SystemFonts.Enabled) return null;
+            SyncSystemGeneration();
             _system ??= new Dictionary<int, FontData>();
             if (_system.TryGetValue(codepoint, out var cached)) return cached;
             var font = SystemFonts.Resolve(codepoint);

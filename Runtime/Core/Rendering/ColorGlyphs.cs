@@ -41,10 +41,11 @@ namespace OneText
     /// SDF rasterizer produces, which is why this needed no new rasterizer.</item>
     /// </list>
     ///
-    /// Deliberately absent: sbix. Apple's newer sbix payloads are JPEG in ways
-    /// FreeType cannot decode, so the system-emoji story on iOS is a bundled
-    /// font in the fallback stack, not the system one. Saying so is better than
-    /// a path that works on some iOS versions.
+    /// sbix comes through the bitmap path too: HarfBuzz hands over the PNG
+    /// of an sbix strike the way it does a CBDT one, which is how Apple Color
+    /// Emoji draws from the system tier on macOS. A strike whose payload is not
+    /// PNG (JPEG, TIFF, Apple's compressed formats) yields nothing, and that
+    /// glyph goes down the outline path.
     ///
     /// COLRv1 (gradients and transforms) is also absent. It is a paint graph,
     /// not a layer list, and it deserves its own milestone rather than a

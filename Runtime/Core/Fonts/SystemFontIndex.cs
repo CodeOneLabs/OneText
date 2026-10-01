@@ -174,7 +174,17 @@ namespace OneText
         /// walk, so the whole tier is a no-op there and a character no bundled
         /// font covers stays tofu, exactly as it did before this existed.
         /// </summary>
-        internal static IEnumerable<string> Directories()
+        internal static IEnumerable<string> Directories() =>
+            DirectoriesOverride ?? PlatformDirectories();
+
+        /// <summary>
+        /// For tests: when set, the only directories walked, so a test can put
+        /// a font where the tier will find it and take it away again. Callers
+        /// <see cref="Forget"/> after changing it.
+        /// </summary>
+        internal static string[] DirectoriesOverride;
+
+        private static IEnumerable<string> PlatformDirectories()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
             yield break;

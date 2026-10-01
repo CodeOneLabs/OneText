@@ -94,8 +94,8 @@ namespace OneText.Tests
             new ScriptFont("Scripts/SimplifiedChinese", "zh-Hans", (Mac + "Hiragino Sans GB.ttc", "Hiragino Sans GB"), (Coverage + "NotoSansCJKsc-Regular.otf", "Noto Sans CJK SC")),
             new ScriptFont("Scripts/TraditionalChinese", "zh-Hant", (Mac + "STHeiti Light.ttc", "Heiti TC"), (Coverage + "NotoSansCJKtc-Regular.otf", "Noto Sans CJK TC")),
             new ScriptFont("Scripts/Japanese", "ja", (Mac + "ヒラギノ角ゴシック W3.ttc", "Hiragino Sans"), (Coverage + "NotoSansCJKjp-Regular.otf", "Noto Sans CJK JP")),
-            // Apple Color Emoji is sbix, which ColorGlyphs does not read by
-            // design; the CBDT face is the colour emoji this package draws.
+            // The CBDT face, so the sheet is the same on every machine; Apple
+            // Color Emoji (sbix) draws too, through the system tier.
             new ScriptFont("Scripts/Emoji", null, (Coverage + "NotoColorEmoji.ttf", "Noto Color Emoji")),
         };
 
