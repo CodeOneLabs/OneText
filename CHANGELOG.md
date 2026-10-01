@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A Han or kana character in a label that names its language is drawn by
+  that language's on-demand font, not by whichever resident font covers it.**
+  The stack asked the on-demand tier only after all its own fonts missed, and
+  a resident font of another language is one of its own: on a sheet that
+  showed Korean first, the Traditional Chinese and Japanese lines were drawn
+  in Apple SD Gothic Neo's Hanja and kana, and the Chinese and Japanese faces
+  were never loaded. Which picture a player saw depended on which screen came
+  first. The language's unloaded font is now asked before the stack's other
+  fonts, for the same characters the stack's own language rule covers.
+- **A keycap, or any character written with VS16, reaches an unloaded colour
+  emoji font.** "1️⃣" asks for the emoji presentation of a "1" every text face
+  has, so the plain on-demand miss never happened and the keycap was drawn as
+  a black "1". `OneFontReference` now records whether the font draws in colour
+  (`IsColor`, filled in by `OneFontReferences.Make`; re-add an emoji font to
+  record it), and an emoji-presentation request with no colour face in the
+  stack loads the colour one.
+- **Unloading a colour font frees its colour atlas tiles.** The sweep forgot
+  a face's SDF tiles but not its colour ones, which stayed until LRU pressure
+  pushed them out. `ColorGlyphAtlas.Forget` does for colour tiles what
+  `GlyphAtlas.Forget` does for SDF ones.
+- **The Addressables font source is registered in edit mode.** It registered
+  only at the start of a play session, so labels laid out in the editor with
+  the settings on Addressables fell back to Resources, warned, and found none
+  of the addresses.
+
 ## [0.4.0] - 2026-10-01
 
 ### Added
