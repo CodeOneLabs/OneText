@@ -1664,7 +1664,7 @@ namespace OneText.UGUI
             _settingsGeneration = OneTextSettings.Generation;
 
             ReleaseFonts(bumpGeneration: false);
-            _fonts = new FontStack();
+            _fonts = new FontStack { UseOnDemandFonts = true };
 
             // Length check, not just null: a domain reload serializes private
             // fields too, and Unity's serializer resurrects a null array as an

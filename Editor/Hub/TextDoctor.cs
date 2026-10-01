@@ -132,7 +132,8 @@ namespace OneText.Editor
         /// <summary>The chain a label gets with no font of its own: what Doctor judges against.</summary>
         public static FontStack ProjectFontStack()
         {
-            var stack = new FontStack();
+            // A label's own stack reaches on-demand fonts, so this one does too.
+            var stack = new FontStack { UseOnDemandFonts = true };
             var settings = OneTextSettings.Instance;
             if (settings == null) return stack;
             if (settings.DefaultFont != null)
@@ -244,7 +245,7 @@ namespace OneText.Editor
                             missing[codepoint] = (seen.Locale, seen.Key, seen.Source, seen.Count + 1);
                         continue;
                     }
-                    if (fonts.Covers(codepoint) || FontResidency.CoversOnDemand(codepoint)) continue;
+                    if (fonts.Covers(codepoint) || fonts.CoversOnDemand(codepoint)) continue;
                     missing[codepoint] = (entry.Locale, entry.Key, entry.Source, 1);
                 }
             }

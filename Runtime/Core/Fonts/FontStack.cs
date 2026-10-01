@@ -162,6 +162,24 @@ namespace OneText
 
         public int Count => _fonts.Count;
 
+        /// <summary>
+        /// Whether a character none of this stack's fonts covers may be drawn
+        /// from an on-demand font the project settings name, loading it if it
+        /// has to (<see cref="FontResidency"/>), before the operating system is
+        /// asked. Off by default, because it reaches past the fonts this stack
+        /// was given into project state; the label and the world text turn it
+        /// on, and so does the stack Doctor judges a project's strings against.
+        /// </summary>
+        public bool UseOnDemandFonts { get; set; }
+
+        /// <summary>
+        /// Whether, with <see cref="UseOnDemandFonts"/> on, an on-demand font
+        /// would draw this character. For diagnostics, alongside
+        /// <see cref="Covers"/>; nothing is loaded to answer.
+        /// </summary>
+        public bool CoversOnDemand(int codepoint) =>
+            UseOnDemandFonts && FontResidency.CoversOnDemand(codepoint);
+
         public void Add(FontData font) => Add(font, null, null, null);
 
         /// <summary>
@@ -322,7 +340,7 @@ namespace OneText
             // A font the project ships but has not loaded comes before one the
             // device happens to have. Not cached here: the answer is a face
             // FontResidency may unload, and it keeps its own cheap answer.
-            return FontResidency.ResolveOnDemand(codepoint, language) ??
+            return (UseOnDemandFonts ? FontResidency.ResolveOnDemand(codepoint, language) : null) ??
                    ResolveFromSystem(codepoint) ?? Primary;
         }
 

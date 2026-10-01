@@ -137,7 +137,7 @@ namespace OneText.Editor
             foreach (int codepoint in TextDoctor.Codepoints(text))
             {
                 if (codepoint == '\n' || codepoint == '\t' || codepoint == ' ') continue;
-                if (!fonts.Covers(codepoint) && !FontResidency.CoversOnDemand(codepoint)) missing++;
+                if (!fonts.Covers(codepoint) && !fonts.CoversOnDemand(codepoint)) missing++;
             }
             return missing;
         }
@@ -164,7 +164,7 @@ namespace OneText.Editor
                 return projectStack;
             if (cache.TryGetValue(style, out var cached)) return cached;
 
-            var stack = new FontStack();
+            var stack = new FontStack { UseOnDemandFonts = true };
             stack.Add(style.Font.Font, style.Font.Language);
             var settings = OneTextSettings.Instance;
             if (settings != null)

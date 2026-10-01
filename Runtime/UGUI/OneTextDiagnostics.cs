@@ -199,7 +199,7 @@ namespace OneText.UGUI
                         codepoint = char.ConvertToUtf32(c, text[i + 1]);
                         i++;
                     }
-                    if (fonts.Covers(codepoint) || FontResidency.CoversOnDemand(codepoint)) continue;
+                    if (fonts.Covers(codepoint) || fonts.CoversOnDemand(codepoint)) continue;
                     if (missing == 0) firstMissing = codepoint;
                     missing++;
                 }

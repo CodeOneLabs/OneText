@@ -516,7 +516,7 @@ namespace OneText
         {
             _settingsGeneration = OneTextSettings.Generation;
             ReleaseFonts();
-            _fonts = new FontStack();
+            _fonts = new FontStack { UseOnDemandFonts = true };
 
             // Length check, not just null: see OneTextLabel.BuildFontStack.
             if (_fontBytesOverride != null && _fontBytesOverride.Length > 0)
