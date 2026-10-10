@@ -17,18 +17,13 @@
   run in the same label relocating an earlier run's tiles no longer leaves a
   mixed mesh marked current. If an undersized atlas cannot settle within the
   four passes, the stale labels are cleared and retried on the next frame
-  rather than drawn with substituted glyphs. A frame on which the atlas
-  relocates pays one extra canvas pass (about 0.7 ms with 1,000 labels in the
-  6000.0.77f1 editor); a stable frame pays a version check and about 55 ns per
-  label.
-
-- **Culled labels are left alone by that repair.** uGUI skips a culled
-  graphic's rebuild, so a label scrolled out of a `RectMask2D` keeps its stale
-  quads, and clearing it would repeat on every frame until it scrolled back.
-  A label created below a scroll view's fold has never built at all and would
-  look stale from its first frame, with no atlas pressure needed: 500 such
-  labels cost 0.24 ms a frame before this. A culled label stays dirty from the
-  version change and rebuilds when it unculls.
+  rather than drawn with substituted glyphs. Only then: not during the thrash
+  back-off, which clearing would defeat by rebuilding the labels anyway, and
+  never a culled label (uGUI skips its rebuild; it rebuilds when it unculls)
+  or one with no font to build with, either of which looks stale on every
+  frame. A frame on which the atlas relocates pays one extra canvas pass
+  (about 0.7 ms with 1,000 labels in the 6000.0.77f1 editor); a stable frame
+  pays a version check.
 
 ## [0.4.0] - 2026-10-01
 

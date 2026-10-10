@@ -149,14 +149,17 @@ namespace OneText.UGUI
                 // Recursive canvas updates re-enter this event, hence the guard.
                 for (int pass = 0; pass < MaxRepairPasses; pass++)
                 {
-                    if (!QueueChangedMeshes()) break;
+                    // Settled, or backing off. Clearing labels during the
+                    // back-off would rebuild them anyway and keep the atlas
+                    // evicting, and a label with no font to build with would
+                    // look stale on every frame.
+                    if (!QueueChangedMeshes()) return;
                     Canvas.ForceUpdateCanvases();
                 }
-                // An undersized atlas may never hold every visible glyph. Do
-                // not display another character in that case; retry next frame.
-                // A culled label draws nothing and uGUI skips its rebuild, so
-                // clearing it would repeat every frame until it scrolls back.
-                // It is already dirty, and uGUI rebuilds it when it unculls.
+                // The passes are spent: an undersized atlas may never hold
+                // every visible glyph. Do not display another character in
+                // that case; retry next frame. A culled label draws nothing and
+                // uGUI skips its rebuild, so it is left dirty for when it unculls.
                 foreach (var graphic in s_users)
                 {
                     if (graphic is OneTextLabel label && label.isActiveAndEnabled &&

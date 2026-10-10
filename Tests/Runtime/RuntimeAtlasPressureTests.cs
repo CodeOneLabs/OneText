@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using OneText.UGUI;
 using UnityEngine;
@@ -331,6 +332,47 @@ namespace OneText.Tests.Play
             Assert.Greater(target.canvasRenderer.materialCount, 0,
                 "the label came back without material bindings");
             PlayHarness.ExpectNoErrors();
+        }
+
+        /// <summary>
+        /// A label with text and no font to draw it never makes its quads
+        /// current, so to the repair it looks stale on every frame. With the
+        /// atlas standing still the repair has nothing to do, and must not
+        /// rebuild that label (and its font stack) once a frame.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Label_With_No_Font_Is_Not_Rebuilt_Every_Frame()
+        {
+            SystemFonts.Enabled = false;
+            try
+            {
+                // One label that draws, so the repair is registered and running.
+                _harness.Label("WAVE", 64f);
+                var go = _harness.Track(new GameObject("NoFont",
+                    typeof(RectTransform), typeof(CanvasRenderer)));
+                go.transform.SetParent(_harness.Canvas.transform, false);
+                // Said once, not once a frame.
+                LogAssert.Expect(LogType.Warning, new Regex("no font is assigned"));
+                var target = go.AddComponent<OneTextLabel>();
+                target.Text = "no font";
+                yield return PlayHarness.Frames(2);
+                if (PlayHarness.DrawnQuads(target) > 0)
+                    Assert.Ignore("this project's settings give an unassigned label a font");
+
+                int dirtied = 0;
+                UnityEngine.Events.UnityAction count = () => dirtied++;
+                target.RegisterDirtyVerticesCallback(count);
+                target.RegisterDirtyMaterialCallback(count);
+                const int frames = 30;
+                yield return PlayHarness.Frames(frames);
+                target.UnregisterDirtyVerticesCallback(count);
+                target.UnregisterDirtyMaterialCallback(count);
+
+                Assert.AreEqual(0, dirtied,
+                    $"the label with no font was dirtied {dirtied} times over {frames} frames");
+                PlayHarness.ExpectNoErrors();
+            }
+            finally { SystemFonts.UseProjectSetting(); }
         }
 
         private static Rect FirstUv(OneTextLabel label)
