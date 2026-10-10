@@ -111,7 +111,7 @@ convert keeps working. Scan again whenever you want to see what is left.
 
 ## Status
 
-**v0.4.0.** Everything above is shipped. v0.1.0 was the first public release,
+**v0.4.1.** Everything above is shipped. v0.1.0 was the first public release,
 v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
 the Onboarding tab, and v0.3.0 was about coming from TextMesh Pro and finding
 less missing: a migration you can run on part of a project without the rest
@@ -145,8 +145,13 @@ all of them. Fallbacks can be named by key rather than referenced, and
 for a character nothing loaded draws, and unloads them — face, bytes, atlas
 tiles and asset — when nothing wants them, a frame after every label has been
 given the chance to take them back. They come from Resources, or from
-Addressables in a project that has it. What comes next is verification and
-reach, not features:
+Addressables in a project that has it.
+
+v0.4.1 closes the one frame in which a label could draw the wrong characters:
+when the atlas moved tiles in the middle of a canvas pass, a label that had
+already built kept the old locations until the next frame. Meshes are now
+repaired after uGUI's graphic pass and before anything is drawn. What comes
+next is verification and reach, not features:
 
 | | |
 |---|---|

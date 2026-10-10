@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.4.1] - 2026-10-10
+
+### Fixed
+
+- **A label never draws another glyph's tile for a frame after the atlas moves
+  tiles.** When a compaction or eviction happened during a canvas update,
+  after a label had built its mesh, that mesh kept the old UVs until the next
+  `LateUpdate` poll dirtied it, so for one frame it sampled whatever had moved
+  into its tiles; a forced relocation on a result screen showed exactly one
+  corrupted frame. `AtlasInvalidation` now also checks the atlas versions from
+  `Canvas.willRenderCanvases`, after `CanvasUpdateRegistry` has finished its
+  graphic pass, and rebuilds the changed meshes with `ForceUpdateCanvases`
+  before drawing, at most four times. A label's quad cache also records the
+  atlas versions from the start of its build rather than the end, so a later
+  run in the same label relocating an earlier run's tiles no longer leaves a
+  mixed mesh marked current. If an undersized atlas cannot settle within the
+  four passes, the stale labels are cleared and retried on the next frame
+  rather than drawn with substituted glyphs. A frame on which the atlas
+  relocates pays one extra canvas pass (about 0.7 ms with 1,000 labels in the
+  6000.0.77f1 editor); a stable frame pays a version check and about 55 ns per
+  label.
+
+- **Culled labels are left alone by that repair.** uGUI skips a culled
+  graphic's rebuild, so a label scrolled out of a `RectMask2D` keeps its stale
+  quads, and clearing it would repeat on every frame until it scrolled back.
+  A label created below a scroll view's fold has never built at all and would
+  look stale from its first frame, with no atlas pressure needed: 500 such
+  labels cost 0.24 ms a frame before this. A culled label stays dirty from the
+  version change and rebuilds when it unculls.
+
 ## [0.4.0] - 2026-10-01
 
 ### Added
