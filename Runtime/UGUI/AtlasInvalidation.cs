@@ -154,10 +154,13 @@ namespace OneText.UGUI
                 }
                 // An undersized atlas may never hold every visible glyph. Do
                 // not display another character in that case; retry next frame.
+                // A culled label draws nothing and uGUI skips its rebuild, so
+                // clearing it would repeat every frame until it scrolls back.
+                // It is already dirty, and uGUI rebuilds it when it unculls.
                 foreach (var graphic in s_users)
                 {
                     if (graphic is OneTextLabel label && label.isActiveAndEnabled &&
-                        !label.HasCurrentAtlasQuads)
+                        !label.HasCurrentAtlasQuads && !label.canvasRenderer.cull)
                     {
                         label.canvasRenderer.Clear();
                         label.SetVerticesDirty();

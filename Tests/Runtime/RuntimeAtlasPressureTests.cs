@@ -273,6 +273,66 @@ namespace OneText.Tests.Play
             PlayHarness.ExpectNoErrors();
         }
 
+        /// <summary>
+        /// A label scrolled out of a RectMask2D is culled, and uGUI skips its
+        /// rebuild, so its quads stay stale after a relocation. The pre-draw
+        /// repair must leave it alone rather than clearing and dirtying it on
+        /// every frame until it scrolls back, and it must still come back
+        /// current on the frame it unculls.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Culled_Label_Is_Not_Churned_After_Relocation()
+        {
+            var viewport = _harness.Track(new GameObject("Viewport",
+                typeof(RectTransform), typeof(RectMask2D)));
+            viewport.transform.SetParent(_harness.Canvas.transform, false);
+            ((RectTransform)viewport.transform).sizeDelta = new Vector2(400f, 200f);
+
+            var target = _harness.Label("SSS", 86f, PlayHarness.LatinFont, new Vector2(300f, 100f));
+            target.transform.SetParent(viewport.transform, false);
+            _harness.Label("WAVE WAVE WAVE WAVE", 168f, PlayHarness.LatinFont,
+                new Vector2(760f, 220f));
+            yield return PlayHarness.Frames(2);
+            int expectedQuads = PlayHarness.DrawnQuads(target);
+            Assert.Greater(expectedQuads, 0, "the label never drew");
+
+            var outside = new Vector2(0f, 2000f);
+            target.rectTransform.anchoredPosition = outside;
+            yield return PlayHarness.Frames(2);
+            Assert.IsTrue(target.canvasRenderer.cull, "the label is not culled; the test exercises nothing");
+
+            int dirtied = 0;
+            UnityEngine.Events.UnityAction count = () => dirtied++;
+            target.RegisterDirtyVerticesCallback(count);
+            target.RegisterDirtyMaterialCallback(count);
+
+            var atlas = SharedGlyphAtlas.Atlas;
+            int versionBefore = atlas.Version;
+            atlas.Compact();
+            AtlasFlushScheduler.FlushNow();
+            Assert.Greater(atlas.Version, versionBefore,
+                "the atlas version did not change; this test did not exercise relocation");
+
+            const int frames = 30;
+            yield return PlayHarness.Frames(frames);
+            target.UnregisterDirtyVerticesCallback(count);
+            target.UnregisterDirtyMaterialCallback(count);
+            // The relocation itself dirties the label once; more is the repair
+            // clearing a label that cannot rebuild while it stays culled.
+            Assert.LessOrEqual(dirtied, 2,
+                $"the culled label was dirtied {dirtied} times over {frames} frames");
+
+            target.rectTransform.anchoredPosition = Vector2.zero;
+            yield return null;
+            Assert.IsFalse(target.canvasRenderer.cull, "the label did not uncull");
+            AssertQuadCacheCurrent(target, atlas.Version);
+            Assert.AreEqual(expectedQuads, PlayHarness.DrawnQuads(target),
+                "the label did not redraw after scrolling back into view");
+            Assert.Greater(target.canvasRenderer.materialCount, 0,
+                "the label came back without material bindings");
+            PlayHarness.ExpectNoErrors();
+        }
+
         private static Rect FirstUv(OneTextLabel label)
         {
             Assert.Greater(label.DrawnQuads.Count, 0, "the label has no drawn quads");
