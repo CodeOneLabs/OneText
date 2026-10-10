@@ -3398,6 +3398,19 @@ namespace OneText.UGUI
             }
         }
 
+        internal bool HasCurrentAtlasQuads
+        {
+            get
+            {
+                if (SourceSpan.Length == 0) return true;
+                if (!_quadsValid) return false;
+                var atlas = _precise ? SharedGlyphAtlas.PreciseAtlas : SharedGlyphAtlas.Atlas;
+                int colorVersion = SharedGlyphAtlas.ColorAtlasExists
+                    ? SharedGlyphAtlas.ColorAtlas.Version : 0;
+                return _quadsAtlasVersion == atlas.Version && _quadsColorVersion == colorVersion;
+            }
+        }
+
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             long startedAt = AtlasDiagnostics.Now;
@@ -3468,6 +3481,11 @@ namespace OneText.UGUI
                 return;
             }
 
+            // Later runs can compact an atlas after an earlier run has baked
+            // UVs. Retain the starting versions so the pre-draw repair detects
+            // that case instead of certifying a mixed-version mesh as current.
+            int buildAtlasVersion = atlas.Version;
+            int buildColorVersion = colorVersion;
             _quads.Clear();
             bool vertical = IsVertical;
             // Rebuilt with the quads that index into it, never separately: a
@@ -3617,10 +3635,8 @@ namespace OneText.UGUI
             _quadBuilds++;
             _quadsValid = true;
             _quadsLayoutGeneration = _layoutGeneration;
-            _quadsAtlasVersion = atlas.Version;
-            _quadsColorVersion = SharedGlyphAtlas.ColorAtlasExists
-                ? SharedGlyphAtlas.ColorAtlas.Version
-                : 0;
+            _quadsAtlasVersion = buildAtlasVersion;
+            _quadsColorVersion = buildColorVersion;
             _quadsSpriteVersion = spriteVersion;
 
             EmitQuads(vh);

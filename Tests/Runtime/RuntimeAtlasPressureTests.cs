@@ -1,9 +1,11 @@
 using System.Collections;
+using System.Reflection;
 using System.Text;
 using NUnit.Framework;
 using OneText.UGUI;
 using UnityEngine;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 
 namespace OneText.Tests.Play
 {
@@ -23,13 +25,27 @@ namespace OneText.Tests.Play
     /// </summary>
     public class RuntimeAtlasPressureTests
     {
+        private const BindingFlags InstanceFields = BindingFlags.Instance | BindingFlags.NonPublic;
+        private static readonly FieldInfo QuadsAtlasVersionField =
+            typeof(OneTextLabel).GetField("_quadsAtlasVersion", InstanceFields);
+        private static readonly FieldInfo QuadsValidField =
+            typeof(OneTextLabel).GetField("_quadsValid", InstanceFields);
+
         private readonly PlayHarness _harness = new PlayHarness();
 
         [SetUp]
-        public void Setup() => _harness.Setup();
+        public void Setup()
+        {
+            SharedGlyphAtlas.Reconfigure(force: true);
+            _harness.Setup();
+        }
 
         [TearDown]
-        public void Teardown() => _harness.Teardown();
+        public void Teardown()
+        {
+            _harness.Teardown();
+            SharedGlyphAtlas.Reconfigure(force: true);
+        }
 
         /// <summary>
         /// The face the churn is drawn through. Han is the pressure test that
@@ -155,6 +171,181 @@ namespace OneText.Tests.Play
             }
 
             PlayHarness.ExpectNoErrors();
+        }
+
+        [UnityTest]
+        public IEnumerator LatePreRender_Relocation_Repairs_Sdf_Label_Before_Next_Frame()
+        {
+            var target = _harness.Label("SSS", 86f, PlayHarness.LatinFont, new Vector2(500f, 130f));
+            var pressure = _harness.Label("WAVE WAVE WAVE WAVE", 168f,
+                PlayHarness.LatinFont, new Vector2(760f, 220f));
+            pressure.rectTransform.anchoredPosition = new Vector2(0f, -180f);
+            yield return PlayHarness.Frames(2);
+
+            var firstUv = FirstUv(target);
+            int builds = target.QuadBuilds;
+            int expectedQuads = PlayHarness.DrawnQuads(target);
+
+            yield return null;
+            var relocator = new LatePreRenderAtlasRelocator(SharedGlyphAtlas.Atlas);
+            try { Canvas.ForceUpdateCanvases(); }
+            finally { relocator.Dispose(); }
+
+            Assert.IsTrue(relocator.Ran, "the relocation hook never ran");
+            Assert.Greater(relocator.VersionAfter, relocator.VersionBefore,
+                "the atlas version did not change; this test did not exercise relocation");
+            Assert.Greater(relocator.CompactionsAfter, relocator.CompactionsBefore,
+                "the atlas was not compacted");
+            Assert.Greater(target.QuadBuilds, builds,
+                "the label waited for a later frame to rebuild stale atlas UVs");
+            Assert.AreEqual(expectedQuads, PlayHarness.DrawnQuads(target),
+                "same-frame atlas repair changed the visible text geometry");
+            AssertQuadCacheCurrent(target, relocator.VersionAfter);
+            AssertMoved(firstUv, FirstUv(target));
+            PlayHarness.ExpectNoErrors();
+        }
+
+        [UnityTest]
+        public IEnumerator LatePreRender_Relocation_Repairs_Precise_Label_Before_Next_Frame()
+        {
+            var target = _harness.Label("SSS", 96f, PlayHarness.LatinFont, new Vector2(520f, 140f));
+            target.Precise = true;
+            var pressure = _harness.Label("PRECISE WAVE WAVE", 178f,
+                PlayHarness.LatinFont, new Vector2(760f, 220f));
+            pressure.Precise = true;
+            pressure.rectTransform.anchoredPosition = new Vector2(0f, -190f);
+            yield return PlayHarness.Frames(2);
+
+            var firstUv = FirstUv(target);
+            int builds = target.QuadBuilds;
+            int expectedQuads = PlayHarness.DrawnQuads(target);
+
+            yield return null;
+            var relocator = new LatePreRenderAtlasRelocator(SharedGlyphAtlas.PreciseAtlas);
+            try { Canvas.ForceUpdateCanvases(); }
+            finally { relocator.Dispose(); }
+
+            Assert.IsTrue(relocator.Ran, "the relocation hook never ran");
+            Assert.Greater(relocator.VersionAfter, relocator.VersionBefore,
+                "the precise atlas version did not change; this test did not exercise relocation");
+            Assert.Greater(relocator.CompactionsAfter, relocator.CompactionsBefore,
+                "the precise atlas was not compacted");
+            Assert.Greater(target.QuadBuilds, builds,
+                "the precise label waited for a later frame to rebuild stale atlas UVs");
+            Assert.AreEqual(expectedQuads, PlayHarness.DrawnQuads(target),
+                "same-frame precise atlas repair changed the visible text geometry");
+            AssertQuadCacheCurrent(target, relocator.VersionAfter);
+            AssertMoved(firstUv, FirstUv(target));
+            PlayHarness.ExpectNoErrors();
+        }
+
+        [UnityTest]
+        public IEnumerator Empty_Label_Populated_With_Numbers_Keeps_Material_After_Relocation()
+        {
+            var target = _harness.Label(string.Empty, 74f, PlayHarness.LatinFont,
+                new Vector2(520f, 120f));
+            yield return PlayHarness.Frames(2);
+            Assert.AreEqual(0, PlayHarness.DrawnQuads(target),
+                "the empty label should not draw any quads");
+
+            target.Text = "123456";
+            var pressure = _harness.Label("WAVE WAVE WAVE WAVE", 168f,
+                PlayHarness.LatinFont, new Vector2(760f, 220f));
+            pressure.rectTransform.anchoredPosition = new Vector2(0f, -180f);
+            yield return PlayHarness.Frames(2);
+
+            int expectedQuads = PlayHarness.DrawnQuads(target);
+            Assert.Greater(expectedQuads, 0, "the numeric label never drew");
+
+            yield return null;
+            var relocator = new LatePreRenderAtlasRelocator(SharedGlyphAtlas.Atlas);
+            try { Canvas.ForceUpdateCanvases(); }
+            finally { relocator.Dispose(); }
+
+            Assert.IsTrue(relocator.Ran, "the relocation hook never ran");
+            Assert.Greater(relocator.VersionAfter, relocator.VersionBefore,
+                "the atlas version did not change; this test did not exercise relocation");
+            AssertQuadCacheCurrent(target, relocator.VersionAfter);
+            Assert.AreEqual(expectedQuads, PlayHarness.DrawnQuads(target),
+                "a label populated after starting empty lost its numeric geometry");
+            Assert.Greater(target.canvasRenderer.materialCount, 0,
+                "atlas repair left the populated label without material bindings");
+            PlayHarness.ExpectNoErrors();
+        }
+
+        private static Rect FirstUv(OneTextLabel label)
+        {
+            Assert.Greater(label.DrawnQuads.Count, 0, "the label has no drawn quads");
+            return label.DrawnQuads[0].UvRect;
+        }
+
+        private static void AssertQuadCacheCurrent(OneTextLabel label, int expectedVersion)
+        {
+            Assert.IsTrue((bool)QuadsValidField.GetValue(label), "the label's quad cache is invalid");
+            Assert.AreEqual(expectedVersion, (int)QuadsAtlasVersionField.GetValue(label),
+                "the label still holds stale atlas UVs before the next frame");
+        }
+
+        private static void AssertMoved(Rect before, Rect after)
+        {
+            bool moved =
+                !Mathf.Approximately(before.x, after.x) ||
+                !Mathf.Approximately(before.y, after.y) ||
+                !Mathf.Approximately(before.width, after.width) ||
+                !Mathf.Approximately(before.height, after.height);
+            Assert.IsTrue(moved, "the forced compaction did not actually relocate the sampled glyph");
+        }
+
+        private sealed class LatePreRenderAtlasRelocator : ICanvasElement
+        {
+            private readonly GlyphAtlas _atlas;
+            private bool _registered;
+
+            public bool Ran { get; private set; }
+            public int VersionBefore { get; private set; }
+            public int VersionAfter { get; private set; }
+            public int CompactionsBefore { get; private set; }
+            public int CompactionsAfter { get; private set; }
+
+            public LatePreRenderAtlasRelocator(GlyphAtlas atlas)
+            {
+                _atlas = atlas;
+                _registered = true;
+                CanvasUpdateRegistry.RegisterCanvasElementForGraphicRebuild(this);
+            }
+
+            public void Rebuild(CanvasUpdate executing)
+            {
+                if (executing != CanvasUpdate.LatePreRender || Ran) return;
+
+                var before = _atlas.GetStats();
+                VersionBefore = _atlas.Version;
+                CompactionsBefore = before.Compactions;
+                _atlas.Compact();
+                AtlasFlushScheduler.FlushNow();
+                var after = _atlas.GetStats();
+                VersionAfter = _atlas.Version;
+                CompactionsAfter = after.Compactions;
+                Ran = true;
+            }
+
+            public void Dispose()
+            {
+                if (!_registered) return;
+                CanvasUpdateRegistry.UnRegisterCanvasElementForRebuild(this);
+                _registered = false;
+            }
+
+            public bool IsDestroyed() => false;
+
+            public void LayoutComplete() { }
+
+            public void GraphicUpdateComplete()
+            {
+                _registered = false;
+            }
+
+            public Transform transform => null;
         }
     }
 }
