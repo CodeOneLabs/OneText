@@ -12,10 +12,9 @@ namespace OneText.UGUI
     /// wrong glyph, or none. The atlas reports this as a version change, and
     /// graphics registered here rebuild once per change.
     ///
-    /// The check runs on its own frame (a hidden driver in play mode, the
-    /// editor update loop otherwise) rather than inline, because the version
-    /// changes in the middle of a canvas rebuild, and uGUI refuses to queue a
-    /// rebuild from inside one.
+    /// Version changes can happen inside a canvas rebuild, where uGUI refuses
+    /// to queue another graphic. Check again after that pass and complete any
+    /// repairs before drawing, so old UVs never sample newly relocated tiles.
     /// </summary>
     public static class AtlasInvalidation
     {
@@ -34,6 +33,9 @@ namespace OneText.UGUI
         private static bool s_warned;
         private static bool s_editorDriving;
         private static AtlasWatcher s_watcher;
+        private static bool s_canvasHooked;
+        private static bool s_repairing;
+        private const int MaxRepairPasses = 4;
 
         /// <summary>
         /// Clears everything that belongs to a play session. With Domain Reload
@@ -45,6 +47,9 @@ namespace OneText.UGUI
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetForPlaySession()
         {
+            Canvas.willRenderCanvases -= RepairBeforeDraw;
+            s_canvasHooked = false;
+            s_repairing = false;
             s_users.Clear();
             s_atlas = null;
             s_version = 0;
@@ -70,9 +75,11 @@ namespace OneText.UGUI
         public static void Unregister(Graphic graphic) => s_users.Remove(graphic);
 
         /// <summary>Checks the atlas once and rebuilds registered graphics if it changed.</summary>
-        public static void Poll()
+        public static void Poll() => QueueChangedMeshes();
+
+        private static bool QueueChangedMeshes()
         {
-            if (!SharedGlyphAtlas.Exists) return;
+            if (!SharedGlyphAtlas.Exists) return false;
 
             var atlas = SharedGlyphAtlas.Atlas;
             // The colour atlas evicts too, and a mesh drawing an emoji has that
@@ -93,7 +100,7 @@ namespace OneText.UGUI
                 preciseVersion == s_preciseVersion)
             {
                 s_consecutive = 0;
-                return;
+                return false;
             }
 
             s_atlas = atlas;
@@ -104,7 +111,7 @@ namespace OneText.UGUI
             if (s_backoff > 0)
             {
                 s_backoff--;
-                return;
+                return false;
             }
 
             if (++s_consecutive > ThrashLimit)
@@ -120,7 +127,7 @@ namespace OneText.UGUI
                         $"{stats.Evictions} evictions). Raise the atlas budget in " +
                         "Project Settings > OneText, or draw fewer distinct glyphs and sizes.");
                 }
-                return;
+                return false;
             }
 
             for (int i = s_users.Count - 1; i >= 0; i--)
@@ -128,6 +135,41 @@ namespace OneText.UGUI
                 if (s_users[i] == null) s_users.RemoveAt(i);
                 else s_users[i].SetVerticesDirty();
             }
+            return true;
+        }
+
+        private static void RepairBeforeDraw()
+        {
+            if (s_repairing || CanvasUpdateRegistry.IsRebuildingGraphics() ||
+                CanvasUpdateRegistry.IsRebuildingLayout()) return;
+            s_repairing = true;
+            try
+            {
+                // This callback follows the registry's complete graphic pass.
+                // Recursive canvas updates re-enter this event, hence the guard.
+                for (int pass = 0; pass < MaxRepairPasses; pass++)
+                {
+                    if (!QueueChangedMeshes()) break;
+                    Canvas.ForceUpdateCanvases();
+                }
+                // An undersized atlas may never hold every visible glyph. Do
+                // not display another character in that case; retry next frame.
+                // A culled label draws nothing and uGUI skips its rebuild, so
+                // clearing it would repeat every frame until it scrolls back.
+                // It is already dirty, and uGUI rebuilds it when it unculls.
+                foreach (var graphic in s_users)
+                {
+                    if (graphic is OneTextLabel label && label.isActiveAndEnabled &&
+                        !label.HasCurrentAtlasQuads && !label.canvasRenderer.cull)
+                    {
+                        label.canvasRenderer.Clear();
+                        label.SetVerticesDirty();
+                        // Clear also removes the material bindings.
+                        label.SetMaterialDirty();
+                    }
+                }
+            }
+            finally { s_repairing = false; }
         }
 
         private static void EnsureDriver()
@@ -142,7 +184,16 @@ namespace OneText.UGUI
                 UnityEditor.EditorApplication.update += Poll;
             }
 #endif
-            if (!Application.isPlaying || s_watcher != null) return;
+            if (!Application.isPlaying) return;
+            if (!s_canvasHooked)
+            {
+                // Construct the registry before subscribing: repairs must run
+                // after PerformUpdate, never inside its graphic rebuild loop.
+                _ = CanvasUpdateRegistry.instance;
+                Canvas.willRenderCanvases += RepairBeforeDraw;
+                s_canvasHooked = true;
+            }
+            if (s_watcher != null) return;
 
             var host = new GameObject("OneText Atlas Watcher") { hideFlags = HideFlags.HideAndDontSave };
             s_watcher = host.AddComponent<AtlasWatcher>();
