@@ -12,6 +12,17 @@ namespace OneText
         public List<List<Vector2>> Contours;
         public List<int> Groups;      // source glyph per contour (null = one group)
         public float PixelsPerUnit;
+
+        /// <summary>
+        /// The source glyphs (values of <see cref="Groups"/>; 0 when that is
+        /// null) already known to have contours that overlap, or null when
+        /// nothing is known. A request that says what it knows, even that it
+        /// knows of none, is not scanned for overlaps; the glyphs it names are
+        /// resolved before the bake. Fonts made into a <see cref="OneFontAsset"/>
+        /// carry this knowledge (<see cref="OneFontAsset.HasOverlapIndex"/>),
+        /// and the atlas passes it on.
+        /// </summary>
+        public List<int> KnownOverlaps;
     }
 
     public static partial class GlyphRasterizer
@@ -112,7 +123,21 @@ namespace OneText
             int bytesPerTexel = precise ? 4 : 1;
             s_resolvedOf.Clear();
             for (int r = 0; r < requests.Count; r++) s_resolvedOf.Add(-1);
-            int groupCount = Pack(requests, null, precise, out int packedPoints);
+            s_resolvedUsed = 0;
+
+            // What a font asset already knows needs no scan: those glyphs are
+            // resolved now and baked once, and a request that knows of none is
+            // packed as it came. Only requests that know nothing are scanned.
+            if (ResolveOverlaps)
+            {
+                for (int r = 0; r < requests.Count; r++)
+                {
+                    var known = requests[r].KnownOverlaps;
+                    if (known == null || known.Count == 0 || results[r].IsEmpty) continue;
+                    s_resolvedOf[r] = ResolveInto(requests[r], known, precise);
+                }
+            }
+            int groupCount = Pack(requests, null, precise, true, out int packedPoints);
 
             long jobStart = AtlasDiagnostics.Now;
             bool scanning = ResolveOverlaps && groupCount > 0;
@@ -140,7 +165,7 @@ namespace OneText
             {
                 scan.Schedule(groupCount, 4).Complete();
                 redo = ResolveFlagged(requests, groupCount, precise, out flagged);
-                if (redo > 0) Pack(requests, null, precise, out packedPoints);
+                if (redo > 0) Pack(requests, null, precise, false, out packedPoints);
                 Dispatch(packedPoints, totalTexels, s_descs.Count, precise).Complete();
             }
             else
@@ -164,7 +189,7 @@ namespace OneText
                 if (redo > 0) Rebake(requests, precise);
             }
             if (scanning) s_expectOverlaps = flagged > 0;
-            for (int k = 0; k < redo; k++) s_resolved[k].Clear();
+            for (int k = 0; k < s_resolvedUsed; k++) s_resolved[k].Clear();
 
             for (int r = 0; r < results.Count; r++)
             {
@@ -198,23 +223,23 @@ namespace OneText
         /// in <see cref="s_resolvedOf"/> is packed from its resolved contours,
         /// any other from the contours it came with.
         ///
-        /// Returns the number of source-glyph spans written for the overlap
-        /// scan, which only a full pack of original contours records.
+        /// With <paramref name="recordSpans"/>, also records one span per
+        /// source glyph for the overlap scan, for every request that is neither
+        /// resolved nor carrying <see cref="RasterizeRequest.KnownOverlaps"/>,
+        /// and returns how many.
         /// </summary>
         private static int Pack(IReadOnlyList<RasterizeRequest> requests, List<int> subset, bool precise,
-            out int totalPoints)
+            bool recordSpans, out int totalPoints)
         {
             int tiles = subset?.Count ?? requests.Count;
             int totalContours = 0, totalTexels = 0;
             totalPoints = 0;
-            bool spans = subset == null;
             for (int k = 0; k < tiles; k++)
             {
                 int r = subset?[k] ?? k;
                 int resolved = s_resolvedOf[r];
                 if (resolved >= 0)
                 {
-                    spans = false;
                     var contours = s_resolved[resolved].Contours;
                     foreach (var contour in contours) totalPoints += contour.Count;
                     totalContours += contours.Count;
@@ -231,7 +256,7 @@ namespace OneText
                 totalTexels += s_descs[r].Width * s_descs[r].Height;
             }
             GrowGeometry(totalPoints, totalContours, tiles, totalTexels, precise);
-            if (spans)
+            if (recordSpans)
             {
                 Grow(ref s_groupSpans, totalContours);
                 Grow(ref s_overlapping, totalContours);
@@ -245,6 +270,7 @@ namespace OneText
                 int r = subset?[k] ?? k;
                 var request = requests[r];
                 var resolved = s_resolvedOf[r] >= 0 ? s_resolved[s_resolvedOf[r]] : null;
+                bool spans = recordSpans && resolved == null && request.KnownOverlaps == null;
                 var contours = resolved?.Contours ?? request.Contours;
                 var groups = resolved?.Groups ?? request.Groups;
                 int tileStart = ci, flag = 0;
@@ -450,14 +476,27 @@ namespace OneText
 
             for (int k = 0; k < s_redoRequests.Count; k++)
             {
-                if (s_resolved.Count == k) s_resolved.Add(new ResolvedContours());
                 int r = s_redoRequests[k];
-                ContourOverlaps.Resolve(requests[r], s_redoGroups[k], precise, s_resolved[k]);
-                s_resolvedOf[r] = k;
+                s_resolvedOf[r] = ResolveInto(requests[r], s_redoGroups[k], precise);
             }
-            if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OverlapRebakes += s_redoRequests.Count;
             return s_redoRequests.Count;
         }
+
+        /// <summary>
+        /// Resolves the named groups of one request into the next free entry of
+        /// <see cref="s_resolved"/> and returns its index.
+        /// </summary>
+        private static int ResolveInto(in RasterizeRequest request, List<int> groups, bool precise)
+        {
+            int k = s_resolvedUsed++;
+            if (s_resolved.Count == k) s_resolved.Add(new ResolvedContours());
+            ContourOverlaps.Resolve(request, groups, precise, s_resolved[k]);
+            if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OverlapRebakes++;
+            return k;
+        }
+
+        /// <summary>Entries of <see cref="s_resolved"/> this batch has filled.</summary>
+        private static int s_resolvedUsed;
 
         /// <summary>
         /// Bakes the resolved requests again as a batch of their own and writes
@@ -467,7 +506,7 @@ namespace OneText
         /// </summary>
         private static void Rebake(IReadOnlyList<RasterizeRequest> requests, bool precise)
         {
-            Pack(requests, s_redoRequests, precise, out int points);
+            Pack(requests, s_redoRequests, precise, false, out int points);
             int texels = s_tileEnds[s_redoRequests.Count - 1];
             Dispatch(points, texels, s_redoRequests.Count, precise).Complete();
 

@@ -49,12 +49,22 @@
 
 ### Performance
 
-- A font without overlapping contours bakes byte for byte as before. The
-  overlap check is a Burst sweep over each glyph's segments that the calling
-  thread runs while the workers rasterize, so it adds no wait and no job
-  schedule; for a font that keeps its overlaps, the batch after the first one
-  that found any checks first and bakes each tile once. The partial upload
-  issues one `Apply` per flush where an overflowing one used to issue two.
+- **A font asset knows which of its glyphs overlap, so drawing from it never
+  checks.** `Create Font Asset` now also records, once, every glyph whose
+  contours overlap (`OneFontAsset.IndexOverlaps`; `HasOverlapIndex`,
+  `OverlappingGlyphCount`), the same check the rasterizer would make, over
+  the whole font behind the import progress bar. The atlas passes it on to
+  the rasterizer (`RasterizeRequest.KnownOverlaps`): a clean glyph is packed
+  exactly as before with no check at all, and an overlapping one is resolved
+  before its single bake. Faces without an index — system fonts, files
+  loaded at runtime, variable instances, and assets made before this
+  release until they are made again — are checked as they bake instead: a
+  Burst sweep over each glyph's segments that the calling thread runs while
+  the workers rasterize, adding no wait and no job schedule, with the batch
+  after one that found overlaps checking first so nothing bakes twice.
+  Either way a font without overlaps bakes byte for byte as before.
+- The partial upload issues one `Apply` per flush where an overflowing one
+  used to issue two.
 
 ## [0.4.1] - 2026-10-10
 

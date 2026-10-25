@@ -556,7 +556,8 @@ namespace OneText
             AtlasDiagnostics.Add(ref AtlasDiagnostics.OutlineTicks, outlineStart);
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OutlineCount += count;
 
-            var raster = GlyphRasterizer.RasterizeContours(s_merged, s_mergedGroups, pixelsPerUnit, Precise);
+            var known = KnownOverlapsOf(font, positioned, start, count, s_mergedKnown);
+            var raster = GlyphRasterizer.RasterizeContours(s_merged, s_mergedGroups, pixelsPerUnit, Precise, known);
             return Commit(key, raster, ppem);
         }
 
@@ -686,6 +687,7 @@ namespace OneText
                     Contours = contours,
                     Groups = groups,
                     PixelsPerUnit = pixelsPerUnit,
+                    KnownOverlaps = KnownOverlapsOf(font, positioned, cluster.Start, cluster.Count, RentKnown()),
                 });
                 _batchKeys.Add(key);
             }
@@ -726,6 +728,36 @@ namespace OneText
             list.Clear();
             return list;
         }
+
+        private List<int> RentKnown()
+        {
+            while (_knownPool.Count < _pooledUsed) _knownPool.Add(new List<int>());
+            var list = _knownPool[_pooledUsed - 1];
+            list.Clear();
+            return list;
+        }
+
+        private readonly List<List<int>> _knownPool = new List<List<int>>();
+
+        /// <summary>
+        /// Which glyphs of a cluster the font knows to have overlapping
+        /// contours, by their index in the cluster (the group the rasterizer
+        /// sees), into <paramref name="into"/>; null when the font has no index
+        /// and the rasterizer has to look for itself.
+        /// </summary>
+        private static List<int> KnownOverlapsOf(FontData font, List<PositionedGlyph> positioned,
+            int start, int count, List<int> into)
+        {
+            into.Clear();
+            for (int i = start; i < start + count; i++)
+            {
+                if (!font.TryGetOverlap(positioned[i].GlyphId, out bool overlaps)) return null;
+                if (overlaps) into.Add(i - start);
+            }
+            return into;
+        }
+
+        private static readonly List<int> s_mergedKnown = new List<int>();
 
         private List<Vector2> RentLine()
         {

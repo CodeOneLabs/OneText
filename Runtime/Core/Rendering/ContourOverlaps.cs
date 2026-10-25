@@ -399,6 +399,148 @@ namespace OneText
         private static byte[] s_flags = new byte[256];
 
         /// <summary>
+        /// Bumped whenever what counts as an overlap changes (the tolerance, the
+        /// probe, the scan), so an index a font asset recorded under the old
+        /// rule is not trusted under the new one.
+        /// </summary>
+        public const int IndexVersion = 1;
+
+        /// <summary>
+        /// The density an index is computed at, in pixels per em: the largest
+        /// bucket the atlas bakes, whose flattening is the closest to the true
+        /// curves. Whether two strokes meet does not depend on the size they
+        /// are drawn at; only a near-tangent touch could come and go with the
+        /// flattening, and the finest one is the best guess at the truth.
+        /// </summary>
+        private const float IndexPixelsPerEm = 256f;
+
+        /// <summary>
+        /// Every glyph of <paramref name="font"/>'s default instance whose own
+        /// contours overlap, sorted: what a font asset records when it is made,
+        /// so a face drawn from it never has to look for overlaps at runtime.
+        /// The same scan the rasterizer runs, over the whole font at once, in
+        /// batches across the job workers.
+        /// </summary>
+        /// <param name="glyphCount">Glyphs in the face (see <see cref="GlyphCountOf"/>).</param>
+        /// <param name="progress">Told the fraction done after each batch, for a progress bar.</param>
+        public static int[] FindOverlappingGlyphs(FontData font, int glyphCount,
+            System.Action<float> progress = null)
+        {
+            var found = new List<int>();
+            if (font == null || !font.IsValid || glyphCount <= 0) return found.ToArray();
+
+            const int batch = 512;
+            float pixelsPerUnit = IndexPixelsPerEm / font.UnitsPerEm;
+            var outlines = new GlyphOutline[batch];
+            for (int i = 0; i < batch; i++) outlines[i] = new GlyphOutline();
+
+            for (int first = 0; first < glyphCount; first += batch)
+            {
+                int count = System.Math.Min(batch, glyphCount - first);
+                int points = 0, contours = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    outlines[i].Clear();
+                    OutlineExtractor.Extract(font, (uint)(first + i), outlines[i], pixelsPerUnit);
+                    foreach (var contour in outlines[i].Contours)
+                    {
+                        if (contour.Count < 2) continue;
+                        points += contour.Count;
+                        contours++;
+                    }
+                }
+
+                var pointArray = new NativeArray<float2>(System.Math.Max(points, 1), Allocator.TempJob);
+                var ranges = new NativeArray<int2>(System.Math.Max(contours, 1), Allocator.TempJob);
+                var bounds = new NativeArray<float4>(System.Math.Max(contours, 1), Allocator.TempJob);
+                var groups = new NativeArray<int2>(count, Allocator.TempJob);
+                var overlapping = new NativeArray<byte>(count, Allocator.TempJob);
+                try
+                {
+                    int pi = 0, ci = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        int start = ci;
+                        foreach (var contour in outlines[i].Contours)
+                        {
+                            if (contour.Count < 2) continue;
+                            ranges[ci] = new int2(pi, contour.Count);
+                            var lo = new float2(float.MaxValue);
+                            var hi = new float2(float.MinValue);
+                            foreach (var p in contour)
+                            {
+                                float2 q = p;
+                                lo = math.min(lo, q);
+                                hi = math.max(hi, q);
+                                pointArray[pi++] = q;
+                            }
+                            bounds[ci++] = new float4(lo, hi);
+                        }
+                        groups[i] = new int2(start, ci - start);
+                    }
+
+                    new OverlapScanJob
+                    {
+                        Points = pointArray,
+                        ContourRanges = ranges,
+                        ContourBounds = bounds,
+                        Groups = groups,
+                        Overlapping = overlapping,
+                    }.Schedule(count, 8).Complete();
+
+                    for (int i = 0; i < count; i++)
+                        if (overlapping[i] != 0) found.Add(first + i);
+                }
+                finally
+                {
+                    pointArray.Dispose();
+                    ranges.Dispose();
+                    bounds.Dispose();
+                    groups.Dispose();
+                    overlapping.Dispose();
+                }
+                progress?.Invoke((first + count) / (float)glyphCount);
+            }
+            return found.ToArray();
+        }
+
+        /// <summary>
+        /// The number of glyphs in face <paramref name="faceIndex"/> of a font
+        /// file, from its <c>maxp</c> table; 0 when the file cannot say.
+        ///
+        /// Read from the bytes rather than asked of HarfBuzz because not every
+        /// bundled binary exports <c>hb_face_get_glyph_count</c> (the Linux
+        /// one's export list does not), and the bytes are in hand whenever an
+        /// index is made.
+        /// </summary>
+        public static int GlyphCountOf(byte[] font, uint faceIndex = 0)
+        {
+            if (font == null || font.Length < 12) return 0;
+            long directory = 0;
+            if (ReadUInt32(font, 0) == 0x74746366) // 'ttcf'
+            {
+                if (faceIndex >= ReadUInt32(font, 8)) return 0;
+                directory = ReadUInt32(font, 12 + 4 * (int)faceIndex);
+            }
+            if (directory + 12 > font.Length) return 0;
+            int tables = ReadUInt16(font, directory + 4);
+            for (int t = 0; t < tables; t++)
+            {
+                long record = directory + 12 + 16L * t;
+                if (record + 16 > font.Length) return 0;
+                if (ReadUInt32(font, record) != 0x6D617870) continue; // 'maxp'
+                long offset = ReadUInt32(font, record + 8);
+                return offset + 6 <= font.Length ? ReadUInt16(font, offset + 4) : 0;
+            }
+            return 0;
+        }
+
+        private static uint ReadUInt32(byte[] b, long at) =>
+            (uint)(b[at] << 24 | b[at + 1] << 16 | b[at + 2] << 8 | b[at + 3]);
+
+        private static int ReadUInt16(byte[] b, long at) => b[at] << 8 | b[at + 1];
+
+        /// <summary>
         /// Fills <paramref name="output"/> with the contours
         /// <paramref name="request"/> is rasterized from: the groups in
         /// <paramref name="overlapping"/> resolved, every other one as it was.

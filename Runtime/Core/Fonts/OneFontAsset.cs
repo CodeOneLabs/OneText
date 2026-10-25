@@ -110,6 +110,11 @@ namespace OneText
 
         [SerializeField, HideInInspector] private FontVariation[] _baseVariations;
 
+        // The glyphs whose own contours overlap, sorted, and the version of the
+        // rule that found them (0: never looked). See IndexOverlaps.
+        [SerializeField, HideInInspector] private int[] _overlappingGlyphs;
+        [SerializeField, HideInInspector] private int _overlapIndexVersion;
+
         [Tooltip("Language this face is designed for: ja, zh-Hans, zh-Hant, ko. Optional, and " +
             "only meaningful for the unified scripts: a Japanese label with a tagged Japanese " +
             "font gets Japanese shapes for 直 even when a Chinese font sits above it in the chain.")]
@@ -382,6 +387,7 @@ namespace OneText
                     var bytes = Unpacked();
                     if (bytes == null || bytes.Length == 0) return StandIn();
                     _font = FontData.Load(bytes);
+                    _font.OverlapIndex = HasOverlapIndex ? _overlappingGlyphs ?? System.Array.Empty<int>() : null;
                 }
                 return _font;
             }
@@ -485,6 +491,46 @@ namespace OneText
         /// </summary>
         public IReadOnlyList<FontVariation> BaseVariations =>
             _baseVariations ?? System.Array.Empty<FontVariation>();
+
+        /// <summary>
+        /// Whether this asset knows which of its glyphs have contours that
+        /// overlap, so the rasterizer need not look while drawing. Assets made
+        /// by <c>Assets > OneText > Create Font Asset</c> do; one made before
+        /// that step existed does not until it is made again, and draws
+        /// correctly either way, checking each glyph as it bakes instead.
+        /// </summary>
+        public bool HasOverlapIndex => _overlapIndexVersion == ContourOverlaps.IndexVersion;
+
+        /// <summary>How many glyphs the index says overlap; -1 without an index.</summary>
+        public int OverlappingGlyphCount => HasOverlapIndex ? _overlappingGlyphs?.Length ?? 0 : -1;
+
+        /// <summary>
+        /// Finds every glyph whose own contours overlap and records them in the
+        /// asset, which is what lets text drawn from it skip the check at
+        /// runtime. Editor-side, once per font file: it outlines every glyph of
+        /// the face (a second or two for a CJK font). Returns false when there
+        /// is no font in the asset to look at.
+        ///
+        /// Fonts that draw each stroke as its own outline need the edges one
+        /// stroke buries in another taken out of the distance field, or every
+        /// joint shows a notch; see <c>ContourOverlaps</c>. A font with the
+        /// overlaps removed records an empty list, and from then on costs
+        /// nothing at all.
+        /// </summary>
+        /// <param name="progress">Told the fraction done as it goes, for a progress bar.</param>
+        public bool IndexOverlaps(System.Action<float> progress = null)
+        {
+            if (IsFileBacked || IsPlaceholder) return false;
+            var bytes = Unpacked();
+            var face = Font;
+            if (bytes == null || face == null || !face.IsValid) return false;
+
+            _overlappingGlyphs = ContourOverlaps.FindOverlappingGlyphs(face,
+                ContourOverlaps.GlyphCountOf(bytes), progress);
+            _overlapIndexVersion = ContourOverlaps.IndexVersion;
+            face.OverlapIndex = _overlappingGlyphs;
+            return true;
+        }
 
         /// <summary>
         /// Records what face this asset stands for. Editor-side setup, written
@@ -734,6 +780,11 @@ namespace OneText
             // Regular must not stay at 800.
             _baseVariations = null;
 
+            // Nor does a list of which glyphs overlap: it was a list of glyph
+            // ids in the old file. IndexOverlaps makes the new one.
+            _overlappingGlyphs = null;
+            _overlapIndexVersion = 0;
+
             var compressed = Pack(fontBytes, packing);
 
             // Some fonts (already-compressed tables) do not shrink; keep whichever is smaller.
@@ -770,7 +821,12 @@ namespace OneText
             var fontBytes = GetFontBytes();
             if (fontBytes == null || fontBytes.Length == 0) return false;
 
+            // The same file packed differently: same glyph ids, same index.
+            var overlapping = _overlappingGlyphs;
+            int overlapIndexVersion = _overlapIndexVersion;
             Initialize(fontBytes, _familyName, _sourcePath, packing);
+            _overlappingGlyphs = overlapping;
+            _overlapIndexVersion = overlapIndexVersion;
             return true;
         }
 
@@ -832,6 +888,8 @@ namespace OneText
             _compressed = false;
             _uncompressedLength = 0;
             _baseVariations = null;
+            _overlappingGlyphs = null;
+            _overlapIndexVersion = 0;
 
             Release();
         }

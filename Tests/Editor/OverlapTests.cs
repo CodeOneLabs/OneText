@@ -21,6 +21,7 @@ namespace OneText.Tests
         private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
         private const string ArabicFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansArabic.ttf";
         private const string CffFontPath = "Packages/com.onetext.core/Tests/Fonts~/CffShapes.otf";
+        private const string VariableFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSansVariable.ttf";
 
         // 64 ppem on a 1000-unit em: a texel is 15.6 units and a reach (4
         // texels) 62.5, so a point 100 units from the nearest real outline is
@@ -350,6 +351,135 @@ namespace OneText.Tests
                         CollectionAssert.AreEqual(alone[i], results[i].CopyPixels(),
                             $"tile {i} of the batch differs from the same tile baked alone (round {round})");
                 }
+            }
+        }
+
+        // ------------------------------------------------- the font asset's index
+
+        private static OneFontAsset IndexedAsset(string path)
+        {
+            var asset = ScriptableObject.CreateInstance<OneFontAsset>();
+            asset.Initialize(File.ReadAllBytes(Path.GetFullPath(path)), "Overlap Test", path);
+            Assert.IsFalse(asset.HasOverlapIndex, "a freshly packed asset has not been indexed yet");
+            Assert.IsTrue(asset.IndexOverlaps());
+            Assert.IsTrue(asset.HasOverlapIndex);
+            return asset;
+        }
+
+        private static uint GlyphOf(FontData font, char c)
+        {
+            using var shaper = new Shaper();
+            var shaped = new List<ShapedGlyph>();
+            shaper.Shape(font, c.ToString(), shaped);
+            return shaped[0].GlyphId;
+        }
+
+        [Test]
+        public void GlyphCount_IsReadFromTheFile()
+        {
+            Assert.AreEqual(6, ContourOverlaps.GlyphCountOf(File.ReadAllBytes(Path.GetFullPath(CffFontPath))),
+                ".notdef, space, O, Q, S and I");
+            Assert.AreEqual(4515, ContourOverlaps.GlyphCountOf(File.ReadAllBytes(Path.GetFullPath(LatinFontPath))));
+            Assert.AreEqual(0, ContourOverlaps.GlyphCountOf(new byte[] { 1, 2, 3 }), "not a font");
+        }
+
+        [Test]
+        public void AFontAsset_RecordsWhichGlyphsOverlap()
+        {
+            var asset = IndexedAsset(CffFontPath);
+            try
+            {
+                var font = asset.Font;
+                Assert.IsTrue(font.TryGetOverlap(GlyphOf(font, 'Q'), out bool q), "an indexed face answers");
+                Assert.IsTrue(q, "'Q' is two contours crossing");
+                font.TryGetOverlap(GlyphOf(font, 'O'), out bool o);
+                Assert.IsFalse(o, "'O' is a ring and its counter: nested, wound apart, meeting nowhere");
+                font.TryGetOverlap(GlyphOf(font, 'I'), out bool i);
+                Assert.IsFalse(i, "'I' is one rectangle");
+
+                using var unindexed = LoadFont(CffFontPath);
+                Assert.IsFalse(unindexed.TryGetOverlap(GlyphOf(unindexed, 'Q'), out _),
+                    "a face loaded without an asset knows nothing, and is scanned instead");
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void AnIndexedFont_BakesExactlyWhatAScannedOneBakes()
+        {
+            // The index is a shortcut past the scan, not a second opinion: a
+            // glyph has to come out the same whichever way its overlaps were
+            // found, including the one the index says is clean.
+            var asset = IndexedAsset(CffFontPath);
+            using var scanned = LoadFont(CffFontPath);
+            try
+            {
+                foreach (bool precise in new[] { false, true })
+                foreach (char c in "OQSI")
+                {
+                    var fromIndex = GlyphRasterizer.Rasterize(asset.Font, GlyphOf(asset.Font, c), PixelsPerUnit, precise);
+                    var indexPixels = fromIndex.CopyPixels();
+                    var fromScan = GlyphRasterizer.Rasterize(scanned, GlyphOf(scanned, c), PixelsPerUnit, precise);
+                    CollectionAssert.AreEqual(fromScan.CopyPixels(), indexPixels,
+                        $"'{c}' ({(precise ? "precise" : "plain")}) differs between the index and the scan");
+                    if (c == 'Q')
+                        Assert.GreaterOrEqual(Sample(fromIndex, indexPixels, new Vector2(200, 300), precise ? 3 : 0), Deep,
+                            "the index named 'Q' and its buried edges are still in the field");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void TheIndex_DescribesOnlyTheDefaultInstance()
+        {
+            // Variation moves outlines, and strokes that cross at one weight
+            // may not at another. A varied face scans as it bakes.
+            var asset = IndexedAsset(VariableFontPath);
+            try
+            {
+                uint a = GlyphOf(asset.Font, 'A');
+                Assert.IsTrue(asset.Font.TryGetOverlap(a, out _), "the default instance answers from the index");
+                var bold = asset.GetVariant(new[] { new FontVariation("wght", 700f) });
+                Assert.IsFalse(bold.TryGetOverlap(a, out _), "a varied instance must not trust it");
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void TheIndex_FollowsTheFontFile()
+        {
+            var asset = IndexedAsset(CffFontPath);
+            try
+            {
+                int count = asset.OverlappingGlyphCount;
+                Assert.Greater(count, 0);
+
+                // The same file packed another way keeps its glyph ids.
+                asset.Repack(asset.Packing == OneFontAsset.FontPacking.Smallest
+                    ? OneFontAsset.FontPacking.Fast
+                    : OneFontAsset.FontPacking.Smallest);
+                Assert.IsTrue(asset.HasOverlapIndex, "repacking dropped the index");
+                Assert.AreEqual(count, asset.OverlappingGlyphCount);
+
+                // A different file does not.
+                asset.Initialize(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)), "Other", LatinFontPath);
+                Assert.IsFalse(asset.HasOverlapIndex, "an index of another file's glyph ids survived");
+                Assert.AreEqual(-1, asset.OverlappingGlyphCount);
+                Assert.IsFalse(asset.Font.TryGetOverlap(0, out _));
+            }
+            finally
+            {
+                Object.DestroyImmediate(asset);
             }
         }
     }
