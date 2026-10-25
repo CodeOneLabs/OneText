@@ -582,6 +582,14 @@ namespace OneText
             return doomed.Count;
         }
 
+        /// <summary>
+        /// Commits an already-rasterized tile under a key of the caller's
+        /// choosing. Tests only: it is how a test places tiles of exact sizes,
+        /// which is what decides how a flush packs them for upload.
+        /// </summary>
+        internal GlyphLocation CommitForTests(FontData font, long id, int ppem, RasterizedGlyph raster) =>
+            IsUsable ? Commit(new Key(font, id, ppem, Precise), raster, ppem) : default;
+
         /// <summary>True if the atlas already holds this glyph at this size.</summary>
         public bool Contains(FontData font, long id, float pixelsPerEm) =>
             _entries.ContainsKey(new Key(font, id, QuantizePixelsPerEm(pixelsPerEm), Precise));
@@ -1273,7 +1281,7 @@ namespace OneText
 
         private readonly List<DirtyTile> _pendingTiles = new List<DirtyTile>();
         private bool _fullUpload;
-        private Texture2D[] _staging;
+        private List<StagingSlot>[] _staging;
 
         private void MarkTileDirty(int layer, int x, int y, int w, int h)
         {
@@ -1330,9 +1338,8 @@ namespace OneText
                 AtlasDiagnostics.UploadedTiles += _pendingTiles.Count;
             }
 
-            if (!_fullUpload && _pendingTiles.Count > 0 && SupportsPartialUpload)
+            if (!_fullUpload && _pendingTiles.Count > 0 && SupportsPartialUpload && UploadPendingTiles())
             {
-                UploadPendingTiles();
                 _partialUploads++;
             }
             else
@@ -1351,68 +1358,99 @@ namespace OneText
 
         /// <summary>
         /// Packs every dirty tile into one staging texture, uploads that once,
-        /// and blits the tiles into place on the GPU.
+        /// and blits the tiles into place on the GPU. False when they do not
+        /// fit any staging texture, and the caller uploads the whole array.
         ///
         /// The obvious version, one staging texture and one <c>Apply</c> per
         /// tile, measured slower than uploading the whole 4 MB array, because
         /// the cost of an <c>Apply</c> is dominated by its fixed overhead, not
         /// by its bytes. One upload of the packed tiles plus N GPU-side copies
         /// keeps the byte count small and the overhead paid once.
+        ///
+        /// Once is also the only safe number. An <c>Apply</c> is not ordered
+        /// against the <c>CopyTexture</c> calls queued before it: on Metal the
+        /// copies of one frame ran after a later <c>Apply</c> of the same
+        /// staging texture had replaced its pixels, so a flush that refilled the
+        /// staging texture from (0,0) when it ran out of room stamped its second
+        /// group of tiles over its first ("Yoji" drawn as "iYoji"). So every
+        /// tile is packed before anything is written, the edge grows until they
+        /// all fit, and a staging texture already uploaded this frame is only
+        /// ever written below the rows that earlier flush used (see
+        /// <see cref="StagingSlotFor"/>), never over them.
         /// </summary>
-        private void UploadPendingTiles()
+        private bool UploadPendingTiles()
         {
-            int edge = StagingEdgeFor(_pendingTiles);
-            var staging = GetStaging(edge);
-            var dst = staging.GetPixelData<byte>(0);
+            int frame = Time.frameCount;
+            for (int edge = StagingEdgeFor(_pendingTiles); edge <= _textureSize; edge *= 2)
+            {
+                if (!PackPending(edge, out int height)) continue;
+                var slot = StagingSlotFor(edge, height, frame);
+                if (slot == null) continue;
 
-            int cursorX = 0, cursorY = 0, rowHeight = 0, packed = 0;
+                // Rows an earlier flush of this frame uploaded stay as they are:
+                // its copies may not have run yet, and they read them.
+                int top = slot.Frame == frame ? slot.Rows : 0;
+                var staging = slot.Texture;
+                var dst = staging.GetPixelData<byte>(0);
+                for (int i = 0; i < _pendingTiles.Count; i++)
+                {
+                    var tile = _pendingTiles[i];
+                    var at = _packedAt[i];
+                    var src = Texture.GetPixelData<byte>(0, tile.Layer);
+                    for (int row = 0; row < tile.Height; row++)
+                    {
+                        NativeArray<byte>.Copy(src, ((tile.Y + row) * _textureSize + tile.X) * _bytesPerTexel,
+                            dst, ((top + at.y + row) * edge + at.x) * _bytesPerTexel,
+                            tile.Width * _bytesPerTexel);
+                    }
+                }
+
+                staging.Apply(updateMipmaps: false, makeNoLongerReadable: false);
+                for (int i = 0; i < _pendingTiles.Count; i++)
+                {
+                    var tile = _pendingTiles[i];
+                    var at = _packedAt[i];
+                    Graphics.CopyTexture(staging, 0, 0, at.x, top + at.y, tile.Width, tile.Height,
+                        Texture, tile.Layer, 0, tile.X, tile.Y);
+                }
+                slot.Frame = frame;
+                slot.Rows = top + height;
+                _packedAt.Clear();
+                return true;
+            }
+            _packedAt.Clear();
+            return false;
+        }
+
+        private readonly List<Vector2Int> _packedAt = new List<Vector2Int>();
+
+        /// <summary>
+        /// Row-packs the dirty tiles into an edge-wide square from its top row,
+        /// filling <see cref="_packedAt"/>; false when they do not all fit.
+        /// <paramref name="height"/> is the rows the packing used.
+        /// </summary>
+        private bool PackPending(int edge, out int height)
+        {
+            _packedAt.Clear();
+            int cursorX = 0, cursorY = 0, rowHeight = 0;
+            height = 0;
             for (int i = 0; i < _pendingTiles.Count; i++)
             {
                 var tile = _pendingTiles[i];
+                if (tile.Width > edge) return false;
                 if (cursorX + tile.Width > edge)
                 {
                     cursorX = 0;
                     cursorY += rowHeight;
                     rowHeight = 0;
                 }
-                if (cursorY + tile.Height > edge)
-                {
-                    // Staging is full: flush what is packed and start over.
-                    staging.Apply(updateMipmaps: false, makeNoLongerReadable: false);
-                    CopyPacked(staging, i - packed, packed, edge);
-                    cursorX = cursorY = rowHeight = packed = 0;
-                }
-
-                var src = Texture.GetPixelData<byte>(0, tile.Layer);
-                for (int row = 0; row < tile.Height; row++)
-                {
-                    NativeArray<byte>.Copy(src, ((tile.Y + row) * _textureSize + tile.X) * _bytesPerTexel,
-                        dst, ((cursorY + row) * edge + cursorX) * _bytesPerTexel,
-                        tile.Width * _bytesPerTexel);
-                }
-
+                if (cursorY + tile.Height > edge) return false;
                 _packedAt.Add(new Vector2Int(cursorX, cursorY));
                 cursorX += tile.Width;
                 rowHeight = Mathf.Max(rowHeight, tile.Height);
-                packed++;
             }
-
-            staging.Apply(updateMipmaps: false, makeNoLongerReadable: false);
-            CopyPacked(staging, _pendingTiles.Count - packed, packed, edge);
-            _packedAt.Clear();
-        }
-
-        private readonly List<Vector2Int> _packedAt = new List<Vector2Int>();
-
-        private void CopyPacked(Texture2D staging, int first, int count, int edge)
-        {
-            for (int i = first; i < first + count; i++)
-            {
-                var tile = _pendingTiles[i];
-                var at = _packedAt[i];
-                Graphics.CopyTexture(staging, 0, 0, at.x, at.y, tile.Width, tile.Height,
-                    Texture, tile.Layer, 0, tile.X, tile.Y);
-            }
+            height = cursorY + rowHeight;
+            return true;
         }
 
         /// <summary>Smallest power-of-two staging texture the dirty tiles pack into.</summary>
@@ -1432,26 +1470,69 @@ namespace OneText
             return Mathf.Clamp(Mathf.NextPowerOfTwo(edge), 32, _textureSize);
         }
 
-        private Texture2D GetStaging(int edge)
+        /// <summary>One staging texture, and the rows of it this frame has uploaded.</summary>
+        private sealed class StagingSlot
+        {
+            public Texture2D Texture;
+            public int Frame = int.MinValue;
+            public int Rows;
+        }
+
+        // Past this many textures of one edge a frame's further flushes move up
+        // an edge (and past the largest, to a full upload) instead of adding
+        // more. Two covers the frame that flushes from both the canvas pass and
+        // a world-space mesh; edit mode flushing per label is the case that
+        // would otherwise grow without bound.
+        private const int StagingSlotsPerEdge = 2;
+
+        /// <summary>
+        /// A staging texture of <paramref name="edge"/> with
+        /// <paramref name="height"/> rows nobody has uploaded this frame, or
+        /// null when every one this edge may have is spoken for.
+        ///
+        /// A frame's uploads and its copies are not ordered against each other,
+        /// so a staging texture is written over only once a frame boundary has
+        /// sent its copies on their way. Until then a later flush packs below
+        /// the rows already in it: <c>Apply</c> uploads the whole texture, and
+        /// the rows it did not touch go up holding what they held. The common
+        /// frame flushes once and always lands on the first texture, at row 0.
+        /// </summary>
+        private StagingSlot StagingSlotFor(int edge, int height, int frame)
         {
             int index = 0;
             while ((1 << index) < edge) index++;
-            _staging ??= new Texture2D[14];
-            if (_staging[index] == null)
+            _staging ??= new List<StagingSlot>[14];
+            var slots = _staging[index] ??= new List<StagingSlot>(StagingSlotsPerEdge);
+
+            foreach (var slot in slots)
             {
-                // Same format as the array it feeds: Graphics.CopyTexture
-                // requires it, and a mismatch is a silent no-op on some devices
-                // rather than an error.
-                _staging[index] = new Texture2D(1 << index, 1 << index,
-                    Precise ? TextureFormat.RGBA32 : TextureFormat.R8, false, true)
+                if (slot.Frame == frame && slot.Rows + height > edge) continue;
+                if (slot.Texture == null)
                 {
-                    name = $"OneText Atlas Staging {1 << index}",
-                    hideFlags = HideFlags.HideAndDontSave,
-                    filterMode = FilterMode.Point,
-                };
+                    // Destroyed under us (a play session boundary with Domain
+                    // Reload off): a new one holds nothing an earlier flush
+                    // could still be reading.
+                    slot.Texture = CreateStaging(edge);
+                    slot.Frame = int.MinValue;
+                }
+                return slot;
             }
-            return _staging[index];
+            if (slots.Count >= StagingSlotsPerEdge) return null;
+
+            var created = new StagingSlot { Texture = CreateStaging(edge) };
+            slots.Add(created);
+            return created;
         }
+
+        // Same format as the array it feeds: Graphics.CopyTexture requires it,
+        // and a mismatch is a silent no-op on some devices rather than an error.
+        private Texture2D CreateStaging(int edge) => new Texture2D(edge, edge,
+            Precise ? TextureFormat.RGBA32 : TextureFormat.R8, false, true)
+        {
+            name = $"OneText Atlas Staging {edge}",
+            hideFlags = HideFlags.HideAndDontSave,
+            filterMode = FilterMode.Point,
+        };
 
         public void Dispose()
         {
@@ -1459,8 +1540,12 @@ namespace OneText
                 UnityEngine.Object.DestroyImmediate(Texture);
             if (_staging != null)
             {
-                foreach (var staging in _staging)
-                    if (staging != null) UnityEngine.Object.DestroyImmediate(staging);
+                foreach (var slots in _staging)
+                {
+                    if (slots == null) continue;
+                    foreach (var slot in slots)
+                        if (slot.Texture != null) UnityEngine.Object.DestroyImmediate(slot.Texture);
+                }
                 _staging = null;
             }
             _entries.Clear();
