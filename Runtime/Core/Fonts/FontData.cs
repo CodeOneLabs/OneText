@@ -102,6 +102,36 @@ namespace OneText
 
         private static int s_nextCacheId;
 
+        /// <summary>
+        /// The glyphs of this face, sorted, whose own contours overlap, as the
+        /// font asset recorded them when it was made; null when nobody did.
+        ///
+        /// It describes the default instance and nothing else: overlaps are a
+        /// property of the outline, and a variation moves outlines. A face
+        /// whose axes have been set (<see cref="Generation"/> above zero)
+        /// answers as if there were no index, and its glyphs are checked as
+        /// they bake, like any face loaded at runtime.
+        /// </summary>
+        internal int[] OverlapIndex { get; set; }
+
+        /// <summary>
+        /// Whether <paramref name="glyphId"/>'s contours are known to overlap.
+        /// False when the face has no index to answer from (see
+        /// <see cref="OverlapIndex"/>), and then <paramref name="overlaps"/>
+        /// means nothing.
+        /// </summary>
+        internal bool TryGetOverlap(uint glyphId, out bool overlaps)
+        {
+            var index = OverlapIndex;
+            if (index == null || Generation != 0)
+            {
+                overlaps = false;
+                return false;
+            }
+            overlaps = Array.BinarySearch(index, (int)glyphId) >= 0;
+            return true;
+        }
+
         /// <summary>True if the font carries an OpenType variations table.</summary>
         public bool IsVariable => Face != IntPtr.Zero && HarfBuzzApi.hb_ot_var_has_data(Face) != 0;
 

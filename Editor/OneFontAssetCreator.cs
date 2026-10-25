@@ -85,12 +85,18 @@ namespace OneText.Editor
             string baseName = Path.GetFileNameWithoutExtension(fontPath);
             try
             {
-                // Under a second for a CJK face now, but a person who just
-                // dropped in a 16 MB font is watching a frozen editor either
-                // way, and a bar that names the font says which one.
+                // Under a second to pack a CJK face and about three more to
+                // index its overlaps; a person who just dropped in a 16 MB font
+                // is watching a frozen editor either way, and a bar that names
+                // the font says which one.
                 EditorUtility.DisplayProgressBar("OneText",
                     $"Packing {baseName} ({bytes.Length / (1024 * 1024f):0.#} MB)…", 0.5f);
                 asset.Initialize(bytes, ReadFamilyName(bytes, baseName), fontPath);
+
+                // Which glyphs draw strokes over each other, worked out once
+                // here so that nothing has to look for it while drawing.
+                asset.IndexOverlaps(done => EditorUtility.DisplayProgressBar("OneText",
+                    $"Checking {baseName} for overlapping contours…", 0.5f + 0.5f * done));
             }
             finally
             {
@@ -102,7 +108,7 @@ namespace OneText.Editor
             string where = AssetDatabase.GetAssetPath(asset);
             Debug.Log($"OneText: {(string.IsNullOrEmpty(where) ? asset.name : where)} " +
                       $"({bytes.Length / 1024} KB font, stored {asset.StoredSize / 1024} KB, " +
-                      $"{ratio:P0})");
+                      $"{ratio:P0}; {System.Math.Max(asset.OverlappingGlyphCount, 0)} glyphs with overlapping contours)");
             return true;
         }
 

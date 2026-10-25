@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.4.2] - 2026-10-25
+
+### Fixed
+
+- **A partial atlas upload no longer stamps one tile over another.** When a
+  frame's new tiles did not fit the staging texture the flush first sized,
+  it uploaded what it had packed, refilled the same texture from (0, 0) and
+  uploaded it again. An `Apply` is not ordered against the `CopyTexture`
+  calls queued before it, so on Metal the first group's copies read the
+  second group's pixels: a 220 px title drew "iYoji" for "Yoji", with the
+  "i" tile printed over the left of the "Yo" cluster, and only for the
+  letter spacings that happened to overflow. Every pending tile is now packed
+  before anything is written, the staging edge doubles until they all fit,
+  and the texture is uploaded once; if they do not fit even at the atlas's
+  own size the flush uploads the whole array instead. The same race existed
+  across flushes: a canvas pass and a world-space mesh each flush the shared
+  atlas, and outside play mode every label flushes as it bakes. A staging
+  texture is therefore never written over in a frame it was already uploaded
+  in: a later flush packs below the rows the earlier one used, or takes a
+  second texture of that size.
+  ([#9](https://github.com/CodeOneLabs/OneText/issues/9))
+- **No hairline along the edge of a glyph's quad on an atlas that has
+  evicted.** The shader clamped every field fetch to the tile's edges, where
+  a bilinear fetch reads half of the texel next door. Next door is not always
+  empty: a freed span keeps its texels, and a short tile on a tall shelf
+  leaves stale rows above it. On text with an outline (threshold about 0.39)
+  half a texel of an evicted glyph drew as a line of outline colour along the
+  top or right of the quad, coming and going with what had been drawn before.
+  The clamp now stops at the centres of the tile's edge texels, which are the
+  rasterizer's padding ring, so a fetch never leaves its tile. Nothing visible
+  changes on a clean atlas.
+  ([#7](https://github.com/CodeOneLabs/OneText/issues/7))
+- **No notches inside glyphs whose contours overlap.** Fonts that draw each
+  stroke as its own outline (Tilt Neon; most fonts exported from variable
+  sources) were signed correctly by the nonzero rule, but the distance was
+  measured to every edge, including the ones buried inside another stroke,
+  so the field fell to the outline value in the middle of the ink at every
+  joint: notches, specks and faint lines once drawn large with an outline.
+  Edges a glyph buries in its own ink are now taken out of the distance, for
+  the plain and the precise field alike: segments are split where they meet,
+  each piece is classified by the winding either side of it, and the
+  original contours still decide what is ink. Crossings, strokes butted
+  against each other, contours that loop over themselves and contours nested
+  inside same-wound ink are all covered. On Tilt Neon at 128 ppem 39 of 62
+  alphanumerics change, only inside the ink.
+  ([#8](https://github.com/CodeOneLabs/OneText/issues/8))
+
+### Performance
+
+- **A font asset knows which of its glyphs overlap, so drawing from it never
+  checks.** `Create Font Asset` now also records, once, every glyph whose
+  contours overlap (`OneFontAsset.IndexOverlaps`; `HasOverlapIndex`,
+  `OverlappingGlyphCount`), the same check the rasterizer would make, over
+  the whole font behind the import progress bar. That makes the step slower
+  for big fonts: NotoSansCJKkr (16 MB, 65,535 glyphs) took 0.71 s and now
+  takes 3.7 s, NotoSans 0.10 s and now 0.25 s. The atlas passes it on to
+  the rasterizer (`RasterizeRequest.KnownOverlaps`): a clean glyph is packed
+  exactly as before with no check at all, and an overlapping one is resolved
+  before its single bake. Faces without an index — system fonts, files
+  loaded at runtime, variable instances, and assets made before this
+  release until they are made again — are checked as they bake instead: a
+  Burst sweep over each glyph's segments that the calling thread runs while
+  the workers rasterize, adding no wait and no job schedule, with the batch
+  after one that found overlaps checking first so nothing bakes twice.
+  Either way a font without overlaps bakes byte for byte as before.
+- The partial upload issues one `Apply` per flush where an overflowing one
+  used to issue two.
+
 ## [0.4.1] - 2026-10-10
 
 ### Fixed

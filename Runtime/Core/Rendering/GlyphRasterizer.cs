@@ -69,6 +69,14 @@ namespace OneText
         public static bool Cull = true;
 
         /// <summary>
+        /// Whether edges a glyph buries inside its own ink are kept out of its
+        /// distance field (<see cref="ContourOverlaps"/>). Off only so tests can
+        /// show that a font without overlapping contours bakes byte for byte
+        /// the same either way, and what the repair changes in one with them.
+        /// </summary>
+        public static bool ResolveOverlaps = true;
+
+        /// <summary>
         /// The floor, in texels, that a multi-channel texel's median has to
         /// stay clear of the outline by when the true distance says it is
         /// solidly inside the ink. Zero turns error correction off and restores
@@ -126,8 +134,17 @@ namespace OneText
         {
             s_outline.Clear();
             OutlineExtractor.Extract(font, glyphId, s_outline, pixelsPerUnit);
-            return RasterizeContours(s_outline.Contours, null, pixelsPerUnit, precise);
+            List<int> known = null;
+            if (font.TryGetOverlap(glyphId, out bool overlaps))
+            {
+                known = s_singleKnown;
+                known.Clear();
+                if (overlaps) known.Add(0);
+            }
+            return RasterizeContours(s_outline.Contours, null, pixelsPerUnit, precise, known);
         }
+
+        private static readonly List<int> s_singleKnown = new List<int>(1);
 
         /// <summary>
         /// Rasterizes a set of already-positioned contours (glyph units) into
@@ -142,7 +159,13 @@ namespace OneText
         /// four bytes a texel, corners that survive the sampler.
         /// </summary>
         public static RasterizedGlyph RasterizeContours(List<List<Vector2>> contours,
-            List<int> groups, float pixelsPerUnit, bool precise = false)
+            List<int> groups, float pixelsPerUnit, bool precise = false) =>
+            RasterizeContours(contours, groups, pixelsPerUnit, precise, null);
+
+        /// <inheritdoc cref="RasterizeContours(List{List{Vector2}}, List{int}, float, bool)"/>
+        /// <param name="knownOverlaps">See <see cref="RasterizeRequest.KnownOverlaps"/>.</param>
+        internal static RasterizedGlyph RasterizeContours(List<List<Vector2>> contours,
+            List<int> groups, float pixelsPerUnit, bool precise, List<int> knownOverlaps)
         {
             // One request through the batch path: a single implementation to
             // keep correct, and a single tile is just a batch of one.
@@ -152,6 +175,7 @@ namespace OneText
                 Contours = contours,
                 Groups = groups,
                 PixelsPerUnit = pixelsPerUnit,
+                KnownOverlaps = knownOverlaps,
             });
             RasterizeBatch(s_singleRequest, s_singleResult, precise);
             return s_singleResult.Count > 0 ? s_singleResult[0] : new RasterizedGlyph { IsEmpty = true };

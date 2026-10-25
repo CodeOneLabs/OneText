@@ -266,9 +266,17 @@ Shader "OneText/SDF"
 
             // Clamping into the tile is what keeps an offset sample from reading
             // the glyph the atlas shelf packed next door and drawing it as this
-            // one's shadow. The ring the clamp lands on is padding the
-            // rasterizer guarantees is a full reach from the ink, so outside the
-            // tile the field reads exactly 0: the right answer, not a fallback.
+            // one's shadow. The bounds the caller passes are the centres of the
+            // tile's edge texels, not its edges: a bilinear fetch at the edge
+            // itself is half the texel next door, and next door is not always
+            // the empty padding it looks like. A freed span keeps its texels,
+            // and a short tile on a tall shelf leaves the rows above it holding
+            // whatever lived there before, so on an atlas that has evicted, half
+            // a texel of somebody else's ink lands exactly on the quad boundary
+            // and an outline draws it as a hairline. The edge texels themselves
+            // are the rasterizer's padding ring, nearly a full reach from the
+            // ink, so a sample clamped onto them reads as outside as any
+            // decoration can see: the right answer, not a fallback.
             float Field(float2 uv, float2 tileMin, float2 tileMax, float layer)
             {
                 float3 s = float3(clamp(uv, tileMin, tileMax), layer);
@@ -401,8 +409,10 @@ Shader "OneText/SDF"
                     ONETEXT_RETURN(tile);
                 }
 
-                float2 tileMin = float2(i.bounds.y, i.uv.w);
-                float2 tileMax = float2(i.bounds.z, i.bounds.x);
+                // Half a texel in from the tile's edges; see Field for why.
+                float2 texel = precise > 0.5 ? _MsdfTexelSize.xy : _GlyphTexelSize.xy;
+                float2 tileMin = float2(i.bounds.y, i.uv.w) + 0.5 * texel;
+                float2 tileMax = float2(i.bounds.z, i.bounds.x) - 0.5 * texel;
                 // x thresholds, y sets the width of the band it is thresholded
                 // over. For the single-channel field they are the same number.
                 float2 field = precise > 0.5
@@ -479,7 +489,6 @@ Shader "OneText/SDF"
                 // and usually softened, so nobody can inspect its corners
                 // anyway. The face, the outline and the glow all keep the
                 // median, which is the whole point of the option.
-                float2 texel = precise > 0.5 ? _MsdfTexelSize.xy : _GlyphTexelSize.xy;
                 float2 shadowUv = i.uv.xy - float2(Signed(offset.x), Signed(offset.y))
                     * REACH_TEXELS * texel;
                 float shadowD = precise > 0.5

@@ -49,6 +49,14 @@ namespace OneText
         public static long RasterizeTicks, RasterizeCount, RasterizedPixels, DispatchCount;
 
         /// <summary>
+        /// Tiles whose glyph's contours overlap and were resolved before
+        /// rasterizing (see <c>ContourOverlaps</c>). Zero for a font shipped
+        /// with its overlaps removed; for one that was not, about one per tile
+        /// that has a join.
+        /// </summary>
+        public static long OverlapRebakes;
+
+        /// <summary>
         /// Of <see cref="RasterizeTicks"/>, the wall time inside
         /// Schedule().Complete().
         ///
@@ -87,6 +95,7 @@ namespace OneText
             LayoutBytes = MeshBytes = 0;
             OutlineTicks = OutlineCount = 0;
             RasterizeTicks = RasterizeCount = RasterizedPixels = DispatchCount = 0;
+            OverlapRebakes = 0;
             JobWaitTicks = 0;
             UploadTicks = UploadCount = UploadedTiles = 0;
             CopyTicks = 0;
