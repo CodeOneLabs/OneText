@@ -111,7 +111,7 @@ convert keeps working. Scan again whenever you want to see what is left.
 
 ## Status
 
-**v0.4.1.** Everything above is shipped. v0.1.0 was the first public release,
+**v0.4.2.** Everything above is shipped. v0.1.0 was the first public release,
 v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
 the Onboarding tab, and v0.3.0 was about coming from TextMesh Pro and finding
 less missing: a migration you can run on part of a project without the rest
@@ -150,8 +150,16 @@ Addressables in a project that has it.
 v0.4.1 closes the one frame in which a label could draw the wrong characters:
 when the atlas moved tiles in the middle of a canvas pass, a label that had
 already built kept the old locations until the next frame. Meshes are now
-repaired after uGUI's graphic pass and before anything is drawn. What comes
-next is verification and reach, not features:
+repaired after uGUI's graphic pass and before anything is drawn.
+
+v0.4.2 fixes three more ways a glyph could draw wrong: one tile stamped over
+another when a frame's new tiles overflowed the staging texture ("iYoji" for
+"Yoji" on Metal), a hairline of an evicted glyph along the edge of a quad on
+outlined text, and notches and faint lines at the joints of fonts that draw
+each stroke as its own outline (Tilt Neon, and the joins of Arabic). A font
+asset now records which of its glyphs overlap when it is made, so text drawn
+from it never checks. What comes next is verification and reach, not
+features:
 
 | | |
 |---|---|
