@@ -53,7 +53,9 @@
   checks.** `Create Font Asset` now also records, once, every glyph whose
   contours overlap (`OneFontAsset.IndexOverlaps`; `HasOverlapIndex`,
   `OverlappingGlyphCount`), the same check the rasterizer would make, over
-  the whole font behind the import progress bar. The atlas passes it on to
+  the whole font behind the import progress bar. That makes the step slower
+  for big fonts: NotoSansCJKkr (16 MB, 65,535 glyphs) took 0.71 s and now
+  takes 3.7 s, NotoSans 0.10 s and now 0.25 s. The atlas passes it on to
   the rasterizer (`RasterizeRequest.KnownOverlaps`): a clean glyph is packed
   exactly as before with no check at all, and an overlapping one is resolved
   before its single bake. Faces without an index — system fonts, files

@@ -85,9 +85,10 @@ namespace OneText.Editor
             string baseName = Path.GetFileNameWithoutExtension(fontPath);
             try
             {
-                // Under a second for a CJK face now, but a person who just
-                // dropped in a 16 MB font is watching a frozen editor either
-                // way, and a bar that names the font says which one.
+                // Under a second to pack a CJK face and about three more to
+                // index its overlaps; a person who just dropped in a 16 MB font
+                // is watching a frozen editor either way, and a bar that names
+                // the font says which one.
                 EditorUtility.DisplayProgressBar("OneText",
                     $"Packing {baseName} ({bytes.Length / (1024 * 1024f):0.#} MB)…", 0.5f);
                 asset.Initialize(bytes, ReadFamilyName(bytes, baseName), fontPath);
