@@ -41,6 +41,9 @@ namespace OneText
         [ReadOnly] public NativeArray<int> ContourGroups;
         [ReadOnly] public NativeArray<float4> ContourBounds;
 
+        /// <inheritdoc cref="SdfBatchJob.ContourKinds"/>
+        [ReadOnly] public NativeArray<byte> ContourKinds;
+
         /// <summary>
         /// +1 where the source glyph's contours wind counter-clockwise, -1
         /// where they wind clockwise; TrueType and CFF disagree, and the sign
@@ -120,15 +123,17 @@ namespace OneText
                     currentGroup = ContourGroups[c];
                 }
 
-                bool wantDistance = true, wantWinding = true;
+                int kind = ContourKinds[c];
+                bool wantDistance = (kind & ContourKind.Distance) != 0;
+                bool wantWinding = (kind & ContourKind.Winding) != 0;
                 if (Cull)
                 {
                     float4 bounds = ContourBounds[c];
-                    wantDistance = p.x >= bounds.x - reach && p.x <= bounds.z + reach &&
-                                   p.y >= bounds.y - reach && p.y <= bounds.w + reach;
-                    wantWinding = p.y >= bounds.y && p.y <= bounds.w;
-                    if (!wantDistance && !wantWinding) continue;
+                    wantDistance &= p.x >= bounds.x - reach && p.x <= bounds.z + reach &&
+                                    p.y >= bounds.y - reach && p.y <= bounds.w + reach;
+                    wantWinding &= p.y >= bounds.y && p.y <= bounds.w;
                 }
+                if (!wantDistance && !wantWinding) continue;
 
                 float orientation = ContourOrientation[c];
                 int start = ContourRanges[c].x;

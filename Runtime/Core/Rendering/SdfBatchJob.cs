@@ -36,6 +36,15 @@ namespace OneText
         [ReadOnly] public NativeArray<int2> ContourRanges;
         [ReadOnly] public NativeArray<int> ContourGroups;
         [ReadOnly] public NativeArray<float4> ContourBounds;
+
+        /// <summary>
+        /// <see cref="ContourKind"/> per contour: whether its edges are measured,
+        /// counted towards the winding, or both. Both for every contour a font
+        /// drew; a glyph whose contours overlap is packed as its original
+        /// contours wound-only plus the visible pieces of them measured-only
+        /// (see <see cref="ContourOverlaps"/>).
+        /// </summary>
+        [ReadOnly] public NativeArray<byte> ContourKinds;
         [ReadOnly] public NativeArray<SdfTileDesc> Tiles;
         [ReadOnly] public NativeArray<int> TileEnds;   // exclusive prefix sums of texel counts
 
@@ -77,15 +86,17 @@ namespace OneText
                     currentGroup = ContourGroups[c];
                 }
 
-                bool wantDistance = true, wantWinding = true;
+                int kind = ContourKinds[c];
+                bool wantDistance = (kind & ContourKind.Distance) != 0;
+                bool wantWinding = (kind & ContourKind.Winding) != 0;
                 if (Cull)
                 {
                     float4 bounds = ContourBounds[c];
-                    wantDistance = p.x >= bounds.x - reach && p.x <= bounds.z + reach &&
-                                   p.y >= bounds.y - reach && p.y <= bounds.w + reach;
-                    wantWinding = p.y >= bounds.y && p.y <= bounds.w;
-                    if (!wantDistance && !wantWinding) continue;
+                    wantDistance &= p.x >= bounds.x - reach && p.x <= bounds.z + reach &&
+                                    p.y >= bounds.y - reach && p.y <= bounds.w + reach;
+                    wantWinding &= p.y >= bounds.y && p.y <= bounds.w;
                 }
+                if (!wantDistance && !wantWinding) continue;
 
                 int start = ContourRanges[c].x;
                 int count = ContourRanges[c].y;

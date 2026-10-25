@@ -69,6 +69,14 @@ namespace OneText
         public static bool Cull = true;
 
         /// <summary>
+        /// Whether edges a glyph buries inside its own ink are kept out of its
+        /// distance field (<see cref="ContourOverlaps"/>). Off only so tests can
+        /// show that a font without overlapping contours bakes byte for byte
+        /// the same either way, and what the repair changes in one with them.
+        /// </summary>
+        public static bool ResolveOverlaps = true;
+
+        /// <summary>
         /// The floor, in texels, that a multi-channel texel's median has to
         /// stay clear of the outline by when the true distance says it is
         /// solidly inside the ink. Zero turns error correction off and restores
