@@ -344,6 +344,14 @@ namespace OneText.Tests.Play
         public IEnumerator Label_With_No_Font_Is_Not_Rebuilt_Every_Frame()
         {
             SystemFonts.Enabled = false;
+            // A project with a default font gives an unassigned label one, and
+            // then there is no label without a font to test. Taken away here
+            // and put back after; and the warning is forgotten, since it is
+            // said once per run and an earlier test may have had it.
+            var settings = OneTextSettings.Instance;
+            var projectDefault = settings != null ? settings.DefaultFont : null;
+            if (settings != null) settings.DefaultFont = null;
+            MissingFonts.Forget();
             try
             {
                 // One label that draws, so the repair is registered and running.
@@ -372,7 +380,11 @@ namespace OneText.Tests.Play
                     $"the label with no font was dirtied {dirtied} times over {frames} frames");
                 PlayHarness.ExpectNoErrors();
             }
-            finally { SystemFonts.UseProjectSetting(); }
+            finally
+            {
+                if (settings != null) settings.DefaultFont = projectDefault;
+                SystemFonts.UseProjectSetting();
+            }
         }
 
         private static Rect FirstUv(OneTextLabel label)
