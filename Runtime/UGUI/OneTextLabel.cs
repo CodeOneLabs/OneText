@@ -3425,7 +3425,9 @@ namespace OneText.UGUI
         private void PopulateMesh(VertexHelper vh)
         {
             vh.Clear();
-            if (string.IsNullOrEmpty(_text) || !EnsureNativeState()) return;
+            // The buffer, not the string: the SetText overloads clear _text, and
+            // it only comes back if something happens to read Text.
+            if (SourceSpan.IsEmpty || !EnsureNativeState()) return;
 
             long layoutStartedAt = AtlasDiagnostics.Now;
             long heapBefore = AtlasDiagnostics.Heap;

@@ -1,7 +1,9 @@
 using System;
+using System.IO;
 using NUnit.Framework;
 using OneText.UGUI;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace OneText.Tests
 {
@@ -17,6 +19,8 @@ namespace OneText.Tests
     /// </summary>
     public class TextBufferTests
     {
+        private const string LatinFontPath = "Packages/com.onetext.core/Tests/Fonts~/NotoSans.ttf";
+
         private GameObject _canvas;
         private OneTextLabel _label;
 
@@ -110,6 +114,62 @@ namespace OneText.Tests
             _label.RichText = true;
             _label.SetText("<b>bold</b> plain".AsSpan());
             Assert.AreEqual("bold plain", _label.DisplayText);
+        }
+
+        // Reading Text fills the string back in, which is exactly what would
+        // hide a draw that looks at the string. So these never read Text before
+        // the rebuild: a game that only ever writes a number is the case.
+        private int DrawnAfterRebuild()
+        {
+            _label.SetAllDirty();
+            _label.Rebuild(CanvasUpdate.PreRender);
+            return _label.DrawnQuads.Count;
+        }
+
+        private void UseRealFont()
+        {
+            _label.rectTransform.sizeDelta = new Vector2(400f, 200f);
+            _label.SetFont(File.ReadAllBytes(Path.GetFullPath(LatinFontPath)));
+        }
+
+        [Test]
+        public void A_Number_Is_Drawn_When_Nothing_Ever_Read_It_As_A_String()
+        {
+            UseRealFont();
+            _label.SetText(250);
+            Assert.AreEqual(3, DrawnAfterRebuild(), "SetText(int) must draw its digits");
+
+            _label.SetText(1.5f, 1);
+            Assert.AreEqual(3, DrawnAfterRebuild(), "SetText(float, int) must draw its digits");
+
+            _label.SetText("span".AsSpan());
+            Assert.AreEqual(4, DrawnAfterRebuild(), "SetText(span) must draw its characters");
+        }
+
+        [Test]
+        public void Replacing_A_String_With_A_Number_Replaces_What_Is_Drawn()
+        {
+            UseRealFont();
+            _label.Text = "1";
+            Assert.AreEqual(1, DrawnAfterRebuild());
+
+            _label.SetText(23);
+            Assert.AreEqual(2, DrawnAfterRebuild(),
+                "the number replaces the string on screen, not just in the buffer");
+        }
+
+        [Test]
+        public void Emptying_The_Buffer_Draws_Nothing()
+        {
+            UseRealFont();
+            _label.SetText(7);
+            Assert.AreEqual(1, DrawnAfterRebuild());
+
+            // The mesh, because an empty label returns before the quad list is
+            // rebuilt, and the list is not what reaches the screen.
+            _label.SetText(ReadOnlySpan<char>.Empty);
+            DrawnAfterRebuild();
+            Assert.AreEqual(0, _label.canvasRenderer.GetMesh().vertexCount);
         }
     }
 }
