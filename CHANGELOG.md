@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`SetText(int)`, `SetText(float, int)` and the span and `char[]` overloads
+  draw what they were given.** They write into the label's buffer and clear its
+  string, and the mesh build asked the string whether there was anything to
+  draw, so the label came out blank. Reading `Text` fills the string back in,
+  which is why the tests passed and why a debugger or a log line could make it
+  go away; a score or timer that is only ever written was the case that failed.
+  The mesh build now asks the buffer, like the rest of the pipeline.
+  ([#11](https://github.com/CodeOneLabs/OneText/issues/11))
+
 ## [0.4.2] - 2026-10-25
 
 ### Fixed
