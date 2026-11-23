@@ -317,6 +317,45 @@ namespace OneText
                 _precise = precise;
             }
 
+            /// <summary>
+            /// The same key for another id: everything but the id is a property
+            /// of the run, and a run's clusters were each re-reading the font's
+            /// identity, its generation and two global generations to build it.
+            /// </summary>
+            public Key WithId(long id) => new Key(this, id);
+
+            private Key(in Key template, long id)
+            {
+                _font = template._font;
+                _id = id;
+                _ppem = template._ppem;
+                _generation = template._generation;
+                _outline = template._outline;
+                _raster = template._raster;
+                _precise = template._precise;
+            }
+
+            /// <summary>
+            /// A hash that costs a few multiplies rather than a seven-round
+            /// HashCode.Combine. The id is a 64-bit FNV hash for a cluster and a
+            /// small integer for a glyph; the rest are a font id and a handful
+            /// of numbers that are the same for nearly every tile in the atlas.
+            /// The hash only places a key in a bucket: equality is still
+            /// <see cref="Equals(Key)"/>, every field of it.
+            /// </summary>
+            public int CheapHash()
+            {
+                unchecked
+                {
+                    ulong h = (ulong)_id * 0x9E3779B97F4A7C15UL;
+                    h ^= (ulong)(uint)_font * 0xC2B2AE3D27D4EB4FUL;
+                    h ^= (ulong)(uint)_ppem * 0x165667B19E3779F9UL;
+                    h ^= (ulong)(uint)(_generation ^ (_outline << 10) ^ (_raster << 20) ^ (_precise ? 1 << 30 : 0))
+                        * 0x27D4EB2F165667C5UL;
+                    return (int)(h >> 32) ^ (int)h;
+                }
+            }
+
             /// <summary>The <see cref="FontData.CacheId"/> the tile was baked from.</summary>
             public int FontId => _font;
 
@@ -327,6 +366,23 @@ namespace OneText
             public override int GetHashCode() =>
                 HashCode.Combine(_font, _id, _ppem, _generation, _outline, _raster, _precise);
         }
+
+        /// <summary>
+        /// Off keeps the dictionary on <see cref="Key.GetHashCode"/>, keys built
+        /// field by field for every cluster, and an LRU relink on every hit even
+        /// for the tile already at the tail. Read when an atlas is constructed,
+        /// because a dictionary cannot change its hash under keys it holds.
+        /// </summary>
+        public static bool FastKeys = true;
+
+        private sealed class CheapKeyComparer : IEqualityComparer<Key>
+        {
+            public static readonly CheapKeyComparer Instance = new CheapKeyComparer();
+            public bool Equals(Key a, Key b) => a.Equals(b);
+            public int GetHashCode(Key key) => key.CheapHash();
+        }
+
+        private readonly bool _fastKeys;
 
         private sealed class Entry
         {
@@ -359,7 +415,7 @@ namespace OneText
             public int YCursor;
         }
 
-        private readonly Dictionary<Key, Entry> _entries = new Dictionary<Key, Entry>();
+        private readonly Dictionary<Key, Entry> _entries;
         // Oldest first: eviction walks from the head, a hit moves to the tail.
         private readonly LinkedList<Entry> _lru = new LinkedList<Entry>();
         private readonly LayerState[] _layers;
@@ -449,6 +505,13 @@ namespace OneText
         public GlyphAtlas(GlyphAtlasSettings settings, bool precise = false)
         {
             settings = settings.Validated();
+            _fastKeys = FastKeys;
+            _entries = _fastKeys
+                ? new Dictionary<Key, Entry>(CheapKeyComparer.Instance)
+                : new Dictionary<Key, Entry>();
+            _batchPending = _fastKeys
+                ? new HashSet<Key>(CheapKeyComparer.Instance)
+                : new HashSet<Key>();
             _textureSize = settings.TextureSize;
             _layerCount = settings.LayerCount;
             _layers = new LayerState[_layerCount];
@@ -647,9 +710,11 @@ namespace OneText
 
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
             int glyphsExtracted = 0;
-            foreach (var cluster in clusters)
+            var template = new Key(font, 0, ppem, Precise);
+            for (int c = 0; c < clusters.Count; c++)
             {
-                var key = new Key(font, cluster.Hash, ppem, Precise);
+                var cluster = clusters[c];
+                var key = _fastKeys ? template.WithId(cluster.Hash) : new Key(font, cluster.Hash, ppem, Precise);
                 if (collecting)
                 {
                     // TryTouch rather than ContainsKey: it answers the same
@@ -704,7 +769,7 @@ namespace OneText
 
         private readonly List<RasterizeRequest> _batchRequests = new List<RasterizeRequest>();
         private readonly List<Key> _batchKeys = new List<Key>();
-        private readonly HashSet<Key> _batchPending = new HashSet<Key>();
+        private readonly HashSet<Key> _batchPending;
         private readonly List<RasterizedGlyph> _batchResults = new List<RasterizedGlyph>();
         private readonly List<List<List<Vector2>>> _contourPool = new List<List<List<Vector2>>>();
         private readonly List<List<int>> _groupPool = new List<List<int>>();
@@ -814,6 +879,9 @@ namespace OneText
         {
             entry.LastUse = ++_useStamp;
             if (entry.Node == null) return;
+            // Already the newest: unlinking and relinking it at the tail puts
+            // it exactly where it is.
+            if (_fastKeys && _lru.Last == entry.Node) return;
             _lru.Remove(entry.Node);
             _lru.AddLast(entry.Node);
         }

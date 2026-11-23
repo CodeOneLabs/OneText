@@ -68,6 +68,13 @@ namespace OneText
 
         [System.ThreadStatic] private static List<InkSpan> t_spans;
 
+        /// <summary>
+        /// Off sorts every run's ink spans, as it always did, even when they
+        /// already arrived in order. For A/B measurement and the equivalence
+        /// tests.
+        /// </summary>
+        public static bool SkipOrderedSort = true;
+
         private static readonly System.Comparison<InkSpan> s_byInkStart =
             (a, b) => a.Min.CompareTo(b.Min);
 
@@ -117,16 +124,23 @@ namespace OneText
             var spans = t_spans ??= new List<InkSpan>();
             spans.Clear();
             int pen = 0;
+            // Whether the spans already arrive in strictly increasing ink
+            // start, which left-to-right text with no marks always does.
+            bool ordered = true;
+            float lastMin = float.NegativeInfinity;
             for (int i = start; i < start + count; i++)
             {
                 var g = glyphs[i];
                 if (font.TryGetInkBounds(g.GlyphId, out var lo, out var hi))
                 {
+                    float min = pen + g.XOffset + lo.x;
+                    if (!(min > lastMin)) ordered = false;
+                    lastMin = min;
                     spans.Add(new InkSpan
                     {
                         GlyphIndex = i,
                         Pen = pen,
-                        Min = pen + g.XOffset + lo.x,
+                        Min = min,
                         Max = pen + g.XOffset + hi.x,
                     });
                 }
@@ -136,7 +150,12 @@ namespace OneText
 
             // Interval union: sort by ink start, then merge while overlapping
             // (or nearly touching) and under the width cap.
-            spans.Sort(s_byInkStart);
+            //
+            // Skipped only when the starts are STRICTLY increasing. Then every
+            // sort agrees on the order, because there is exactly one; with a
+            // tie, the sort is unstable and its choice between equals is what
+            // the clusters have always been built from, so it still runs.
+            if (!(SkipOrderedSort && ordered)) spans.Sort(s_byInkStart);
 
             int groupStart = 0;
             float groupMin = spans[0].Min, groupMax = spans[0].Max;
