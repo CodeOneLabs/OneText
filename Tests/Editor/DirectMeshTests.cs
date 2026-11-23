@@ -92,8 +92,11 @@ namespace OneText.Tests
                     direct.GetUVs(channel, got);
                     CollectionAssert.AreEqual(want, got, "TEXCOORD" + channel);
                 }
-                Assert.AreEqual(expected.bounds.min, direct.bounds.min, "bounds min");
-                Assert.AreEqual(expected.bounds.max, direct.bounds.max, "bounds max");
+                // To a thousandth of a unit, not to the bit: Unity keeps bounds
+                // as a centre and an extent, and its own RecalculateBounds and
+                // this route's SetMinMax round that pair differently.
+                Assert.Less(Vector3.Distance(expected.bounds.min, direct.bounds.min), 1e-3f, "bounds min");
+                Assert.Less(Vector3.Distance(expected.bounds.max, direct.bounds.max), 1e-3f, "bounds max");
             }
             finally
             {
