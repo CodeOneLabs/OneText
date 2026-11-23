@@ -399,7 +399,8 @@ namespace OneText
                 bool consumed;
                 if (closing)
                     consumed = ApplyClose(name, stack, result, s_result.Length, ref next);
-                else
+                else if (!FastPath || !TryApplyCommonOpen(name, source, argStart, argLength, hasArgument,
+                             stack, style, ref next, out consumed))
                     consumed = ApplyOpen(name, source, argStart, argLength, hasArgument, stack,
                         result, s_result.Length, style,
                         styleNames, fontNames, spriteNames, ref next, ref sprite, ref josa);
@@ -518,9 +519,25 @@ namespace OneText
         private static string CanonicalName(ReadOnlySpan<char> s, int start, int length)
         {
             var span = s.Slice(start, length);
-            foreach (string candidate in KnownNames)
-                if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
-                    return candidate;
+            if (FastPath && IsAscii(span))
+            {
+                // Every known name is lower-case ASCII, and for an ASCII name
+                // OrdinalIgnoreCase is exactly "the same length and the same
+                // letters once folded" — which a length test rejects for most
+                // of the table before a character is looked at. A name with
+                // anything outside ASCII in it takes the general compare below,
+                // because that one folds 'ſ' to 's' and 'ı' to 'i' and this
+                // one must not quietly disagree with it.
+                foreach (string candidate in KnownNames)
+                    if (candidate.Length == span.Length && AsciiEqualsLower(span, candidate))
+                        return candidate;
+            }
+            else
+            {
+                foreach (string candidate in KnownNames)
+                    if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                        return candidate;
+            }
 
             // Effects are registered rather than listed, so a project can add
             // one from user code and have markup find it.
@@ -528,6 +545,35 @@ namespace OneText
             if (effect != null) return effect;
 
             return new string(span).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// The parser's cheaper paths: tag names matched by length and folded
+        /// ASCII instead of a general case-insensitive compare per table
+        /// entry, and the open-tag stack read once per entry rather than once
+        /// per question asked of it. Same results either way
+        /// (<c>RichTextFastPathTests</c> holds the two against each other);
+        /// the switch exists so they can be.
+        /// </summary>
+        public static bool FastPath = true;
+
+        private static bool IsAscii(ReadOnlySpan<char> span)
+        {
+            for (int i = 0; i < span.Length; i++)
+                if (span[i] > 0x7F) return false;
+            return true;
+        }
+
+        /// <summary><paramref name="span"/> (ASCII) equals <paramref name="lower"/> (lower-case ASCII), ignoring case.</summary>
+        private static bool AsciiEqualsLower(ReadOnlySpan<char> span, string lower)
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                char c = span[i];
+                if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                if (c != lower[i]) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -562,7 +608,13 @@ namespace OneText
             while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '-' || s[i] == '_')) i++;
             if (i == nameStart && !(closing && i < s.Length && s[i] == '>')) return false;
 
-            name = i == nameStart ? string.Empty : CanonicalName(s, nameStart, i - nameStart);
+            int nameLength = i - nameStart;
+            // Named only once the tag turns out to be well formed: an unknown
+            // name is a fresh lower-cased string, and "x<y" in a sentence is
+            // not a tag that should cost one. Nothing reads the name of a tag
+            // that failed.
+            bool nameLater = FastPath;
+            if (!nameLater) name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
 
             // `<wave amp=2 freq=1.5>`: a space after the name introduces an
             // attribute list, which runs to the '>' and is handed to the tag to
@@ -576,6 +628,8 @@ namespace OneText
                 Trim(s, listStart, i - listStart, out argStart, out argLength);
                 hasArgument = true;
                 after = i + 1;
+                if (nameLater && argLength > 0)
+                    name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
                 return argLength > 0;
             }
 
@@ -609,6 +663,7 @@ namespace OneText
 
             if (i >= s.Length || s[i] != '>') return false;
             after = i + 1;
+            if (nameLater) name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
             return true;
         }
 
@@ -873,6 +928,59 @@ namespace OneText
             return true;
         }
 
+        /// <summary>
+        /// The tags almost every string uses — the four flags, nobr and colour
+        /// — opened without entering <see cref="ApplyOpen"/>, whose every case
+        /// shares one frame: twenty-odd locals and five Open initialisers to
+        /// set up and clear for a <c>&lt;b&gt;</c>. Exactly the same effects as
+        /// the matching cases there. False means "not one of these", and the
+        /// caller asks ApplyOpen.
+        ///
+        /// Compared by reference because the name is the canonical instance
+        /// from <see cref="KnownNames"/>; anything that is merely equal to one
+        /// of them (it cannot be, but the general path is the arbiter) goes
+        /// the general way.
+        /// </summary>
+        private static bool TryApplyCommonOpen(string name, ReadOnlySpan<char> source, int argStart,
+            int argLength, bool hasArgument, List<Open> stack, TextStyle current, ref TextStyle style,
+            out bool consumed)
+        {
+            TextStyle.Flag flag;
+            if (ReferenceEquals(name, "b")) flag = TextStyle.Flag.Bold;
+            else if (ReferenceEquals(name, "i")) flag = TextStyle.Flag.Italic;
+            else if (ReferenceEquals(name, "u")) flag = TextStyle.Flag.Underline;
+            else if (ReferenceEquals(name, "s")) flag = TextStyle.Flag.Strikethrough;
+            else if (ReferenceEquals(name, "nobr")) flag = TextStyle.Flag.NoBreak;
+            else if (ReferenceEquals(name, "color"))
+            {
+                if (!TryParseColor(hasArgument ? source.Slice(argStart, argLength) : default, out var color))
+                {
+                    consumed = false;
+                    return true;
+                }
+                style.Color = color;
+                style.Flags |= TextStyle.Flag.HasColor;
+                stack.Add(new Open { Name = name, Previous = current });
+                consumed = true;
+                return true;
+            }
+            else
+            {
+                consumed = false;
+                return false;
+            }
+
+            if (hasArgument)
+            {
+                consumed = false;
+                return true;
+            }
+            style.Flags |= flag;
+            stack.Add(new Open { Name = name, Previous = current });
+            consumed = true;
+            return true;
+        }
+
         private static bool ApplyClose(string name, List<Open> stack, RichTextResult result,
             int position, ref TextStyle style)
         {
@@ -895,6 +1003,32 @@ namespace OneText
             // emitted here never gets another chance (it is off the stack
             // before the end-of-input flush), and a link that silently vanishes
             // is the failure this parser exists to avoid.
+            if (FastPath)
+            {
+                // The same questions, asked of one copy of each entry: the
+                // list indexer copies the whole Open (a TextStyle and four
+                // references) every time it is read, and the loop below reads
+                // it seven times per entry to look at one string.
+                for (int i = stack.Count - 1; i >= index; i--)
+                {
+                    var entry = i == index ? open : stack[i];
+                    string entryName = entry.Name;
+                    if (entryName == "link")
+                        result.Links.Add(new TextLink(entry.LinkId, entry.LinkStart, position - entry.LinkStart));
+                    if (entryName == "align")
+                        result.Alignments.Add((position, entry.HadAlignment
+                            ? entry.PreviousAlignment
+                            : DefaultAlignmentMarker));
+                    if (entryName == "ruby") CloseRuby(result, entry, position);
+                    if (IsDecoration(entryName)) CloseDecoration(result, entry.DecorationIndex, position);
+                    if (BuiltInEffects.Has(entryName))
+                        result.Effects.Add((entryName, entry.EffectParameters, entry.EffectStart, position));
+                }
+                style = open.Previous;
+                stack.RemoveRange(index, stack.Count - index);
+                return true;
+            }
+
             for (int i = stack.Count - 1; i >= index; i--)
             {
                 if (stack[i].Name == "link")
