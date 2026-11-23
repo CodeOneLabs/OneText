@@ -317,6 +317,45 @@ namespace OneText
                 _precise = precise;
             }
 
+            /// <summary>
+            /// The same key for another id: everything but the id is a property
+            /// of the run, and a run's clusters were each re-reading the font's
+            /// identity, its generation and two global generations to build it.
+            /// </summary>
+            public Key WithId(long id) => new Key(this, id);
+
+            private Key(in Key template, long id)
+            {
+                _font = template._font;
+                _id = id;
+                _ppem = template._ppem;
+                _generation = template._generation;
+                _outline = template._outline;
+                _raster = template._raster;
+                _precise = template._precise;
+            }
+
+            /// <summary>
+            /// A hash that costs a few multiplies rather than a seven-round
+            /// HashCode.Combine. The id is a 64-bit FNV hash for a cluster and a
+            /// small integer for a glyph; the rest are a font id and a handful
+            /// of numbers that are the same for nearly every tile in the atlas.
+            /// The hash only places a key in a bucket: equality is still
+            /// <see cref="Equals(Key)"/>, every field of it.
+            /// </summary>
+            public int CheapHash()
+            {
+                unchecked
+                {
+                    ulong h = (ulong)_id * 0x9E3779B97F4A7C15UL;
+                    h ^= (ulong)(uint)_font * 0xC2B2AE3D27D4EB4FUL;
+                    h ^= (ulong)(uint)_ppem * 0x165667B19E3779F9UL;
+                    h ^= (ulong)(uint)(_generation ^ (_outline << 10) ^ (_raster << 20) ^ (_precise ? 1 << 30 : 0))
+                        * 0x27D4EB2F165667C5UL;
+                    return (int)(h >> 32) ^ (int)h;
+                }
+            }
+
             /// <summary>The <see cref="FontData.CacheId"/> the tile was baked from.</summary>
             public int FontId => _font;
 
@@ -328,6 +367,37 @@ namespace OneText
                 HashCode.Combine(_font, _id, _ppem, _generation, _outline, _raster, _precise);
         }
 
+        /// <summary>
+        /// Off keeps the dictionary on <see cref="Key.GetHashCode"/>, keys built
+        /// field by field for every cluster, and an LRU relink on every hit even
+        /// for the tile already at the tail. Read when an atlas is constructed,
+        /// because a dictionary cannot change its hash under keys it holds.
+        /// </summary>
+        public static bool FastKeys = true;
+
+        private sealed class CheapKeyComparer : IEqualityComparer<Key>
+        {
+            public static readonly CheapKeyComparer Instance = new CheapKeyComparer();
+            public bool Equals(Key a, Key b) => a.Equals(b);
+            public int GetHashCode(Key key) => key.CheapHash();
+        }
+
+        private readonly bool _fastKeys;
+
+        /// <summary>
+        /// Off sends every hit through the dictionary. On, a small table of
+        /// the most recent hit per hash slot answers first: a warm frame asks
+        /// for the same few dozen tiles over and over (every damage number is
+        /// made of the same ten digits), and an array slot and one key compare
+        /// are cheaper than a dictionary probe. Only with
+        /// <see cref="FastKeys"/>, whose hash it indexes by; read when an atlas
+        /// is constructed.
+        /// </summary>
+        public static bool RecentHits = true;
+
+        private const int RecentSlots = 256;
+        private readonly Entry[] _recent;
+
         private sealed class Entry
         {
             public Key Key;
@@ -337,6 +407,14 @@ namespace OneText
             public int Layer, X, Y, Width, Height, ShelfIndex;
             public long LastUse;
             public LinkedListNode<Entry> Node; // position in the LRU list
+
+            /// <summary>
+            /// True exactly while this entry is the one <see cref="_entries"/>
+            /// holds for its key: set where it is added, cleared everywhere one
+            /// is removed or replaced. What lets the recent-hit table below
+            /// trust an entry without asking the dictionary.
+            /// </summary>
+            public bool Live;
         }
 
         private struct Span
@@ -359,7 +437,7 @@ namespace OneText
             public int YCursor;
         }
 
-        private readonly Dictionary<Key, Entry> _entries = new Dictionary<Key, Entry>();
+        private readonly Dictionary<Key, Entry> _entries;
         // Oldest first: eviction walks from the head, a hit moves to the tail.
         private readonly LinkedList<Entry> _lru = new LinkedList<Entry>();
         private readonly LayerState[] _layers;
@@ -449,6 +527,14 @@ namespace OneText
         public GlyphAtlas(GlyphAtlasSettings settings, bool precise = false)
         {
             settings = settings.Validated();
+            _fastKeys = FastKeys;
+            _entries = _fastKeys
+                ? new Dictionary<Key, Entry>(CheapKeyComparer.Instance)
+                : new Dictionary<Key, Entry>();
+            _batchPending = _fastKeys
+                ? new HashSet<Key>(CheapKeyComparer.Instance)
+                : new HashSet<Key>();
+            _recent = _fastKeys && RecentHits ? new Entry[RecentSlots] : null;
             _textureSize = settings.TextureSize;
             _layerCount = settings.LayerCount;
             _layers = new LayerState[_layerCount];
@@ -647,9 +733,11 @@ namespace OneText
 
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
             int glyphsExtracted = 0;
-            foreach (var cluster in clusters)
+            var template = new Key(font, 0, ppem, Precise);
+            for (int c = 0; c < clusters.Count; c++)
             {
-                var key = new Key(font, cluster.Hash, ppem, Precise);
+                var cluster = clusters[c];
+                var key = _fastKeys ? template.WithId(cluster.Hash) : new Key(font, cluster.Hash, ppem, Precise);
                 if (collecting)
                 {
                     // TryTouch rather than ContainsKey: it answers the same
@@ -704,7 +792,7 @@ namespace OneText
 
         private readonly List<RasterizeRequest> _batchRequests = new List<RasterizeRequest>();
         private readonly List<Key> _batchKeys = new List<Key>();
-        private readonly HashSet<Key> _batchPending = new HashSet<Key>();
+        private readonly HashSet<Key> _batchPending;
         private readonly List<RasterizedGlyph> _batchResults = new List<RasterizedGlyph>();
         private readonly List<List<List<Vector2>>> _contourPool = new List<List<List<Vector2>>>();
         private readonly List<List<int>> _groupPool = new List<List<int>>();
@@ -800,7 +888,22 @@ namespace OneText
 
         private bool TryTouch(Key key, out GlyphLocation location)
         {
-            if (!_entries.TryGetValue(key, out var hit))
+            Entry hit;
+            if (_recent != null)
+            {
+                int slot = key.CheapHash() & (RecentSlots - 1);
+                hit = _recent[slot];
+                if (hit == null || !hit.Live || !hit.Key.Equals(key))
+                {
+                    if (!_entries.TryGetValue(key, out hit))
+                    {
+                        location = default;
+                        return false;
+                    }
+                    _recent[slot] = hit;
+                }
+            }
+            else if (!_entries.TryGetValue(key, out hit))
             {
                 location = default;
                 return false;
@@ -814,6 +917,9 @@ namespace OneText
         {
             entry.LastUse = ++_useStamp;
             if (entry.Node == null) return;
+            // Already the newest: unlinking and relinking it at the tail puts
+            // it exactly where it is.
+            if (_fastKeys && _lru.Last == entry.Node) return;
             _lru.Remove(entry.Node);
             _lru.AddLast(entry.Node);
         }
@@ -829,7 +935,8 @@ namespace OneText
             if (raster.IsEmpty)
             {
                 var emptyLocation = new GlyphLocation(false, Vector2.zero, Vector2.zero, default, 0);
-                _entries[key] = new Entry { Key = key, Location = emptyLocation };
+                RetireReplaced(key);
+                _entries[key] = new Entry { Key = key, Location = emptyLocation, Live = true };
                 return emptyLocation;
             }
 
@@ -868,6 +975,8 @@ namespace OneText
             entry.Location = WriteSlot(layer, x, y, raster);
             entry.Node = _lru.AddLast(entry);
             entry.LastUse = ++_useStamp;
+            RetireReplaced(key);
+            entry.Live = true;
             _entries[key] = entry;
             int pixels = raster.Width * raster.Height;
             _usedPixels += pixels;
@@ -884,6 +993,16 @@ namespace OneText
                 if (_demand.TryAdd(key, pixels)) _demandPixels += pixels;
             }
             return entry.Location;
+        }
+
+        /// <summary>
+        /// An entry about to be overwritten in the dictionary under the same
+        /// key stops being live. Callers commit after a miss, so there is
+        /// normally nothing there; the test hook can commit over a key.
+        /// </summary>
+        private void RetireReplaced(Key key)
+        {
+            if (_recent != null && _entries.TryGetValue(key, out var replaced)) replaced.Live = false;
         }
 
         /// <summary>
@@ -1088,6 +1207,7 @@ namespace OneText
 
         private void Release(Entry entry)
         {
+            entry.Live = false;
             _entries.Remove(entry.Key);
             if (entry.Node != null) _lru.Remove(entry.Node);
             entry.Node = null;
@@ -1231,6 +1351,7 @@ namespace OneText
                 {
                     // Cannot happen for tiles that already fitted, but dropping
                     // is still better than a corrupt entry.
+                    entry.Live = false;
                     _entries.Remove(entry.Key);
                     if (entry.Node != null) _lru.Remove(entry.Node);
                     entry.Node = null;
@@ -1580,6 +1701,8 @@ namespace OneText
                 }
                 _staging = null;
             }
+            foreach (var entry in _entries.Values) entry.Live = false;
+            if (_recent != null) Array.Clear(_recent, 0, _recent.Length);
             _entries.Clear();
             _lru.Clear();
         }
