@@ -973,6 +973,10 @@ namespace OneText.UGUI
             // And a style is a reference, so editing the asset has to reach the
             // labels pointing at it.
             StyleInvalidation.Register(this);
+            // An edit made while this label was off never reached it, and the
+            // layout and measure caches cannot see letter spacing or the font
+            // stack, so they would keep the old answer for good.
+            if (_styleVersionSeen != StyleInvalidation.Version) OnStyleChanged();
             // And fonts come and go at runtime now: a label showing tofu has to
             // hear that the font for it arrived, and one drawing with a font
             // that is leaving has to lay out without it before it is destroyed.
@@ -1004,10 +1008,17 @@ namespace OneText.UGUI
         {
             AtlasInvalidation.Unregister(this);
             StyleInvalidation.Unregister(this);
+            _styleVersionSeen = StyleInvalidation.Version;
             FontInvalidation.Unregister(this);
             ScreenPpem.Unregister(this);
             base.OnDisable();
         }
+
+        // The style edits this label has accounted for (see
+        // StyleInvalidation.Version). Starts at the version it was created
+        // under, so a label measured while still inactive is covered too, and
+        // a fresh one does not rebuild on its first enable.
+        [System.NonSerialized] private int _styleVersionSeen = StyleInvalidation.VersionUnsubscribed;
 
         // --------------------------------------------------------- named styles
 

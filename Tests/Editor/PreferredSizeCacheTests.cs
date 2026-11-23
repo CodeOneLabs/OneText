@@ -107,6 +107,53 @@ namespace OneText.Tests
                 "turning wrapping off is one line again, whatever the box");
         }
 
+        private OneTextStyle NewStyle(string name)
+        {
+            var style = ScriptableObject.CreateInstance<OneTextStyle>();
+            style.name = name;
+            _created.Add(style);
+            return style;
+        }
+
+        [Test]
+        public void AStyleEditWhileDisabled_ReachesTheLabelWhenItIsEnabled()
+        {
+            // A pooled label: measured, put away, the theme changes, taken out.
+            // Disabled, it is off the style registry, so the edit never bumped
+            // its generation, and letter spacing is not in the layout key.
+            var label = NewLabel("Hamburgefonstiv");
+            var style = NewStyle("theme");
+            style.SetLetterSpacing(0f);
+            label.Style = style;
+            float plain = label.preferredWidth;
+            float drawnPlain = label.EnsureLayout().Width;
+
+            label.gameObject.SetActive(false);
+            style.SetLetterSpacing(0.2f);
+            label.gameObject.SetActive(true);
+
+            Assert.Greater(label.preferredWidth, plain + 1f,
+                "the measured width kept the spacing from before the label was disabled");
+            Assert.Greater(label.EnsureLayout().Width, drawnPlain + 1f,
+                "the drawn layout kept the spacing from before the label was disabled");
+        }
+
+        [Test]
+        public void ReEnablingWithNoEdit_DoesNotRemeasure()
+        {
+            var label = NewLabel("Hamburgefonstiv");
+            label.Style = NewStyle("theme");
+            float width = label.preferredWidth;
+            int runs = label.MeasureRuns;
+
+            label.gameObject.SetActive(false);
+            label.gameObject.SetActive(true);
+
+            Assert.AreEqual(width, label.preferredWidth);
+            Assert.AreEqual(runs, label.MeasureRuns,
+                "a pooled label coming back with nothing changed must not lay out again");
+        }
+
         [Test]
         public void ForcedReparse_Remeasures()
         {

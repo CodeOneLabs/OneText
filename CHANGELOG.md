@@ -14,6 +14,14 @@
   render cache uses, built from the box it is measured in and the size it is
   laid out at, so it moves exactly when the drawn layout would.
   `ForceMeshUpdate(false, forceTextReparsing: true)` drops it too.
+- **A style edit made while a label is disabled reaches it when it is
+  enabled.** A disabled label is off the style registry, so an edit in that
+  time (a theme change over pooled labels) never bumped its layout generation,
+  and letter spacing and the font stack are not part of the layout key: the
+  label came back drawn, and measured, with the old spacing. A label now notes
+  the registry's edit count when it is disabled and rebuilds on enable only if
+  that count has moved, so a label coming back with nothing changed does not
+  lay out again.
 
 - **`SetText(int)`, `SetText(float, int)` and the span and `char[]` overloads
   draw what they were given.** They write into the label's buffer and clear its
