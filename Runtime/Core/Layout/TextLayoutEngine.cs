@@ -186,6 +186,8 @@ namespace OneText
 
             EnsureCapacity(n);
             _simple = IsSimple(text, settings, n);
+            if (_simple && SimpleLineFastPath && LayoutSimpleLine(text, settings, result, primary, n))
+                return;
 
             long breakStart = AtlasDiagnostics.Now;
             if (_simple)
@@ -194,6 +196,18 @@ namespace OneText
                 // mandatory break, and NoWrap means nothing reads the allowed
                 // ones. The paragraph loop below sees one paragraph.
                 Array.Clear(_opportunities, 0, n + 1);
+            }
+            else if (settings.Wrap == TextWrap.NoWrap && NoWrapMandatoryBreaksOnly)
+            {
+                // Under NoWrap the table is read for one thing: where the
+                // paragraphs end. FindLineEnd returns the paragraph's end
+                // without looking at it, the inline clip and the ellipsis walk
+                // grapheme boundaries, and every tailoring below (nobr, ruby,
+                // the Thai dictionary, Korean word wrap, kinsoku) only ever
+                // turns Allowed into None or None into Allowed. So the
+                // mandatory breaks are all of the answer anyone reads, and
+                // they are a scan for newlines rather than UAX #14.
+                LineBreaker.AnalyzeMandatory(text, _opportunities);
             }
             else
             {
@@ -398,12 +412,217 @@ namespace OneText
             var primary = settings.Fonts?.Primary;
             if (primary == null) return false;
 
+            if (!AsciiCoverageCache)
+            {
+                for (int i = 0; i < length; i++)
+                {
+                    char c = text[i];
+                    if (c < ' ' || c > '~') return false;
+                    if (!primary.HasGlyph(c)) return false;
+                }
+                return true;
+            }
+
+            // The same question, with each answer remembered. HasGlyph is a
+            // call into HarfBuzz per character, and a label asks it about the
+            // same ninety-five characters on every rebuild of its life. Keyed
+            // by the native handle as well as the object, because a disposed
+            // font keeps its object and loses its handle, and HasGlyph's
+            // answer for it changes to no.
+            if (!ReferenceEquals(primary, _asciiFont) || primary.Font != _asciiHandle)
+            {
+                _asciiFont = primary;
+                _asciiHandle = primary.Font;
+                _asciiKnownLo = _asciiKnownHi = _asciiHasLo = _asciiHasHi = 0UL;
+            }
             for (int i = 0; i < length; i++)
             {
                 char c = text[i];
                 if (c < ' ' || c > '~') return false;
-                if (!primary.HasGlyph(c)) return false;
+                int bit = c - ' ';
+                if (bit < 64)
+                {
+                    ulong mask = 1UL << bit;
+                    if ((_asciiKnownLo & mask) == 0)
+                    {
+                        _asciiKnownLo |= mask;
+                        if (primary.HasGlyph(c)) _asciiHasLo |= mask;
+                    }
+                    if ((_asciiHasLo & mask) == 0) return false;
+                }
+                else
+                {
+                    ulong mask = 1UL << (bit - 64);
+                    if ((_asciiKnownHi & mask) == 0)
+                    {
+                        _asciiKnownHi |= mask;
+                        if (primary.HasGlyph(c)) _asciiHasHi |= mask;
+                    }
+                    if ((_asciiHasHi & mask) == 0) return false;
+                }
             }
+            return true;
+        }
+
+        /// <summary>
+        /// Whether <see cref="IsSimple"/> remembers which printable ASCII
+        /// characters the primary face covers instead of asking HarfBuzz per
+        /// character per layout. Same answers either way; on so the switch
+        /// exists to measure it and to prove that.
+        /// </summary>
+        public static bool AsciiCoverageCache = true;
+
+        private FontData _asciiFont;
+        private IntPtr _asciiHandle;
+        private ulong _asciiKnownLo, _asciiKnownHi, _asciiHasLo, _asciiHasHi;
+
+        /// <summary>
+        /// Whether text that passes <see cref="IsSimple"/> is laid out by
+        /// <see cref="LayoutSimpleLine"/> rather than by the general machinery.
+        /// The result is the same in every field; the switch exists so that
+        /// can be measured and tested, both ways, in one process.
+        /// </summary>
+        public static bool SimpleLineFastPath = true;
+
+        /// <summary>
+        /// Whether NoWrap text finds its paragraphs with
+        /// <see cref="LineBreaker.AnalyzeMandatory"/> instead of the full
+        /// UAX #14 analysis and its tailorings, none of whose other answers
+        /// a line that cannot wrap reads.
+        /// </summary>
+        public static bool NoWrapMandatoryBreaksOnly = true;
+
+        /// <summary>
+        /// The whole of <see cref="Layout(ReadOnlySpan{char}, in TextLayoutSettings, TextLayoutResult)"/>
+        /// for one line of simple text: shape once, sum the advances, write one
+        /// run and one line, align.
+        ///
+        /// Every step is the general path's own step with its answer already
+        /// known, and is written as the same arithmetic in the same order,
+        /// because the claim is not "close" but "equal": a damage number laid
+        /// out here and the same number laid out the long way must put every
+        /// glyph on the same float. What the general path would decide here,
+        /// and why it is a constant:
+        ///
+        /// - one paragraph, one item: printable ASCII has no mandatory break,
+        ///   and the guard has proved the primary face covers all of it, so
+        ///   nothing splits on font, level or style (there are no spans);
+        /// - level 0, left to right: no strong right-to-left character, and
+        ///   the base direction is not right-to-left;
+        /// - one grapheme per character;
+        /// - no East Asian spacing: <see cref="AsianSpacingFor"/> and
+        ///   <see cref="LineEdgeCompressionFor"/> answer 0 for every ASCII
+        ///   character, because every rule in them keys on Han, kana, Hangul
+        ///   or full-width punctuation;
+        /// - no monospace: that is <c>&lt;mspace&gt;</c>, which is a span;
+        /// - no justification: the only line is its paragraph's last;
+        /// - nothing to reorder: one run.
+        ///
+        /// A line that would be clipped is the one case left to the general
+        /// path, which this hands back to by returning false having written
+        /// nothing a second pass would have to undo.
+        /// </summary>
+        private bool LayoutSimpleLine(ReadOnlySpan<char> text, in TextLayoutSettings settings,
+            TextLayoutResult result, FontData font, int n)
+        {
+            long itemizeStart = AtlasDiagnostics.Now;
+            var glyphs = result.Glyphs;
+            long measureShapeStart = AtlasDiagnostics.Now;
+            _shaper.Shape(font, text, 0, n, Shaper.Direction.LeftToRight, glyphs, settings.Language);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.MeasureShapeTicks, measureShapeStart);
+            if (AtlasDiagnostics.Enabled) AtlasDiagnostics.MeasureShapeCount++;
+
+            float fontSize = settings.FontSize;
+            float scale = fontSize / font.UnitsPerEm;
+            float letterSpacingEm = ResolveLetterSpacing(settings, TextStyle.Default, font);
+            int trackingUnits = letterSpacingEm == 0f
+                ? 0
+                : (int)Math.Round(letterSpacingEm * font.UnitsPerEm);
+
+            // The measuring pass's per-character advances, which the trailing
+            // space rule and the clip test read, and the emitting pass's run
+            // width, which is summed over the glyphs after tracking is written
+            // into them. Both in glyph order, as there.
+            Array.Clear(_advances, 0, n);
+            float width = 0f;
+            int count = glyphs.Count;
+            for (int g = 0; g < count; g++)
+            {
+                var glyph = glyphs[g];
+                int cluster = Math.Min(Math.Max(glyph.Cluster, 0), n - 1);
+                int extra = TrackingFor(glyph, trackingUnits);
+                _advances[cluster] += (glyph.XAdvance + extra) * scale;
+                if (extra != 0)
+                {
+                    glyph = new ShapedGlyph(glyph.GlyphId, glyph.Cluster,
+                        glyph.XAdvance + extra, glyph.YAdvance, glyph.XOffset, glyph.YOffset);
+                    glyphs[g] = glyph;
+                }
+                width += glyph.XAdvance * scale;
+            }
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.ItemizeTicks, itemizeStart);
+
+            long wrapStart = AtlasDiagnostics.Now;
+            if (settings.Overflow != TextOverflow.Overflow && settings.MaxWidth > 0f)
+            {
+                // ClipInline's test. If it would cut, the general path cuts.
+                float sum = 0f;
+                for (int i = 0; i < n; i++) sum += _advances[i];
+                if (sum - TrailingSpaceWidth(text, 0, n) > settings.MaxWidth)
+                {
+                    glyphs.Clear();
+                    return false;
+                }
+            }
+
+            var graphemes = result.GraphemeStarts;
+            for (int i = 0; i <= n; i++) graphemes.Add(i);
+
+            float ascent = Math.Max(0f, font.Ascender * scale + 0f);
+            float descent = Math.Max(0f, -font.Descender * scale - 0f);
+            float gap = Math.Max(0f, font.LineGap * scale);
+            float spacing = settings.LineSpacing > 0f ? settings.LineSpacing : 1f;
+            float height = (ascent + descent + gap) * spacing;
+            float visibleWidth = (0f + width) - TrailingSpaceWidth(text, 0, n);
+            float baseline = 0f + (height - (ascent + descent)) * 0.5f + ascent;
+
+            var style = TextStyle.Default;
+            result.Runs.Add(new TextRun
+            {
+                Font = font,
+                GlyphStart = 0,
+                GlyphCount = count,
+                TextStart = 0,
+                TextLength = n,
+                X = 0f,
+                Baseline = baseline,
+                Width = width,
+                Level = 0,
+                FontSize = fontSize,
+                Style = style,
+                BaselineShift = style.BaselineShiftEm * fontSize,
+            });
+            result.Lines.Add(new TextLine
+            {
+                RunStart = 0,
+                RunCount = 1,
+                TextStart = 0,
+                TextLength = n,
+                Width = visibleWidth,
+                Baseline = baseline,
+                Ascent = ascent,
+                Descent = descent,
+                Height = height,
+                ParagraphLevel = 0,
+                IsParagraphEnd = true,
+            });
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.WrapTicks, wrapStart);
+
+            Publish(settings, result, visibleWidth > 0f ? visibleWidth : 0f, 0f + height);
+
+            long alignStart = AtlasDiagnostics.Now;
+            Align(settings, result);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.AlignTicks, alignStart);
             return true;
         }
 

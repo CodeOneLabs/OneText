@@ -475,7 +475,7 @@ namespace OneText.Unicode
         /// run: anything right-to-left, Arabic numbers (which take level 2
         /// even beside Latin), and the explicit embedding and isolate controls.
         /// </summary>
-        private static bool IsDirectionallyHard(BidiClass cls)
+        internal static bool IsDirectionallyHard(BidiClass cls)
         {
             switch (cls)
             {

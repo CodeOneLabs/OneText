@@ -46,6 +46,17 @@ namespace OneText.Unicode
             output.Clear();
             if (text.IsEmpty || length <= 0) return 0;
 
+            if (LeftToRightShortcut &&
+                (paragraphDirection == 0 || paragraphDirection == BidiAlgorithm.AutoDirection) &&
+                HasNothingHard(text, start, start + length))
+            {
+                // What BidiAlgorithm.Resolve's own plain path concludes for
+                // this text, without building its inputs: level 0 everywhere,
+                // nothing removed, one run.
+                output.Add(new Run { Start = start, Length = length, Level = 0 });
+                return 0;
+            }
+
             var cps = t_cps ??= new List<int>();
             var cpStarts = t_cpStarts ??= new List<int>();
             cps.Clear();
@@ -84,6 +95,52 @@ namespace OneText.Unicode
 
             return para;
         }
+
+        /// <summary>
+        /// Whether <see cref="GetLogicalRuns(ReadOnlySpan{char}, int, int, byte, List{Run})"/>
+        /// answers left-to-right text without running the algorithm. Same
+        /// answer either way; the switch exists to measure that and to prove it.
+        /// </summary>
+        public static bool LeftToRightShortcut = true;
+
+        /// <summary>
+        /// True when no code point in [start, end) has a class that
+        /// <see cref="BidiAlgorithm"/>'s plain path rejects: R, AL, AN, BN or
+        /// an explicit embedding, override or isolate. Text like that, in a
+        /// paragraph that is not right-to-left, resolves to level 0 throughout
+        /// (W7 turns every European number into L, and nothing else can raise
+        /// a level), which is the conclusion Resolve reaches the long way
+        /// after decoding the text into lists and clearing three scratch
+        /// buffers. Decoded here exactly as there, code point by code point.
+        /// </summary>
+        internal static bool HasNothingHard(ReadOnlySpan<char> text, int start, int end)
+        {
+            for (int i = start; i < end;)
+            {
+                char c = text[i];
+                if (char.IsHighSurrogate(c))
+                {
+                    if (BidiAlgorithm.IsDirectionallyHard(BidiData.GetClass(Codepoint(text, i)))) return false;
+                    i += 2;
+                    continue;
+                }
+                if (!CannotBeHard(c) && BidiAlgorithm.IsDirectionallyHard(BidiData.GetClass(Codepoint(text, i)))) return false;
+                i++;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// A cheap reject for the blocks the text this engine mostly sees lives
+        /// in: printable ASCII, Latin-1 to Armenian, Indic to Mongolian, and
+        /// everything from the CJK symbols through Hangul. None of their code
+        /// points has a hard class; a test walks every one of them against
+        /// the data so this cannot drift from it.
+        /// </summary>
+        internal static bool CannotBeHard(char c) =>
+            (c >= ' ' && c < '\u007F') ||
+            (c >= '\u00A0' && c < '\u0590' && c != '\u00AD') ||
+            (c >= '\u3000' && c < '\uD800');
 
         [System.ThreadStatic] private static byte[] t_levels;
         [System.ThreadStatic] private static bool[] t_removed;
