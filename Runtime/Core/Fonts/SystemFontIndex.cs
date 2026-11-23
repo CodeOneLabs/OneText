@@ -51,8 +51,67 @@ namespace OneText
 
             public void SetRanges(List<int> starts, List<int> ends)
             {
-                _starts = starts.ToArray();
-                _ends = ends.ToArray();
+                int count = MergeRanges ? MergedCount(starts, ends) : -1;
+                if (count < 0 || count == starts.Count)
+                {
+                    _starts = starts.ToArray();
+                    _ends = ends.ToArray();
+                    return;
+                }
+                // Touching ranges joined: a format 4 table spends a segment per
+                // run of glyph ids, so a CJK face lists hundreds of segments
+                // that are one range of characters. Kept for every face the
+                // indexer reads, so the difference is megabytes.
+                _starts = new int[count];
+                _ends = new int[count];
+                int at = 0;
+                _starts[0] = starts[0];
+                _ends[0] = ends[0];
+                for (int i = 1; i < starts.Count; i++)
+                {
+                    if (starts[i] == _ends[at] + 1) { _ends[at] = ends[i]; continue; }
+                    at++;
+                    _starts[at] = starts[i];
+                    _ends[at] = ends[i];
+                }
+            }
+
+            /// <summary>
+            /// How many ranges remain once touching ones are joined, or -1 when
+            /// the list is not sorted and disjoint. Only then is joining
+            /// invisible to <see cref="Covers"/>: its binary search answers
+            /// exactly the union of the ranges, and so does the joined list. An
+            /// unsorted table (a broken font) is kept as it came, so the search
+            /// gives the same answer it always gave.
+            /// </summary>
+            private static int MergedCount(List<int> starts, List<int> ends)
+            {
+                if (starts.Count == 0) return 0;
+                int count = 1;
+                for (int i = 1; i < starts.Count; i++)
+                {
+                    if (starts[i] <= ends[i - 1]) return -1;
+                    if (starts[i] != ends[i - 1] + 1) count++;
+                }
+                return count;
+            }
+
+            /// <summary>Whether touching ranges are joined; off is for the equivalence test.</summary>
+            internal static bool MergeRanges = true;
+
+            internal int[] Starts => _starts;
+            internal int[] Ends => _ends;
+
+            /// <summary>
+            /// The ranges another face of the same file parsed from the same
+            /// cmap table. Collections share one table between most of their
+            /// members (a family's weights map the same characters), and the
+            /// arrays are never written after they are made.
+            /// </summary>
+            public void ShareRanges(FaceCoverage other)
+            {
+                _starts = other._starts;
+                _ends = other._ends;
             }
 
             /// <summary>True if the face's cmap claims this character.</summary>
@@ -243,12 +302,25 @@ namespace OneText
         /// </summary>
         internal static FaceCoverage[] Coverage(string path)
         {
-            if (s_coverage.TryGetValue(path, out var cached)) return cached;
-            FaceCoverage[] faces;
-            try { faces = ReadCoverage(path); }
-            catch (Exception) { faces = Array.Empty<FaceCoverage>(); }
-            s_coverage[path] = faces;
+            lock (s_coverageSync)
+                if (s_coverage.TryGetValue(path, out var cached)) return cached;
+
+            // Read outside the lock, so a caller never waits on the indexer's
+            // disk I/O: if both read the same file, both get the same answer
+            // (the file is the file) and the first one stored is kept.
+            var faces = ReadCoverageSafely(path);
+            lock (s_coverageSync)
+            {
+                if (s_coverage.TryGetValue(path, out var stored)) return stored;
+                s_coverage[path] = faces;
+            }
             return faces;
+        }
+
+        private static FaceCoverage[] ReadCoverageSafely(string path)
+        {
+            try { return ReadCoverage(path); }
+            catch (Exception) { return Array.Empty<FaceCoverage>(); }
         }
 
         /// <summary>Forgets the listing and every parsed cmap (tests, and editor reloads).</summary>
@@ -256,7 +328,96 @@ namespace OneText
         {
             s_files = null;
             s_stems = null;
-            s_coverage.Clear();
+            lock (s_coverageSync)
+            {
+                s_coverage.Clear();
+                // An indexer still running belongs to the listing just
+                // forgotten (a test's DirectoriesOverride, say); it sees the
+                // generation move and stops without storing anything.
+                s_indexGeneration++;
+                s_indexStarted = false;
+            }
+        }
+
+        // ------------------------------------------------------ background index
+
+        private static readonly object s_coverageSync = new object();
+        private static int s_indexGeneration;
+        private static bool s_indexStarted;
+
+        /// <summary>
+        /// How many files the background indexer has read, this listing. For
+        /// tests and the benchmark, which need to know it ran.
+        /// </summary>
+        internal static int BackgroundIndexed;
+
+        /// <summary>
+        /// Starts reading every listed file's cmap on a worker thread, once per
+        /// listing.
+        ///
+        /// <para>Why: the first character that nothing on the machine has is
+        /// answered by asking every file, and on a Mac that is 390 files and
+        /// 800 faces, 30 to 170 ms of opening and reading on whatever frame the
+        /// character arrived in. It happens in practice: random kana in the
+        /// benchmark land on U+3097, which Unicode has not assigned, and a
+        /// language switch brings it on the seventeenth frame after the first
+        /// probe. The answer per file does not depend on who reads it, so the
+        /// reading can happen before anyone asks; a frame that asks while the
+        /// indexer is still going reads the files it has not reached itself,
+        /// which is what it would have done anyway.</para>
+        ///
+        /// <para>Started by the first probe rather than at startup: a project
+        /// whose own fonts cover its text never asks, and never pays for the
+        /// reading or for the ranges it keeps.</para>
+        /// </summary>
+        internal static void StartBackgroundIndex()
+        {
+#if !UNITY_WEBGL || UNITY_EDITOR
+            string[] files = s_files;
+            if (files == null || files.Length == 0) return;
+            int generation;
+            lock (s_coverageSync)
+            {
+                if (s_indexStarted) return;
+                s_indexStarted = true;
+                generation = s_indexGeneration;
+                BackgroundIndexed = 0;
+            }
+            try
+            {
+                var thread = new System.Threading.Thread(() => IndexAll(files, generation))
+                {
+                    IsBackground = true,
+                    Priority = System.Threading.ThreadPriority.BelowNormal,
+                    Name = "OneText system font index",
+                };
+                thread.Start();
+            }
+            catch (Exception)
+            {
+                // No thread to be had: probing reads the files itself, as it
+                // always did.
+            }
+#endif
+        }
+
+        private static void IndexAll(string[] files, int generation)
+        {
+            foreach (string path in files)
+            {
+                lock (s_coverageSync)
+                {
+                    if (s_indexGeneration != generation) return;
+                    if (s_coverage.ContainsKey(path)) continue;
+                }
+                var faces = ReadCoverageSafely(path);
+                lock (s_coverageSync)
+                {
+                    if (s_indexGeneration != generation) return;
+                    if (!s_coverage.ContainsKey(path)) s_coverage[path] = faces;
+                    BackgroundIndexed++;
+                }
+            }
         }
 
         // --------------------------------------------------------- sfnt reading
@@ -269,9 +430,13 @@ namespace OneText
             if (offsets.Count == 0) return Array.Empty<FaceCoverage>();
 
             var faces = new List<FaceCoverage>(offsets.Count);
+            // cmap offset and length -> the face that parsed it, for collections; null
+            // for a plain font, which has one face and nothing to share.
+            Dictionary<(long, uint), FaceCoverage> byCmap = offsets.Count > 1 && ShareCmaps
+                ? new Dictionary<(long, uint), FaceCoverage>() : null;
             for (int i = 0; i < offsets.Count; i++)
             {
-                var face = ReadFace(stream, offsets[i], (uint)i);
+                var face = ReadFace(stream, offsets[i], (uint)i, byCmap);
                 if (face != null) faces.Add(face);
             }
             return faces.Count == 0 ? Array.Empty<FaceCoverage>() : faces.ToArray();
@@ -306,7 +471,14 @@ namespace OneText
             return offsets;
         }
 
-        private static FaceCoverage ReadFace(FileStream stream, long directory, uint index)
+        /// <summary>
+        /// Whether a collection's faces that point at one cmap table read and
+        /// parse it once. On by default; off is for measuring it.
+        /// </summary>
+        internal static bool ShareCmaps = true;
+
+        private static FaceCoverage ReadFace(FileStream stream, long directory, uint index,
+            Dictionary<(long, uint), FaceCoverage> byCmap)
         {
             if (!Seek(stream, directory)) return null;
             var header = new byte[12];
@@ -328,11 +500,22 @@ namespace OneText
             }
             if (cmapOffset < 0 || cmapLength < 4 || cmapLength > 16 * 1024 * 1024) return null;
 
+            var face = new FaceCoverage { FaceIndex = index, TableDirectory = directory };
+            if (byCmap != null && byCmap.TryGetValue((cmapOffset, cmapLength), out var same))
+            {
+                // Same table, same bytes, same answer: the parse below is a
+                // pure function of them. A table that failed to parse is not
+                // in the map, so it fails again here rather than being shared.
+                face.ShareRanges(same);
+                return face;
+            }
+
             var cmap = new byte[cmapLength];
             if (!Seek(stream, cmapOffset) || !Fill(stream, cmap, cmap.Length)) return null;
 
-            var face = new FaceCoverage { FaceIndex = index, TableDirectory = directory };
-            return ParseCmap(cmap, face) ? face : null;
+            if (!ParseCmap(cmap, face)) return null;
+            if (byCmap != null) byCmap[(cmapOffset, cmapLength)] = face;
+            return face;
         }
 
         /// <summary>
