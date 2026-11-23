@@ -1759,7 +1759,10 @@ namespace OneText
                 int s = Math.Max(item.Start, start);
                 int e = Math.Min(item.End, end);
                 if (s >= e) continue;
-                runs[count++] = ShapeRun(text, settings, result, item, s, e, start, end);
+                if (RunsShapedInPlace && !item.Style.IsSprite)
+                    ShapeRunInto(ref runs[count++], text, settings, result, item, s, e, start, end);
+                else
+                    runs[count++] = ShapeRun(text, settings, result, item, s, e, start, end);
             }
             if (withEllipsis)
                 runs[count++] = ShapeEllipsis(text, settings, result, paragraphLevel, end);
@@ -2204,6 +2207,101 @@ namespace OneText
                 SyntheticBold = NeedsSyntheticBold(settings, item),
                 Rotated = item.Rotated,
             };
+        }
+
+        /// <summary>
+        /// Whether <see cref="EmitPlainLine"/> has <see cref="ShapeRunInto"/>
+        /// write each run into its slot rather than return it. Same runs
+        /// either way; the switch exists to measure that and to prove it.
+        /// </summary>
+        public static bool RunsShapedInPlace = true;
+
+        /// <summary>
+        /// <see cref="ShapeRun"/> for a run that is not a sprite, written into
+        /// <paramref name="run"/> instead of returned: a returned run is built
+        /// in a temporary and copied into its slot, a hundred bytes with a
+        /// reference in them, once per run per layout.
+        ///
+        /// When nothing will be written into the glyphs (no monospace, no
+        /// tracking, neither East Asian rule, no ruby) the copy out of the
+        /// measuring buffer and the sum of the run's width are one loop
+        /// instead of two, in the same order, so the same float.
+        /// </summary>
+        private void ShapeRunInto(ref TextRun run, ReadOnlySpan<char> text, in TextLayoutSettings settings,
+            TextLayoutResult result, in Item item, int start, int end, int lineStart, int lineEnd)
+        {
+            var glyphs = result.Glyphs;
+            int glyphStart = glyphs.Count;
+            float scale = item.FontSize / item.Font.UnitsPerEm;
+            int monoUnits = MonoUnits(item);
+            int trackingUnits = TrackingUnits(item);
+            bool reusable = item.MeasuredCount >= 0 && start == item.Start && end == item.End;
+            bool untouched = monoUnits <= 0 && trackingUnits == 0 &&
+                             !settings.CjkLatinSpacing && !settings.PunctuationCompression &&
+                             (_rubies.Count == 0 || lineStart < 0);
+
+            float width = 0f;
+            if (reusable && untouched)
+            {
+                int from = item.MeasuredStart;
+                for (int i = 0; i < item.MeasuredCount; i++)
+                {
+                    var glyph = _measured[from + i];
+                    glyphs.Add(glyph);
+                    width += glyph.XAdvance * scale;
+                }
+            }
+            else
+            {
+                if (reusable)
+                {
+                    for (int i = 0; i < item.MeasuredCount; i++)
+                        glyphs.Add(_measured[item.MeasuredStart + i]);
+                }
+                else
+                {
+                    long emitShapeStart = AtlasDiagnostics.Now;
+                    _shaper.Shape(item.Font, text, start, end - start,
+                        DirectionOf(settings, item), glyphs, settings.Language);
+                    AtlasDiagnostics.Add(ref AtlasDiagnostics.EmitShapeTicks, emitShapeStart);
+                    if (AtlasDiagnostics.Enabled) AtlasDiagnostics.EmitShapeCount++;
+                }
+
+                // ShapeRun's order: East Asian spacing, then tracking and
+                // monospace, then ruby padding, then the width.
+                if (monoUnits <= 0)
+                    ApplyAsianSpacing(text, settings, result, item, glyphStart, lineStart, lineEnd);
+                if (trackingUnits != 0 || monoUnits > 0)
+                {
+                    for (int i = glyphStart; i < glyphs.Count; i++)
+                    {
+                        var glyph = glyphs[i];
+                        int mono = MonoFor(glyph, monoUnits);
+                        int extra = mono + TrackingFor(glyph, trackingUnits);
+                        if (extra == 0) continue;
+                        glyphs[i] = new ShapedGlyph(glyph.GlyphId, glyph.Cluster,
+                            glyph.XAdvance + extra, glyph.YAdvance,
+                            glyph.XOffset + mono / 2, glyph.YOffset);
+                    }
+                }
+                if (lineStart >= 0) ApplyRubyPadding(result, item, glyphStart, start, end);
+                for (int i = glyphStart; i < glyphs.Count; i++)
+                    width += glyphs[i].XAdvance * scale;
+            }
+
+            run = default;
+            run.Font = item.Font;
+            run.GlyphStart = glyphStart;
+            run.GlyphCount = glyphs.Count - glyphStart;
+            run.TextStart = start;
+            run.TextLength = end - start;
+            run.Width = width;
+            run.Level = item.Level;
+            run.FontSize = item.FontSize;
+            run.Style = item.Style;
+            run.BaselineShift = item.Style.BaselineShiftEm * item.FontSize;
+            run.SyntheticBold = NeedsSyntheticBold(settings, item);
+            run.Rotated = item.Rotated;
         }
 
         /// <summary>
