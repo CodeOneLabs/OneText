@@ -106,7 +106,7 @@ namespace OneText.Unicode
                     case BidiClass.FSI:
                     {
                         bool odd = t == BidiClass.RLI ||
-                            (t == BidiClass.FSI && FirstStrong(orig, i + 1, MatchingPdi(orig, i)) == 1);
+                            (t == BidiClass.FSI && FirstStrong(orig, i + 1, MatchingPdi(orig, i, n)) == 1);
                         levels[i] = Top(stack).Level;
                         if (Top(stack).Override != NoOverride) types[i] = Top(stack).Override;
                         int lvl = NextLevel(Top(stack).Level, odd);
@@ -187,7 +187,7 @@ namespace OneText.Unicode
                 used[ri] = true;
                 while (IsIsolateInitiator(orig[seq[^1]]))
                 {
-                    int pdi = MatchingPdi(orig, seq[^1]);
+                    int pdi = MatchingPdi(orig, seq[^1], n);
                     if (pdi >= n || removed[pdi]) break;
                     if (!runByStart.TryGetValue(pdi, out int nri) || used[nri]) break;
                     seq.AddRange(runs[nri]);
@@ -260,7 +260,7 @@ namespace OneText.Unicode
 
             BidiClass eos;
             int last = seq[^1];
-            if (IsIsolateInitiator(orig[last]) && MatchingPdi(orig, last) >= n)
+            if (IsIsolateInitiator(orig[last]) && MatchingPdi(orig, last, n) >= n)
             {
                 eos = DirOf(System.Math.Max(lvl, para));
             }
@@ -550,15 +550,21 @@ namespace OneText.Unicode
             return -1;
         }
 
-        private static int MatchingPdi(BidiClass[] orig, int i)
+        // Bounded by the paragraph, not by the array: orig is a scratch buffer
+        // sized for the longest paragraph seen so far, and past n it holds
+        // whatever an earlier call left there. Scanning to orig.Length let an
+        // unmatched FSI take its direction from a previous paragraph's
+        // characters (BidiTest's "FSI ES" resolved [0 1] or [0 2] depending
+        // on which tests had run before it).
+        private static int MatchingPdi(BidiClass[] orig, int i, int n)
         {
             int depth = 1;
-            for (int j = i + 1; j < orig.Length; j++)
+            for (int j = i + 1; j < n; j++)
             {
                 if (IsIsolateInitiator(orig[j])) depth++;
                 else if (orig[j] == BidiClass.PDI && --depth == 0) return j;
             }
-            return orig.Length;
+            return n;
         }
     }
 }
