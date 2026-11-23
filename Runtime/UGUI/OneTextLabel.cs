@@ -793,7 +793,7 @@ namespace OneText.UGUI
         /// existed, and a zoom-out therefore never invalidates anything.
         /// </summary>
         internal bool RefreshPpemScale() =>
-            RefreshPpemScale(ScreenPpem.Context.For(canvas));
+            RefreshPpemScale(ScreenPpem.ContextForRebuild(canvas));
 
         /// <summary>
         /// The same, against a canvas context the caller already read. The
@@ -964,6 +964,9 @@ namespace OneText.UGUI
 
         protected override void OnEnable()
         {
+            // Before base.OnEnable, whose SetAllDirty asks the question: while
+            // the label was off its hierarchy may have changed in any way.
+            ForgetLayoutHearing();
             base.OnEnable();
             // Deserialization fills the string, never the buffer.
             SyncSourceFromSerialized();
@@ -1259,6 +1262,7 @@ namespace OneText.UGUI
 
         protected override void OnValidate()
         {
+            ForgetLayoutHearing();
             base.OnValidate();
             // The inspector writes the serialized string directly, so the
             // buffer everything downstream reads is now the old text. Nothing
@@ -1327,6 +1331,7 @@ namespace OneText.UGUI
                     _namedSpriteIndex ??= NamedSpriteIndex);
                 _links.Clear();
                 _links.AddRange(_markup.Links);
+                _spansStyled = AnyStyled(_markup.Spans);
             }
             else
             {
@@ -1488,8 +1493,33 @@ namespace OneText.UGUI
             get
             {
                 EnsureDisplayText();
-                return _markup.HasMarkup ? _markup.Spans : null;
+                if (!_markup.HasMarkup) return null;
+                return _spansStyled || !NeutralSpansAsPlain ? _markup.Spans : null;
             }
+        }
+
+        /// <summary>
+        /// Lay out markup whose spans all carry the default style as plain
+        /// text. A link, an effect, a decoration, a pause or a line-break tag
+        /// is markup that changes no style: the parser still hands back one
+        /// default span over the whole text, and the engine treats any span at
+        /// all as "styled", which turns off its fast path for short ASCII text
+        /// and walks the span list per character. A default style everywhere
+        /// is what the plain path assumes everywhere, so the layout is the
+        /// same either way; a switch so that can be held to.
+        /// </summary>
+        public static bool NeutralSpansAsPlain = true;
+
+        // Whether any parsed span carries a non-default style. Set with the
+        // parse that produced the spans.
+        [System.NonSerialized] private bool _spansStyled;
+
+        private static bool AnyStyled(List<TextStyleSpan> spans)
+        {
+            var neutral = TextStyle.Default;
+            for (int i = 0; i < spans.Count; i++)
+                if (!spans[i].Style.Equals(neutral)) return true;
+            return false;
         }
 
         private void ReleaseFonts() => ReleaseFonts(bumpGeneration: true);
@@ -1625,12 +1655,16 @@ namespace OneText.UGUI
 
         protected override void OnCanvasHierarchyChanged()
         {
+            ForgetLayoutHearing();
             base.OnCanvasHierarchyChanged();
             if (isActiveAndEnabled) EnsureMaterial();
         }
 
         protected override void OnTransformParentChanged()
         {
+            // A new parent is a new set of layout groups to ask; before base,
+            // whose SetAllDirty asks.
+            ForgetLayoutHearing();
             base.OnTransformParentChanged();
             if (isActiveAndEnabled) EnsureMaterial();
         }
@@ -1833,6 +1867,22 @@ namespace OneText.UGUI
         public TextLayoutResult EnsureLayout()
         {
             if (!EnsureNativeState()) return _layout;
+            return EnsureLayoutWithNativeState();
+        }
+
+        /// <summary>
+        /// Ask the font stack, the engine, the atlas reference and the material
+        /// whether they are ready once per rebuild instead of twice: the mesh
+        /// build asks at its top and then lays out, and nothing between the two
+        /// questions can change an answer. A switch so the two can be held
+        /// against each other.
+        /// </summary>
+        public static bool NativeStateOnce = true;
+
+        /// <summary><see cref="EnsureLayout"/>, for a caller that has just had
+        /// <see cref="EnsureNativeState"/> answer yes.</summary>
+        private TextLayoutResult EnsureLayoutWithNativeState()
+        {
             EnsureDisplayText();
 
             var rect = GetPixelAdjustedRect();
@@ -3450,7 +3500,8 @@ namespace OneText.UGUI
 
             long layoutStartedAt = AtlasDiagnostics.Now;
             long heapBefore = AtlasDiagnostics.Heap;
-            EnsureLayout();
+            if (NativeStateOnce) EnsureLayoutWithNativeState();
+            else EnsureLayout();
             AtlasDiagnostics.Add(ref AtlasDiagnostics.LayoutTicks, layoutStartedAt);
             if (AtlasDiagnostics.Enabled)
             {
@@ -3675,9 +3726,12 @@ namespace OneText.UGUI
 
         // ------------------------------------------------------------ ILayoutElement
 
-        public void CalculateLayoutInputHorizontal() { }
+        // A layout rebuild is walking this label, so some controller above it
+        // or on it is live — one that may not have been there when the label
+        // last concluded nobody was listening (OneTextLabel.LayoutDirty.cs).
+        public void CalculateLayoutInputHorizontal() => LayoutControllerSeen();
 
-        public void CalculateLayoutInputVertical() { }
+        public void CalculateLayoutInputVertical() => LayoutControllerSeen();
 
         public float minWidth => 0f;
 

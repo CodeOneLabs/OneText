@@ -518,9 +518,25 @@ namespace OneText
         private static string CanonicalName(ReadOnlySpan<char> s, int start, int length)
         {
             var span = s.Slice(start, length);
-            foreach (string candidate in KnownNames)
-                if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
-                    return candidate;
+            if (FastPath && IsAscii(span))
+            {
+                // Every known name is lower-case ASCII, and for an ASCII name
+                // OrdinalIgnoreCase is exactly "the same length and the same
+                // letters once folded" — which a length test rejects for most
+                // of the table before a character is looked at. A name with
+                // anything outside ASCII in it takes the general compare below,
+                // because that one folds 'ſ' to 's' and 'ı' to 'i' and this
+                // one must not quietly disagree with it.
+                foreach (string candidate in KnownNames)
+                    if (candidate.Length == span.Length && AsciiEqualsLower(span, candidate))
+                        return candidate;
+            }
+            else
+            {
+                foreach (string candidate in KnownNames)
+                    if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                        return candidate;
+            }
 
             // Effects are registered rather than listed, so a project can add
             // one from user code and have markup find it.
@@ -528,6 +544,35 @@ namespace OneText
             if (effect != null) return effect;
 
             return new string(span).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// The parser's cheaper paths: tag names matched by length and folded
+        /// ASCII instead of a general case-insensitive compare per table
+        /// entry, and the open-tag stack read once per entry rather than once
+        /// per question asked of it. Same results either way
+        /// (<c>RichTextFastPathTests</c> holds the two against each other);
+        /// the switch exists so they can be.
+        /// </summary>
+        public static bool FastPath = true;
+
+        private static bool IsAscii(ReadOnlySpan<char> span)
+        {
+            for (int i = 0; i < span.Length; i++)
+                if (span[i] > 0x7F) return false;
+            return true;
+        }
+
+        /// <summary><paramref name="span"/> (ASCII) equals <paramref name="lower"/> (lower-case ASCII), ignoring case.</summary>
+        private static bool AsciiEqualsLower(ReadOnlySpan<char> span, string lower)
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                char c = span[i];
+                if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                if (c != lower[i]) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -895,6 +940,32 @@ namespace OneText
             // emitted here never gets another chance (it is off the stack
             // before the end-of-input flush), and a link that silently vanishes
             // is the failure this parser exists to avoid.
+            if (FastPath)
+            {
+                // The same questions, asked of one copy of each entry: the
+                // list indexer copies the whole Open (a TextStyle and four
+                // references) every time it is read, and the loop below reads
+                // it seven times per entry to look at one string.
+                for (int i = stack.Count - 1; i >= index; i--)
+                {
+                    var entry = i == index ? open : stack[i];
+                    string entryName = entry.Name;
+                    if (entryName == "link")
+                        result.Links.Add(new TextLink(entry.LinkId, entry.LinkStart, position - entry.LinkStart));
+                    if (entryName == "align")
+                        result.Alignments.Add((position, entry.HadAlignment
+                            ? entry.PreviousAlignment
+                            : DefaultAlignmentMarker));
+                    if (entryName == "ruby") CloseRuby(result, entry, position);
+                    if (IsDecoration(entryName)) CloseDecoration(result, entry.DecorationIndex, position);
+                    if (BuiltInEffects.Has(entryName))
+                        result.Effects.Add((entryName, entry.EffectParameters, entry.EffectStart, position));
+                }
+                style = open.Previous;
+                stack.RemoveRange(index, stack.Count - index);
+                return true;
+            }
+
             for (int i = stack.Count - 1; i >= index; i--)
             {
                 if (stack[i].Name == "link")
