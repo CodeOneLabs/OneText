@@ -188,6 +188,8 @@ namespace OneText.Tests
             "<nobr>keep this together</nobr> but not this", "<ruby=かんじ>漢字</ruby>を<ruby=よ>読</ruby>む",
             "<b>bold</b> <size=150%>big</size> <color=#f00>red</color>\n<cspace=0.1>spaced</cspace>",
             "<mspace=0.6>12:34</mspace> 가나", "mixed 가나 <i>it</i> مرحبا\nnext 漢字",
+            "icon <sprite=0> and <sprite=1><sprite=1> x", "<align=right>right</align>\n<align=center>c</align>",
+            "the quick brown fox jumps over the lazy dog and keeps on running far away",
         };
 
         [Test]
@@ -224,6 +226,7 @@ namespace OneText.Tests
                     foreach (float height in new[] { 0f, 30f })
                     foreach (string language in new[] { "", "ja", "ko" })
                     foreach (byte direction in new[] { BidiAlgorithm.AutoDirection, (byte)0, (byte)1 })
+                    foreach (var alignment in new[] { TextAlignment.Center, TextAlignment.Justified })
                     {
                         var s = TextLayoutSettings.Default(fonts, 20f);
                         s.Wrap = wrap;
@@ -238,10 +241,11 @@ namespace OneText.Tests
                         s.BaseDirection = direction;
                         s.Spans = markup.Spans.Count > 0 ? markup.Spans : null;
                         s.Rubies = markup.Rubies.Count > 0 ? markup.Rubies : null;
-                        s.Alignment = TextAlignment.Center;
+                        s.Alignment = alignment;
+                        s.Alignments = markup.Alignments.Count > 0 ? markup.Alignments : null;
 
                         string context =
-                            $"\"{source}\" {wrap} {overflow} width {width} height {height} lang {language} dir {direction}";
+                            $"\"{source}\" {wrap} {overflow} width {width} height {height} lang {language} dir {direction} {alignment}";
                         // ApplyEllipsis indexes the runs of a line that has
                         // none when the line it would shorten is a blank one
                         // (a pre-existing fault, on both paths). Equal here
@@ -262,8 +266,8 @@ namespace OneText.Tests
                 SetShortcuts(true);
                 foreach (var font in extra) font.Dispose();
             }
-            Assert.Greater(compared, 8000);
-            Assert.Less(faults, 200);
+            Assert.Greater(compared, 16000);
+            Assert.Less(faults, 400);
         }
 
         private static Exception Run(TextLayoutEngine engine, string text, in TextLayoutSettings settings,
@@ -287,6 +291,9 @@ namespace OneText.Tests
             TextLayoutEngine.NoWrapMandatoryBreaksOnly = on;
             BidiRuns.LeftToRightShortcut = on;
             TextSegmenter.StandaloneShortcut = on;
+            TextLayoutEngine.PlainItemization = on;
+            TextLayoutEngine.HoistedSpacingChecks = on;
+            TextLayoutEngine.LeanEmit = on;
         }
 
         [Test]
