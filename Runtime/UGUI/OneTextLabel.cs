@@ -3675,18 +3675,15 @@ namespace OneText.UGUI
             get
             {
                 if (!EnsureNativeState()) return 0f;
+                string text = DisplayText;
                 if (IsVertical)
                 {
                     // Down a column, width is the stack: how far the columns
                     // reach once each has been cut to the box's height.
                     float height = _wrap == TextWrap.Wrap ? rectTransform.rect.height : 0f;
-                    _engine.Layout(DisplayText, BuildSettings(0f, height), _measure);
-                    return _measure.Width;
+                    return Measure(ref _widthMeasure, text, 0f, height, _wrap, width: true);
                 }
-                var settings = BuildSettings(0f, 0f);
-                settings.Wrap = TextWrap.NoWrap;
-                _engine.Layout(DisplayText, settings, _measure);
-                return _measure.Width;
+                return Measure(ref _widthMeasure, text, 0f, 0f, TextWrap.NoWrap, width: true);
             }
         }
 
@@ -3695,18 +3692,59 @@ namespace OneText.UGUI
             get
             {
                 if (!EnsureNativeState()) return 0f;
+                string text = DisplayText;
                 if (IsVertical)
                 {
                     // And height is the run: one unwrapped column, end to end.
-                    var vertical = BuildSettings(0f, 0f);
-                    vertical.Wrap = TextWrap.NoWrap;
-                    _engine.Layout(DisplayText, vertical, _measure);
-                    return _measure.Height;
+                    return Measure(ref _heightMeasure, text, 0f, 0f, TextWrap.NoWrap, width: false);
                 }
                 float width = _wrap == TextWrap.Wrap ? rectTransform.rect.width : 0f;
-                _engine.Layout(DisplayText, BuildSettings(width, 0f), _measure);
-                return _measure.Height;
+                return Measure(ref _heightMeasure, text, width, 0f, _wrap, width: false);
             }
+        }
+
+        // uGUI reads a label's preferred size several times per layout pass
+        // (each axis, once per layout group above it, and again from
+        // LayoutUtility), and a pass over a parent walks every label below it.
+        // Each read used to be a full layout — shaping, line breaking, bidi —
+        // so one row growing in a list re-shaped every label in the list,
+        // every frame of the animation. The answer only moves when the text or
+        // the settings do, which is what the render cache's key already
+        // tracks; the measured size is keyed the same way, by the size it is
+        // actually laid out at (the fitted size, for auto-size labels).
+        private struct MeasureCache
+        {
+            public LayoutKey Key;
+            public bool Valid;
+            public float Value;
+        }
+
+        private MeasureCache _widthMeasure, _heightMeasure;
+
+        /// <summary>
+        /// How many times a preferred-size read actually laid text out, for the
+        /// same reason <see cref="LayoutRuns"/> is exposed: a cache hit and an
+        /// identical re-measure return the same number.
+        /// </summary>
+        internal int MeasureRuns => _measureRuns;
+
+        private int _measureRuns;
+
+        private float Measure(ref MeasureCache cache, string text, float maxWidth, float maxHeight, TextWrap wrap, bool width)
+        {
+            float size = EffectiveFontSize;
+            var key = new LayoutKey(_markup.Length, DisplayHash, maxWidth, maxHeight, size,
+                EffectiveLineSpacing, _alignment, wrap, _overflow, _layoutGeneration,
+                false, 0f, 0f);
+            if (cache.Valid && key.Equals(cache.Key)) return cache.Value;
+            var settings = BuildSettings(maxWidth, maxHeight, size);
+            settings.Wrap = wrap;
+            _engine.Layout(text, settings, _measure);
+            _measureRuns++;
+            cache.Key = key;
+            cache.Valid = true;
+            cache.Value = width ? _measure.Width : _measure.Height;
+            return cache.Value;
         }
 
         public float flexibleWidth => -1f;
@@ -4239,6 +4277,8 @@ namespace OneText.UGUI
             {
                 _parsedValid = false;
                 _layoutValid = false;
+                _widthMeasure.Valid = false;
+                _heightMeasure.Valid = false;
             }
 
             EnsureLayout();

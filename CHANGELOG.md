@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **Reading a label's preferred size no longer lays it out every time.**
+  `preferredWidth` and `preferredHeight` ran a full layout (shaping, line
+  breaking, bidi) on every read, and uGUI reads them several times per label
+  per layout pass: each axis, once per layout group above the label, and again
+  through `LayoutUtility`. A pass over a parent walks every label below it, so
+  one row animating its height in a list re-shaped every label in the list,
+  every frame. The measured size is now cached under the same `LayoutKey` the
+  render cache uses, built from the box it is measured in and the size it is
+  laid out at, so it moves exactly when the drawn layout would.
+  `ForceMeshUpdate(false, forceTextReparsing: true)` drops it too.
+
 - **`SetText(int)`, `SetText(float, int)` and the span and `char[]` overloads
   draw what they were given.** They write into the label's buffer and clear its
   string, and the mesh build asked the string whether there was anything to
