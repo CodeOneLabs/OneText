@@ -399,7 +399,8 @@ namespace OneText
                 bool consumed;
                 if (closing)
                     consumed = ApplyClose(name, stack, result, s_result.Length, ref next);
-                else
+                else if (!FastPath || !TryApplyCommonOpen(name, source, argStart, argLength, hasArgument,
+                             stack, style, ref next, out consumed))
                     consumed = ApplyOpen(name, source, argStart, argLength, hasArgument, stack,
                         result, s_result.Length, style,
                         styleNames, fontNames, spriteNames, ref next, ref sprite, ref josa);
@@ -607,7 +608,13 @@ namespace OneText
             while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '-' || s[i] == '_')) i++;
             if (i == nameStart && !(closing && i < s.Length && s[i] == '>')) return false;
 
-            name = i == nameStart ? string.Empty : CanonicalName(s, nameStart, i - nameStart);
+            int nameLength = i - nameStart;
+            // Named only once the tag turns out to be well formed: an unknown
+            // name is a fresh lower-cased string, and "x<y" in a sentence is
+            // not a tag that should cost one. Nothing reads the name of a tag
+            // that failed.
+            bool nameLater = FastPath;
+            if (!nameLater) name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
 
             // `<wave amp=2 freq=1.5>`: a space after the name introduces an
             // attribute list, which runs to the '>' and is handed to the tag to
@@ -621,6 +628,8 @@ namespace OneText
                 Trim(s, listStart, i - listStart, out argStart, out argLength);
                 hasArgument = true;
                 after = i + 1;
+                if (nameLater && argLength > 0)
+                    name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
                 return argLength > 0;
             }
 
@@ -654,6 +663,7 @@ namespace OneText
 
             if (i >= s.Length || s[i] != '>') return false;
             after = i + 1;
+            if (nameLater) name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
             return true;
         }
 
@@ -915,6 +925,59 @@ namespace OneText
             }
 
             stack.Add(new Open { Name = name, Previous = previous });
+            return true;
+        }
+
+        /// <summary>
+        /// The tags almost every string uses — the four flags, nobr and colour
+        /// — opened without entering <see cref="ApplyOpen"/>, whose every case
+        /// shares one frame: twenty-odd locals and five Open initialisers to
+        /// set up and clear for a <c>&lt;b&gt;</c>. Exactly the same effects as
+        /// the matching cases there. False means "not one of these", and the
+        /// caller asks ApplyOpen.
+        ///
+        /// Compared by reference because the name is the canonical instance
+        /// from <see cref="KnownNames"/>; anything that is merely equal to one
+        /// of them (it cannot be, but the general path is the arbiter) goes
+        /// the general way.
+        /// </summary>
+        private static bool TryApplyCommonOpen(string name, ReadOnlySpan<char> source, int argStart,
+            int argLength, bool hasArgument, List<Open> stack, TextStyle current, ref TextStyle style,
+            out bool consumed)
+        {
+            TextStyle.Flag flag;
+            if (ReferenceEquals(name, "b")) flag = TextStyle.Flag.Bold;
+            else if (ReferenceEquals(name, "i")) flag = TextStyle.Flag.Italic;
+            else if (ReferenceEquals(name, "u")) flag = TextStyle.Flag.Underline;
+            else if (ReferenceEquals(name, "s")) flag = TextStyle.Flag.Strikethrough;
+            else if (ReferenceEquals(name, "nobr")) flag = TextStyle.Flag.NoBreak;
+            else if (ReferenceEquals(name, "color"))
+            {
+                if (!TryParseColor(hasArgument ? source.Slice(argStart, argLength) : default, out var color))
+                {
+                    consumed = false;
+                    return true;
+                }
+                style.Color = color;
+                style.Flags |= TextStyle.Flag.HasColor;
+                stack.Add(new Open { Name = name, Previous = current });
+                consumed = true;
+                return true;
+            }
+            else
+            {
+                consumed = false;
+                return false;
+            }
+
+            if (hasArgument)
+            {
+                consumed = false;
+                return true;
+            }
+            style.Flags |= flag;
+            stack.Add(new Open { Name = name, Previous = current });
+            consumed = true;
             return true;
         }
 
