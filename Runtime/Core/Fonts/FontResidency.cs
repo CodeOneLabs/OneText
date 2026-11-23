@@ -332,6 +332,13 @@ namespace OneText
             ResolveOnDemand(codepoint, language, Want.Any);
 
         /// <summary>
+        /// Whether <see cref="ResolveOnDemand(int, string, Want)"/> reads the
+        /// project settings once per call rather than three times. The same
+        /// answer either way; off is for measuring it.
+        /// </summary>
+        public static bool ReadSettingsOnce { get; set; } = true;
+
+        /// <summary>
         /// Which on-demand fonts a stack is asking among. <see cref="Want.Any"/>
         /// is the plain miss; the other two are for the cases where a font
         /// that is merely loaded is not good enough: a Han or kana character in
@@ -348,9 +355,25 @@ namespace OneText
 
         internal static FontData ResolveOnDemand(int codepoint, string language, Want want)
         {
-            if (!LoadOnDemand) return null;
-            var settings = OneTextSettings.Instance;
-            var references = settings != null ? settings.OnDemandFonts : null;
+            IReadOnlyList<OneFontReference> references;
+            if (ReadSettingsOnce)
+            {
+                // What LoadOnDemand and the two lines below it ask, with one
+                // look at the settings instead of three. Every character no
+                // loaded font covers comes through here on every layout, and
+                // each look is a native call: comparing a UnityEngine.Object
+                // with null asks the engine whether it is still alive.
+                var settings = OneTextSettings.Instance;
+                bool none = settings == null;
+                if (!(s_loadOnDemand ?? (none || settings.LoadOnDemand))) return null;
+                references = none ? null : settings.OnDemandFonts;
+            }
+            else
+            {
+                if (!LoadOnDemand) return null;
+                var settings = OneTextSettings.Instance;
+                references = settings != null ? settings.OnDemandFonts : null;
+            }
             if (references == null || references.Count == 0) return null;
             if (want == Want.Language && string.IsNullOrEmpty(language)) return null;
 

@@ -82,6 +82,104 @@ namespace OneText
         private readonly bool _ownsFonts;
 
         /// <summary>
+        /// Whether coverage answers are kept in the stack's own open-addressed
+        /// table (<see cref="CoverageMap"/>) rather than a
+        /// <see cref="Dictionary{TKey,TValue}"/>. The same answers either way;
+        /// off is for measuring it, and for the test that proves the first
+        /// claim.
+        /// </summary>
+        public static bool FastLookup { get; set; } = true;
+
+        private CoverageMap _map = CoverageMap.Create();
+
+        /// <summary>
+        /// Codepoint to the index of the first font that covers it, or -1. What
+        /// <see cref="_coverage"/> holds, kept where a lookup is a multiply, a
+        /// mask and usually one comparison.
+        ///
+        /// <para>The stack is asked once per grapheme cluster on every layout,
+        /// and nearly every question is one it has answered before: a label
+        /// redraws the same few hundred characters. A dictionary's answer to
+        /// that costs an interface call into its comparer, a modulo by a prime
+        /// and a walk through a separate entries array, 20-odd nanoseconds;
+        /// that is a measurable share of a short label's layout. Codepoints
+        /// are non-negative, so -1 marks an empty slot and no second array of
+        /// flags is needed.</para>
+        /// </summary>
+        private struct CoverageMap
+        {
+            private int[] _keys;
+            private int[] _values;
+            private int _count;
+
+            public static CoverageMap Create() => new CoverageMap { _keys = Empty(16), _values = new int[16] };
+
+            private static int[] Empty(int capacity)
+            {
+                var keys = new int[capacity];
+                for (int i = 0; i < keys.Length; i++) keys[i] = -1;
+                return keys;
+            }
+
+            // Fibonacci hashing: neighbouring codepoints (a script is a run of
+            // them) land far apart rather than in one long probe chain.
+            private static int Slot(int codepoint, int mask) =>
+                (int)(((uint)codepoint * 0x9E3779B1u) >> 7) & mask;
+
+            public bool TryGet(int codepoint, out int index)
+            {
+                var keys = _keys;
+                int mask = keys.Length - 1;
+                for (int slot = Slot(codepoint, mask);; slot = (slot + 1) & mask)
+                {
+                    int key = keys[slot];
+                    if (key == codepoint) { index = _values[slot]; return true; }
+                    if (key < 0) { index = 0; return false; }
+                }
+            }
+
+            public void Set(int codepoint, int index)
+            {
+                // Half full at most, so a miss ends at an empty slot quickly.
+                if ((_count + 1) * 2 > _keys.Length) Grow();
+                Insert(codepoint, index);
+            }
+
+            private void Insert(int codepoint, int index)
+            {
+                int mask = _keys.Length - 1;
+                for (int slot = Slot(codepoint, mask);; slot = (slot + 1) & mask)
+                {
+                    int key = _keys[slot];
+                    if (key == codepoint) { _values[slot] = index; return; }
+                    if (key >= 0) continue;
+                    _keys[slot] = codepoint;
+                    _values[slot] = index;
+                    _count++;
+                    return;
+                }
+            }
+
+            private void Grow()
+            {
+                var keys = _keys;
+                var values = _values;
+                _keys = Empty(keys.Length * 2);
+                _values = new int[keys.Length * 2];
+                _count = 0;
+                for (int i = 0; i < keys.Length; i++)
+                    if (keys[i] >= 0) Insert(keys[i], values[i]);
+            }
+
+            public void Clear()
+            {
+                if (_count == 0) return;
+                for (int i = 0; i < _keys.Length; i++) _keys[i] = -1;
+                _count = 0;
+            }
+        }
+
+        /// <summary>
         /// Weight applied when bold is instanced from a `wght` axis. Read once,
         /// when a family's bold is first asked for: changing it afterwards does
         /// not restyle faces already instanced, because their glyphs are
@@ -243,6 +341,7 @@ namespace OneText
             _entries.Add(entry);
             _fonts.Add(regular);
             _coverage.Clear();
+            _map.Clear();
             // A font that arrives after a character was answered by the
             // operating system may well cover it; the project's own font wins.
             _system?.Clear();
@@ -269,6 +368,7 @@ namespace OneText
             _entries.Clear();
             _fonts.Clear();
             _coverage.Clear();
+            _map.Clear();
             // Not disposed: system faces are shared process-wide and belong to
             // SystemFonts, not to whichever stack happened to ask for one. The
             // stand-in Primary is one of those and goes the same way.
@@ -326,17 +426,18 @@ namespace OneText
             // fonts: the system tier below was written as the last rung of a
             // chain rather than as the floor under it, so the one case that
             // needed it most — no chain at all — never reached it.
-            if (!_coverage.TryGetValue(codepoint, out int index))
+            int index;
+            if (FastLookup)
             {
-                // -1 rather than 0 for "nobody has it": the two answers used to
-                // be the same value, and the system tier below needs to tell
-                // them apart. Both are cached, so a character that misses the
-                // whole chain asks the fonts once and not once per occurrence.
-                index = -1;
-                for (int i = 0; i < _fonts.Count; i++)
+                if (!_map.TryGet(codepoint, out index))
                 {
-                    if (_fonts[i].HasGlyph(codepoint)) { index = i; break; }
+                    index = FirstCovering(codepoint);
+                    _map.Set(codepoint, index);
                 }
+            }
+            else if (!_coverage.TryGetValue(codepoint, out index))
+            {
+                index = FirstCovering(codepoint);
                 _coverage[codepoint] = index;
             }
             if (index >= 0) return _fonts[index];
@@ -345,6 +446,17 @@ namespace OneText
             // FontResidency may unload, and it keeps its own cheap answer.
             return (UseOnDemandFonts ? FontResidency.ResolveOnDemand(codepoint, language) : null) ??
                    ResolveFromSystem(codepoint, language) ?? Primary;
+        }
+
+        // -1 rather than 0 for "nobody has it": the two answers used to be the
+        // same value, and the system tier needs to tell them apart. Both are
+        // cached, so a character that misses the whole chain asks the fonts
+        // once and not once per occurrence.
+        private int FirstCovering(int codepoint)
+        {
+            for (int i = 0; i < _fonts.Count; i++)
+                if (_fonts[i].HasGlyph(codepoint)) return i;
+            return -1;
         }
 
         // The same, for reader-dependent characters in a label that names its
