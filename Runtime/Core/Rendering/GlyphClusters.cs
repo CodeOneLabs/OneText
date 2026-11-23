@@ -75,6 +75,17 @@ namespace OneText
         /// </summary>
         public static bool SkipOrderedSort = true;
 
+        /// <summary>
+        /// Off splits through a List of spans, reading each span back through
+        /// the indexer (a copy per field read) and hashing each cluster in a
+        /// second pass over the positioned list. On keeps the spans in an
+        /// array read by reference and hashes as it places. Same clusters,
+        /// same hashes; for A/B and the tests.
+        /// </summary>
+        public static bool LeanSplit = true;
+
+        [System.ThreadStatic] private static InkSpan[] t_spanArray;
+
         private static readonly System.Comparison<InkSpan> s_byInkStart =
             (a, b) => a.Min.CompareTo(b.Min);
 
@@ -118,6 +129,12 @@ namespace OneText
             List<Cluster> clusters, List<PositionedGlyph> positioned,
             float maxWidthUnits, float mergeGapUnits)
         {
+            if (LeanSplit && SkipOrderedSort)
+            {
+                SplitLean(font, glyphs, start, count, clusters, positioned, maxWidthUnits, mergeGapUnits);
+                return;
+            }
+
             clusters.Clear();
             positioned.Clear();
 
@@ -177,6 +194,117 @@ namespace OneText
                     groupMax = spans[s].Max;
                 }
             }
+        }
+
+        /// <summary>
+        /// <see cref="Split"/> with the spans in an array. Every step is the
+        /// one above in the same order (the same strictly-increasing test
+        /// before skipping the sort, the same comparison when it does sort, the
+        /// same merge rule, the same anchor and the same FNV fold), so its
+        /// clusters are the same ones.
+        /// </summary>
+        private static void SplitLean(FontData font, List<ShapedGlyph> glyphs, int start, int count,
+            List<Cluster> clusters, List<PositionedGlyph> positioned,
+            float maxWidthUnits, float mergeGapUnits)
+        {
+            clusters.Clear();
+            positioned.Clear();
+
+            var spans = t_spanArray;
+            if (spans == null || spans.Length < count) t_spanArray = spans = new InkSpan[System.Math.Max(count, 64)];
+            int spanCount = 0;
+            int pen = 0;
+            bool ordered = true;
+            float lastMin = float.NegativeInfinity;
+            for (int i = start; i < start + count; i++)
+            {
+                var g = glyphs[i];
+                if (font.TryGetInkBounds(g.GlyphId, out var lo, out var hi))
+                {
+                    float min = pen + g.XOffset + lo.x;
+                    if (!(min > lastMin)) ordered = false;
+                    lastMin = min;
+                    ref var span = ref spans[spanCount++];
+                    span.GlyphIndex = i;
+                    span.Pen = pen;
+                    span.Min = min;
+                    span.Max = pen + g.XOffset + hi.x;
+                }
+                pen += g.XAdvance;
+            }
+            if (spanCount == 0) return;
+
+            // A tie or a mark out of order: sort exactly as the list path does,
+            // through a list, so the unstable sort makes the choice it always
+            // made between equals.
+            if (!ordered) SortLikeTheList(spans, spanCount);
+
+            int groupStart = 0;
+            float groupMin = spans[0].Min, groupMax = spans[0].Max;
+            for (int s = 1; s <= spanCount; s++)
+            {
+                bool close = s == spanCount
+                    || spans[s].Min > groupMax + mergeGapUnits
+                    || spans[s].Max - groupMin > maxWidthUnits;
+                if (close)
+                {
+                    clusters.Add(EmitLean(glyphs, spans, groupStart, s, positioned));
+                    if (s == spanCount) break;
+                    groupStart = s;
+                    groupMin = spans[s].Min;
+                    groupMax = spans[s].Max;
+                }
+                else if (spans[s].Max > groupMax)
+                {
+                    groupMax = spans[s].Max;
+                }
+            }
+        }
+
+        [System.ThreadStatic] private static List<InkSpan> t_sortScratch;
+
+        private static void SortLikeTheList(InkSpan[] spans, int count)
+        {
+            var list = t_sortScratch ??= new List<InkSpan>();
+            list.Clear();
+            for (int i = 0; i < count; i++) list.Add(spans[i]);
+            list.Sort(s_byInkStart);
+            for (int i = 0; i < count; i++) spans[i] = list[i];
+        }
+
+        private static Cluster EmitLean(List<ShapedGlyph> glyphs, InkSpan[] spans,
+            int start, int end, List<PositionedGlyph> positioned)
+        {
+            int anchor = start;
+            for (int s = start + 1; s < end; s++)
+                if (spans[s].GlyphIndex < spans[anchor].GlyphIndex)
+                    anchor = s;
+            int penBase = spans[anchor].Pen;
+
+            int outStart = positioned.Count;
+            int textStart = int.MaxValue, textEnd = int.MinValue;
+            ulong hash = 14695981039346656037UL;
+            for (int s = start; s < end; s++)
+            {
+                var g = glyphs[spans[s].GlyphIndex];
+                int x = spans[s].Pen - penBase + g.XOffset;
+                positioned.Add(new PositionedGlyph(g.GlyphId, x, g.YOffset));
+                hash = (hash ^ g.GlyphId) * 1099511628211UL;
+                hash = (hash ^ (uint)x) * 1099511628211UL;
+                hash = (hash ^ (uint)g.YOffset) * 1099511628211UL;
+                if (g.Cluster < textStart) textStart = g.Cluster;
+                if (g.Cluster > textEnd) textEnd = g.Cluster;
+            }
+
+            return new Cluster
+            {
+                Start = outStart,
+                Count = end - start,
+                PenX = penBase,
+                Hash = (long)(hash | 0x8000000000000000UL),
+                TextStart = textStart,
+                TextEnd = textEnd + 1,
+            };
         }
 
         /// <summary>

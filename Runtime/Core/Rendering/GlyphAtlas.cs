@@ -384,6 +384,20 @@ namespace OneText
 
         private readonly bool _fastKeys;
 
+        /// <summary>
+        /// Off sends every hit through the dictionary. On, a small table of
+        /// the most recent hit per hash slot answers first: a warm frame asks
+        /// for the same few dozen tiles over and over (every damage number is
+        /// made of the same ten digits), and an array slot and one key compare
+        /// are cheaper than a dictionary probe. Only with
+        /// <see cref="FastKeys"/>, whose hash it indexes by; read when an atlas
+        /// is constructed.
+        /// </summary>
+        public static bool RecentHits = true;
+
+        private const int RecentSlots = 256;
+        private readonly Entry[] _recent;
+
         private sealed class Entry
         {
             public Key Key;
@@ -393,6 +407,14 @@ namespace OneText
             public int Layer, X, Y, Width, Height, ShelfIndex;
             public long LastUse;
             public LinkedListNode<Entry> Node; // position in the LRU list
+
+            /// <summary>
+            /// True exactly while this entry is the one <see cref="_entries"/>
+            /// holds for its key: set where it is added, cleared everywhere one
+            /// is removed or replaced. What lets the recent-hit table below
+            /// trust an entry without asking the dictionary.
+            /// </summary>
+            public bool Live;
         }
 
         private struct Span
@@ -512,6 +534,7 @@ namespace OneText
             _batchPending = _fastKeys
                 ? new HashSet<Key>(CheapKeyComparer.Instance)
                 : new HashSet<Key>();
+            _recent = _fastKeys && RecentHits ? new Entry[RecentSlots] : null;
             _textureSize = settings.TextureSize;
             _layerCount = settings.LayerCount;
             _layers = new LayerState[_layerCount];
@@ -865,7 +888,22 @@ namespace OneText
 
         private bool TryTouch(Key key, out GlyphLocation location)
         {
-            if (!_entries.TryGetValue(key, out var hit))
+            Entry hit;
+            if (_recent != null)
+            {
+                int slot = key.CheapHash() & (RecentSlots - 1);
+                hit = _recent[slot];
+                if (hit == null || !hit.Live || !hit.Key.Equals(key))
+                {
+                    if (!_entries.TryGetValue(key, out hit))
+                    {
+                        location = default;
+                        return false;
+                    }
+                    _recent[slot] = hit;
+                }
+            }
+            else if (!_entries.TryGetValue(key, out hit))
             {
                 location = default;
                 return false;
@@ -897,7 +935,8 @@ namespace OneText
             if (raster.IsEmpty)
             {
                 var emptyLocation = new GlyphLocation(false, Vector2.zero, Vector2.zero, default, 0);
-                _entries[key] = new Entry { Key = key, Location = emptyLocation };
+                RetireReplaced(key);
+                _entries[key] = new Entry { Key = key, Location = emptyLocation, Live = true };
                 return emptyLocation;
             }
 
@@ -936,6 +975,8 @@ namespace OneText
             entry.Location = WriteSlot(layer, x, y, raster);
             entry.Node = _lru.AddLast(entry);
             entry.LastUse = ++_useStamp;
+            RetireReplaced(key);
+            entry.Live = true;
             _entries[key] = entry;
             int pixels = raster.Width * raster.Height;
             _usedPixels += pixels;
@@ -952,6 +993,16 @@ namespace OneText
                 if (_demand.TryAdd(key, pixels)) _demandPixels += pixels;
             }
             return entry.Location;
+        }
+
+        /// <summary>
+        /// An entry about to be overwritten in the dictionary under the same
+        /// key stops being live. Callers commit after a miss, so there is
+        /// normally nothing there; the test hook can commit over a key.
+        /// </summary>
+        private void RetireReplaced(Key key)
+        {
+            if (_recent != null && _entries.TryGetValue(key, out var replaced)) replaced.Live = false;
         }
 
         /// <summary>
@@ -1156,6 +1207,7 @@ namespace OneText
 
         private void Release(Entry entry)
         {
+            entry.Live = false;
             _entries.Remove(entry.Key);
             if (entry.Node != null) _lru.Remove(entry.Node);
             entry.Node = null;
@@ -1299,6 +1351,7 @@ namespace OneText
                 {
                     // Cannot happen for tiles that already fitted, but dropping
                     // is still better than a corrupt entry.
+                    entry.Live = false;
                     _entries.Remove(entry.Key);
                     if (entry.Node != null) _lru.Remove(entry.Node);
                     entry.Node = null;
@@ -1648,6 +1701,8 @@ namespace OneText
                 }
                 _staging = null;
             }
+            foreach (var entry in _entries.Values) entry.Live = false;
+            if (_recent != null) Array.Clear(_recent, 0, _recent.Length);
             _entries.Clear();
             _lru.Clear();
         }

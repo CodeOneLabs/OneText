@@ -37,7 +37,9 @@ namespace OneText.Tests
         {
             FontData.FlatInkBounds = on;
             GlyphClusters.SkipOrderedSort = on;
+            GlyphClusters.LeanSplit = on;
             GlyphAtlas.FastKeys = on;
+            GlyphAtlas.RecentHits = on;
             OneTextLabel.StraightQuads = on;
             OneTextLabel.TrackedBounds = on;
             OneTextLabel.PooledMeshes = on;
@@ -445,9 +447,10 @@ namespace OneText.Tests
             var shaped = new List<ShapedGlyph>();
             using (var shaper = new Shaper()) shaper.Shape(font, "Wave fill AVATAR 12345 office", shaped);
 
-            List<string> Script(bool fast)
+            List<string> Script(bool fast, bool recent)
             {
                 GlyphAtlas.FastKeys = fast;
+                GlyphAtlas.RecentHits = recent;
                 var log = new List<string>();
                 using var atlas = new GlyphAtlas(new GlyphAtlasSettings { TextureSize = 256, LayerCount = 1 });
                 var clusters = new List<GlyphClusters.Cluster>();
@@ -491,11 +494,57 @@ namespace OneText.Tests
                 return log;
             }
 
-            var slow = Script(false);
-            var fast = Script(true);
+            var slow = Script(false, false);
+            var fastOnly = Script(true, false);
+            var fast = Script(true, true);
+            GlyphAtlas.FastKeys = true;
+            GlyphAtlas.RecentHits = true;
             Assert.Greater(slow.Count, 100);
             StringAssert.DoesNotContain("evictions 0 ", slow[slow.Count - 1], "the test needs the atlas to evict");
-            CollectionAssert.AreEqual(slow, fast);
+            StringAssert.DoesNotContain("compactions 0 ", slow[slow.Count - 1], "the test needs the atlas to compact");
+            CollectionAssert.AreEqual(slow, fastOnly, "fast keys without the recent-hit table");
+            CollectionAssert.AreEqual(slow, fast, "fast keys with the recent-hit table");
+        }
+
+        [TestCase("NotoSans.ttf", "Wave AVATAR office ffi 12345")]
+        [TestCase("NotoSans.ttf", "e\u0301 a\u0308\u0301 n\u0303o\u0328 x\u0332\u0333")]
+        [TestCase("NotoSansArabic.ttf", "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ")]
+        public void Every_Split_Gives_The_Same_Clusters(string fontFile, string text)
+        {
+            using var font = FontData.Load(Bytes(Fonts + fontFile));
+            var shaped = new List<ShapedGlyph>();
+            using (var shaper = new Shaper()) shaper.Shape(font, text, shaped);
+
+            string Run(bool skip, bool lean, float maxWidth, float gap)
+            {
+                GlyphClusters.SkipOrderedSort = skip;
+                GlyphClusters.LeanSplit = lean;
+                var clusters = new List<GlyphClusters.Cluster>();
+                var positioned = new List<PositionedGlyph>();
+                var sb = new System.Text.StringBuilder();
+                // Every slice, so runs that start on a mark or end inside a
+                // joined group are split as well as whole lines.
+                for (int start = 0; start < shaped.Count; start++)
+                    for (int count = 1; start + count <= shaped.Count; count += 3)
+                    {
+                        GlyphClusters.Split(font, shaped, start, count, clusters, positioned, maxWidth, gap);
+                        foreach (var c in clusters)
+                            sb.Append(c.Start).Append(',').Append(c.Count).Append(',').Append(c.PenX).Append(',')
+                                .Append(c.Hash).Append(',').Append(c.TextStart).Append(',').Append(c.TextEnd).Append(';');
+                        foreach (var g in positioned) sb.Append(g.GlyphId).Append(':').Append(g.X).Append(':').Append(g.Y).Append(' ');
+                        sb.Append('\n');
+                    }
+                return sb.ToString();
+            }
+
+            foreach (var (width, gap) in new[] { (100000f, 0f), (100000f, font.UnitsPerEm * 0.01f), (600f, 50f) })
+            {
+                string list = Run(false, false, width, gap);
+                Assert.AreEqual(list, Run(true, false, width, gap), $"sort skipped, width {width} gap {gap}");
+                Assert.AreEqual(list, Run(true, true, width, gap), $"lean split, width {width} gap {gap}");
+            }
+            GlyphClusters.SkipOrderedSort = true;
+            GlyphClusters.LeanSplit = true;
         }
 
         [Test]
