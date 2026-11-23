@@ -2802,7 +2802,7 @@ namespace OneText.UGUI
         /// is not, and an animation that re-lays out every frame is the mistake
         /// this whole seam exists to prevent.
         /// </summary>
-        private void EmitQuads(VertexHelper vh)
+        private void EmitQuads(QuadBuffer sink)
         {
             long emitStartedAt = AtlasDiagnostics.Now;
             EnsureAnimator();
@@ -2883,12 +2883,12 @@ namespace OneText.UGUI
                 // drawn from those, corner by corner, while everything the mesh
                 // needs and a vertex array cannot carry — which atlas, which
                 // layer, which decoration — still comes from the tile.
-                if (_vertexOverride && EmitOverrideQuad(vh, quad, decoration, _drawn.Count - 1))
+                if (_vertexOverride && EmitOverrideQuad(sink, quad, decoration, _drawn.Count - 1))
                     continue;
                 if (quad.Rotation != 0f)
-                    EmitRotatedQuad(vh, quad, decoration);
+                    EmitRotatedQuad(sink, quad, decoration);
                 else
-                    EmitQuad(vh, quad.Position.x, quad.Position.y, quad.Size.x, quad.Size.y,
+                    EmitQuad(sink, quad.Position.x, quad.Position.y, quad.Size.x, quad.Size.y,
                         quad.UvRect, quad.Layer, quad.Color, AtlasOf(quad), decoration);
             }
             AtlasDiagnostics.Add(ref AtlasDiagnostics.EmitTicks, emitStartedAt);
@@ -3411,10 +3411,29 @@ namespace OneText.UGUI
             }
         }
 
+        // uGUI's own entry point. Reached when something asks for the mesh
+        // through VertexHelper: a label carrying an IMeshModifier, a test, a
+        // tool. The label's own rebuild goes through UpdateGeometry and never
+        // builds a VertexHelper at all; see OneTextLabel.MeshBuffer.cs.
         protected override void OnPopulateMesh(VertexHelper vh)
         {
+            vh.Clear();
+            var quads = RentQuads(out bool shared);
+            try
+            {
+                Populate(quads);
+                quads.CopyTo(vh);
+            }
+            finally
+            {
+                ReturnQuads(shared);
+            }
+        }
+
+        private void Populate(QuadBuffer sink)
+        {
             long startedAt = AtlasDiagnostics.Now;
-            try { PopulateMesh(vh); }
+            try { PopulateMesh(sink); }
             finally
             {
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.RebuildTicks, startedAt);
@@ -3422,9 +3441,9 @@ namespace OneText.UGUI
             }
         }
 
-        private void PopulateMesh(VertexHelper vh)
+        private void PopulateMesh(QuadBuffer sink)
         {
-            vh.Clear();
+            sink.Clear();
             // The buffer, not the string: the SetText overloads clear _text, and
             // it only comes back if something happens to read Text.
             if (SourceSpan.IsEmpty || !EnsureNativeState()) return;
@@ -3477,7 +3496,7 @@ namespace OneText.UGUI
                 _quadsAtlasVersion == atlas.Version && _quadsColorVersion == colorVersion &&
                 _quadsSpriteVersion == spriteVersion)
             {
-                EmitQuads(vh);
+                EmitQuads(sink);
                 AtlasFlushScheduler.Request();
                 if (SharedGlyphAtlas.ColorAtlasExists) SharedGlyphAtlas.ColorAtlas.Flush();
                 return;
@@ -3641,7 +3660,7 @@ namespace OneText.UGUI
             _quadsColorVersion = buildColorVersion;
             _quadsSpriteVersion = spriteVersion;
 
-            EmitQuads(vh);
+            EmitQuads(sink);
 
             if (AtlasDiagnostics.Enabled)
             {
@@ -3774,17 +3793,16 @@ namespace OneText.UGUI
             }
         }
 
-        private static void EmitQuad(VertexHelper vh, float x, float y, float w, float h,
+        private static void EmitQuad(QuadBuffer sink, float x, float y, float w, float h,
             Rect uv, int layer, Color32 c, float atlas, in DecorationChannels decoration)
         {
-            int start = vh.currentVertCount;
             var shared = new QuadChannels(layer, atlas, uv, decoration);
-            AddVert(vh, x, y, uv.xMin, uv.yMin, shared, c, decoration);
-            AddVert(vh, x, y + h, uv.xMin, uv.yMax, shared, c, decoration);
-            AddVert(vh, x + w, y + h, uv.xMax, uv.yMax, shared, c, decoration);
-            AddVert(vh, x + w, y, uv.xMax, uv.yMin, shared, c, decoration);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
+            float uMin = uv.xMin, uMax = uv.xMax, vMin = uv.yMin, vMax = uv.yMax;
+            var vertices = sink.ReserveQuad(out int start);
+            WriteVertex(ref vertices[start], x, y, uMin, vMin, shared, c, decoration);
+            WriteVertex(ref vertices[start + 1], x, y + h, uMin, vMax, shared, c, decoration);
+            WriteVertex(ref vertices[start + 2], x + w, y + h, uMax, vMax, shared, c, decoration);
+            WriteVertex(ref vertices[start + 3], x + w, y, uMax, vMin, shared, c, decoration);
         }
 
         /// <summary>
@@ -3792,7 +3810,7 @@ namespace OneText.UGUI
         /// path because that one is the overwhelmingly common case and a
         /// sin/cos per corner is not something to pay for a still letter.
         /// </summary>
-        private static void EmitRotatedQuad(VertexHelper vh, in TextQuad quad,
+        private static void EmitRotatedQuad(QuadBuffer sink, in TextQuad quad,
             in DecorationChannels decoration)
         {
             float radians = quad.Rotation * Mathf.Deg2Rad;
@@ -3807,19 +3825,14 @@ namespace OneText.UGUI
                 return centre + new Vector2(x * cos - y * sin, x * sin + y * cos);
             }
 
-            int start = vh.currentVertCount;
             var shared = new QuadChannels(quad.Layer, AtlasOf(quad), uv, decoration);
-            AddVert(vh, Corner(-1f, -1f), uv.xMin, uv.yMin, shared, quad.Color, decoration);
-            AddVert(vh, Corner(-1f, 1f), uv.xMin, uv.yMax, shared, quad.Color, decoration);
-            AddVert(vh, Corner(1f, 1f), uv.xMax, uv.yMax, shared, quad.Color, decoration);
-            AddVert(vh, Corner(1f, -1f), uv.xMax, uv.yMin, shared, quad.Color, decoration);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
+            Vector2 a = Corner(-1f, -1f), b = Corner(-1f, 1f), c = Corner(1f, 1f), d = Corner(1f, -1f);
+            var vertices = sink.ReserveQuad(out int start);
+            WriteVertex(ref vertices[start], a.x, a.y, uv.xMin, uv.yMin, shared, quad.Color, decoration);
+            WriteVertex(ref vertices[start + 1], b.x, b.y, uv.xMin, uv.yMax, shared, quad.Color, decoration);
+            WriteVertex(ref vertices[start + 2], c.x, c.y, uv.xMax, uv.yMax, shared, quad.Color, decoration);
+            WriteVertex(ref vertices[start + 3], d.x, d.y, uv.xMax, uv.yMin, shared, quad.Color, decoration);
         }
-
-        private static void AddVert(VertexHelper vh, Vector2 at, float u, float v,
-            in QuadChannels shared, Color32 c, in DecorationChannels decoration) =>
-            AddVert(vh, at.x, at.y, u, v, shared, c, decoration);
 
         /// <summary>
         /// Which atlas a tile samples, as the shader's discriminator: 0 the
@@ -3973,12 +3986,6 @@ namespace OneText.UGUI
         /// is the position and the two coordinates that actually differ between
         /// the four.
         /// </summary>
-        private static void AddVert(VertexHelper vh, float x, float y, float u, float v,
-            in QuadChannels shared, Color32 c, in DecorationChannels decoration) =>
-            vh.AddVert(new Vector3(x, y), c,
-                new Vector4(u, v, shared.PackedLayer, shared.UvMinV),
-                decoration.Colors, shared.VMax, decoration.Shape, s_Normal, s_Tangent);
-
         // ====================================================================
         // TMP parity — begin
         //

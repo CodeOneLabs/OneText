@@ -15,6 +15,9 @@ namespace OneText
         public static bool Enabled;
 
         public static long RebuildTicks, RebuildCount;
+        /// <summary>The whole of a label's UpdateGeometry: the rebuild above plus handing the mesh to the canvas.</summary>
+        public static long GeometryTicks;
+
         public static long LayoutTicks, LayoutCount;
         public static long SplitTicks, LookupTicks, EmitTicks;
 
@@ -87,6 +90,7 @@ namespace OneText
         public static void Reset()
         {
             RebuildTicks = RebuildCount = 0;
+            GeometryTicks = 0;
             LayoutTicks = LayoutCount = 0;
             SplitTicks = LookupTicks = EmitTicks = 0;
             MeasureShapeTicks = MeasureShapeCount = 0;
