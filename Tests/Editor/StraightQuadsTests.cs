@@ -40,6 +40,7 @@ namespace OneText.Tests
             GlyphAtlas.FastKeys = on;
             OneTextLabel.StraightQuads = on;
             OneTextLabel.TrackedBounds = on;
+            OneTextLabel.PooledMeshes = on;
         }
 
         [TearDown]
@@ -341,6 +342,66 @@ namespace OneText.Tests
                     if (quad.IsColor)
                         Assert.AreEqual(new Color32(255, 255, 255, 255), quad.Color,
                             "a picture's drawn colour is not the label's to change");
+            }
+            finally
+            {
+                Object.DestroyImmediate(canvas);
+            }
+        }
+
+        [Test]
+        public void A_Mesh_A_Renderer_Is_Showing_Is_Never_Written_By_Another_Label()
+        {
+            // The pool hands a label a mesh no renderer is showing. If it ever
+            // handed out one that another label's renderer still held, that
+            // label's picture would be the next label's text the moment
+            // anything re-read the mesh.
+            SetAll(true);
+            var canvas = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas));
+            try
+            {
+                OneTextLabel Make(string text)
+                {
+                    var go = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer));
+                    go.transform.SetParent(canvas.transform, false);
+                    go.GetComponent<RectTransform>().sizeDelta = new Vector2(400f, 100f);
+                    var label = go.AddComponent<OneTextLabel>();
+                    label.SetFont(Bytes(Fonts + "NotoSans.ttf"));
+                    label.FontSize = 24f;
+                    label.Text = text;
+                    return label;
+                }
+
+                Mesh Draw(OneTextLabel label)
+                {
+                    label.SetVerticesDirty();
+                    label.Rebuild(CanvasUpdate.PreRender);
+                    return OneTextLabel.LastDirectMesh;
+                }
+
+                var a = Make("first");
+                var b = Make("second label");
+                var c = Make("x");
+                Draw(a);
+                var bMesh = Draw(b);
+                var bVertices = bMesh.vertices;
+                for (int i = 0; i < 20; i++)
+                {
+                    a.Text = "first " + i;
+                    var aMesh = Draw(a);
+                    c.Text = new string('y', 1 + i % 5);
+                    var cMesh = Draw(c);
+                    Assert.AreNotSame(bMesh, aMesh, "a label was handed the mesh another is showing");
+                    Assert.AreNotSame(bMesh, cMesh, "a label was handed the mesh another is showing");
+                    Assert.AreNotSame(aMesh, cMesh, "two labels share one mesh");
+                }
+                CollectionAssert.AreEqual(bVertices, bMesh.vertices, "a shown mesh was written over");
+
+                // And one that has moved to the empty mesh gave its own back.
+                b.Text = "";
+                Assert.AreEqual(0, Draw(b).vertexCount);
+                a.Text = "reuses it";
+                Assert.Greater(Draw(a).vertexCount, 0);
             }
             finally
             {

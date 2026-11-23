@@ -2814,14 +2814,22 @@ namespace OneText.UGUI
             // "Running" means something is advancing the clock: play mode with
             // Animate on, or anyone who has moved AnimationTime themselves. A
             // label sitting in the Scene view with neither is shown finished.
-            bool clockRunning = (Application.isPlaying && _animate) || _animationTime > 0f;
-            // Never latched: a script driving AnimationTime starts at 0 like
-            // everyone else, and stamping its first frame as "finished for ever"
-            // would mean appearance effects that never play.
-            if (clockRunning) _animator.UnlatchFrozenStamps();
             int reveal = EffectiveMaxVisibleGraphemes;
-            _animator.NoteReveal(reveal, _layout.GraphemeCount,
-                clockRunning ? _animationTime : float.NegativeInfinity);
+            // The stamps are only ever read through an effect span, and spans
+            // only arrive through EnsureAnimator, which clears every stamp
+            // before it adds one. With no spans the bookkeeping below is
+            // written and thrown away unread, so the straight path does not
+            // write it — or ask the engine whether it is playing to decide how.
+            if (!StraightQuads || !_animator.IsEmpty)
+            {
+                bool clockRunning = (Application.isPlaying && _animate) || _animationTime > 0f;
+                // Never latched: a script driving AnimationTime starts at 0 like
+                // everyone else, and stamping its first frame as "finished for ever"
+                // would mean appearance effects that never play.
+                if (clockRunning) _animator.UnlatchFrozenStamps();
+                _animator.NoteReveal(reveal, _layout.GraphemeCount,
+                    clockRunning ? _animationTime : float.NegativeInfinity);
+            }
             var context = new TextQuadContext(_layout, _layout.GraphemeCount, _animationTime);
 
             // The label's colour joins here, on the way to the mesh, not in the

@@ -335,6 +335,8 @@ namespace OneText.UGUI
             if (!DirectMesh || TryGetComponent<IMeshModifier>(out _))
             {
                 base.UpdateGeometry();
+                // The renderer now holds uGUI's worker mesh, not ours.
+                ReleaseHeldMesh();
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.GeometryTicks, startedAt);
                 return;
             }
@@ -348,13 +350,17 @@ namespace OneText.UGUI
                 var rect = rectTransform.rect;
                 if (rect.width >= 0f && rect.height >= 0f) Populate(quads);
                 tooLarge = quads.VertexCount > MaxDirectVertices;
-                if (!tooLarge) Upload(quads, canvasRenderer);
+                if (!tooLarge) Upload(this, quads, canvasRenderer);
             }
             finally
             {
                 ReturnQuads(shared);
             }
-            if (tooLarge) base.UpdateGeometry();
+            if (tooLarge)
+            {
+                base.UpdateGeometry();
+                ReleaseHeldMesh();
+            }
             AtlasDiagnostics.Add(ref AtlasDiagnostics.GeometryTicks, startedAt);
         }
 
@@ -363,7 +369,7 @@ namespace OneText.UGUI
         internal static Mesh LastDirectMesh { get; private set; }
         internal static int DirectUploads { get; private set; }
 
-        private static void Upload(QuadBuffer quads, CanvasRenderer renderer)
+        private static void Upload(OneTextLabel label, QuadBuffer quads, CanvasRenderer renderer)
         {
             DirectUploads++;
             if (quads.VertexCount == 0)
@@ -371,21 +377,35 @@ namespace OneText.UGUI
                 if (s_emptyMesh == null)
                     s_emptyMesh = new Mesh { name = "OneText Empty", hideFlags = HideFlags.HideAndDontSave };
                 renderer.SetMesh(s_emptyMesh);
+                label.ReleaseHeldMesh();
                 LastDirectMesh = s_emptyMesh;
                 return;
             }
 
-            if (s_directMesh == null)
+            Mesh mesh;
+            int declaredQuads;
+            LabelMesh taken = null;
+            if (PooledMeshes)
             {
-                s_directMesh = new Mesh { name = "OneText Label", hideFlags = HideFlags.HideAndDontSave };
-                s_directMesh.MarkDynamic();
-                s_directQuads = -1;
+                taken = TakeMesh();
+                mesh = taken.Mesh;
+                declaredQuads = taken.Quads;
+            }
+            else
+            {
+                if (s_directMesh == null)
+                {
+                    s_directMesh = new Mesh { name = "OneText Label", hideFlags = HideFlags.HideAndDontSave };
+                    s_directMesh.MarkDynamic();
+                    s_directQuads = -1;
+                }
+                mesh = s_directMesh;
+                declaredQuads = s_directQuads;
             }
 
-            var mesh = s_directMesh;
             int vertexCount = quads.VertexCount;
             int quadCount = vertexCount / 4;
-            if (quadCount != s_directQuads)
+            if (quadCount != declaredQuads)
             {
                 int indexCount = quadCount * 6;
                 EnsureQuadIndices(quadCount);
@@ -403,13 +423,128 @@ namespace OneText.UGUI
                     firstVertex = 0,
                     vertexCount = vertexCount,
                 }, Quiet);
-                s_directQuads = quadCount;
+                if (taken != null) taken.Quads = quadCount;
+                else s_directQuads = quadCount;
             }
             mesh.SetVertexBufferData(quads.Vertices, 0, 0, vertexCount, 0, Quiet);
             mesh.bounds = TrackedBounds && quads.Tracked ? TrackedBoundsOf(quads) : BoundsOf(quads);
             renderer.SetMesh(mesh);
+            if (taken != null)
+            {
+                // Released after the renderer has moved on to the new one, not
+                // before: until then it is still what this label is showing.
+                label.ReleaseHeldMesh();
+                label._heldMesh = taken;
+                taken.Owner = label;
+            }
             LastDirectMesh = mesh;
         }
+
+        // ------------------------------------------------------- mesh pool
+        //
+        // Why a mesh per label and not one for all of them. What the numbers
+        // say (C3, per label): with one mesh shared by every label,
+        // SetVertexBufferData cost 0.78 us and SetMesh 0.28; writing into a
+        // mesh no renderer has been handed since its last write, 0.31 and
+        // 0.08. Clearing the shared mesh before each write also brought the
+        // write down to 0.21, which is what a copy-on-write would do: SetMesh
+        // appears to keep a reference to the mesh's data rather than copy it,
+        // and the next write to that mesh copies the data out from under the
+        // renderer first. A renderer that is handed another mesh lets go of
+        // the old one, so each label holds the mesh its renderer is showing
+        // and gives the previous one back here, and the next label writes
+        // into a mesh nobody is reading. (Clearing instead cost more than it
+        // saved: every upload then re-declares both buffers and the submesh.)
+        //
+        // If that reading is right the memory is what it was, one block of
+        // vertex data per label: the shared mesh's old data stayed with the
+        // renderer that held it. Either way what is new is a Mesh object per
+        // label that draws through this route, plus the few on the free list.
+
+        /// <summary>
+        /// Off uploads every label through one shared mesh, as it always did.
+        /// Same vertices, indices and bounds; for A/B and the tests.
+        /// </summary>
+        public static bool PooledMeshes = true;
+
+        private sealed class LabelMesh
+        {
+            public Mesh Mesh;
+            /// <summary>Quads the buffers were last declared for; -1 before the first.</summary>
+            public int Quads = -1;
+            /// <summary>The label whose renderer holds this mesh; null while it is free.</summary>
+            public OneTextLabel Owner;
+        }
+
+        private static readonly Stack<LabelMesh> s_freeMeshes = new Stack<LabelMesh>();
+        private static readonly List<LabelMesh> s_allMeshes = new List<LabelMesh>();
+        private static int s_reclaimCursor;
+
+        /// <summary>The pooled mesh this label's renderer is showing, if any.</summary>
+        private LabelMesh _heldMesh;
+
+        private void ReleaseHeldMesh()
+        {
+            var held = _heldMesh;
+            if (held == null) return;
+            _heldMesh = null;
+            held.Owner = null;
+            s_freeMeshes.Push(held);
+        }
+
+        private static LabelMesh TakeMesh()
+        {
+            while (s_freeMeshes.Count > 0)
+            {
+                var free = s_freeMeshes.Pop();
+                if (free.Mesh != null) return free;
+                s_allMeshes.Remove(free);
+            }
+
+            // A destroyed label never gives its mesh back, so before making a
+            // new one look at a few held ones for an owner that is gone. A few
+            // per miss rather than all of them: a pool only misses while labels
+            // are being created, and a scan per creation would be quadratic in
+            // the number of labels.
+            for (int n = 0; n < 4 && s_allMeshes.Count > 0; n++)
+            {
+                s_reclaimCursor = (s_reclaimCursor + 1) % s_allMeshes.Count;
+                var candidate = s_allMeshes[s_reclaimCursor];
+                if (ReferenceEquals(candidate.Owner, null) || candidate.Owner != null) continue;
+                candidate.Owner = null;
+                if (candidate.Mesh != null) return candidate;
+            }
+
+            var mesh = new Mesh { name = "OneText Label", hideFlags = HideFlags.HideAndDontSave };
+            mesh.MarkDynamic();
+            var made = new LabelMesh { Mesh = mesh };
+            s_allMeshes.Add(made);
+            return made;
+        }
+
+        /// <summary>
+        /// Destroys every pooled mesh. Their managed handles do not survive a
+        /// domain reload and the meshes, being HideAndDontSave, would; every
+        /// label rebuilds on the other side of the reload, so nothing is left
+        /// showing one.
+        /// </summary>
+        private static void ReleaseMeshPool()
+        {
+            foreach (var pooled in s_allMeshes)
+            {
+                if (pooled.Owner != null) pooled.Owner._heldMesh = null;
+                if (pooled.Mesh != null) DestroyImmediate(pooled.Mesh);
+            }
+            s_allMeshes.Clear();
+            s_freeMeshes.Clear();
+            s_reclaimCursor = 0;
+        }
+
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void ReleaseMeshPoolOnAssemblyReload() =>
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += ReleaseMeshPool;
+#endif
 
         private static Bounds BoundsOf(QuadBuffer quads)
         {
