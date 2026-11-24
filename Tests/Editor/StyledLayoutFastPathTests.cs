@@ -82,6 +82,7 @@ namespace OneText.Tests
             TextLayoutEngine.SimpleTextShortcut = on;
             TextLayoutEngine.StyledLineFastPath = on;
             TextLayoutEngine.CachedBoldQuery = on;
+            TextLayoutEngine.ItemWindow = on;
             TextStyle.FlagsFirstEquals = on;
         }
 
@@ -448,6 +449,64 @@ namespace OneText.Tests
                 TextStyle.FlagsFirstEquals = true;
                 Assert.AreEqual(expected, styles[i].Equals(styles[j]), $"{styles[i]} vs {styles[j]}");
             }
+        }
+
+        /// <summary>
+        /// Long wrapped paragraphs with many items per line (Korean from the
+        /// CJK face with its spaces from the Latin primary is a new item at
+        /// every word), cut by a height budget with an ellipsis that re-emits
+        /// the last line: what the item window has to get right.
+        /// </summary>
+        [Test]
+        public void Wrapped_Paragraphs_With_Many_Items_Equal_The_General_Path()
+        {
+            using var fonts = Stack();
+            using var slow = new TextLayoutEngine();
+            using var fast = new TextLayoutEngine();
+            var expected = new TextLayoutResult();
+            var actual = new TextLayoutResult();
+            var markup = new RichTextResult();
+            int compared = 0, faults = 0;
+            string[] paragraphs =
+            {
+                "다람쥐 헌 쳇바퀴에 타고파. 키스의 고유조건은 <b>입술끼리</b> 만나야 하고 특별한 기술은 필요치 않다. " +
+                "다람쥐 헌 쳇바퀴에 <color=#f80>타고파</color>. 키스의 고유조건은 입술끼리 만나야 하고\n둘째 문단 가나다 라마바 사아자",
+                "Player 3 님이 아이템 <color=#f80>[Sword]</color> 을 얻었습니다 (x2). مرحبا بالعالم abc 漢字かな 日本語 " +
+                "Player 4 님이 <b>아이템</b> 을 얻었습니다. The quick brown fox jumps over the lazy dog.",
+                "<ruby=かんじ>漢字</ruby>を<ruby=よ>読</ruby>む 日本語とEnglishの混在、「括弧」。 ありがとう！！！！ " +
+                "<sprite=0> icon <size=150%>big</size> 가나다",
+            };
+            foreach (string source in paragraphs)
+            {
+                RichTextParser.Parse(source, markup, StyleIndex, FontIndex);
+                string text = markup.Text;
+                foreach (float width in new[] { 40f, 90f, 160f })
+                foreach (float height in new[] { 0f, 60f, 130f })
+                foreach (var overflow in new[] { TextOverflow.Overflow, TextOverflow.Truncate, TextOverflow.Ellipsis })
+                foreach (var alignment in new[] { TextAlignment.Start, TextAlignment.Justified })
+                foreach (var mode in new[] { TextWritingMode.Horizontal, TextWritingMode.VerticalRightToLeft })
+                {
+                    var s = TextLayoutSettings.Default(fonts, 16f);
+                    s.Wrap = TextWrap.Wrap;
+                    s.MaxWidth = width;
+                    s.MaxHeight = height;
+                    s.Overflow = overflow;
+                    s.Alignment = alignment;
+                    s.WritingMode = mode;
+                    s.Language = "ko";
+                    s.KoreanWordWrap = true;
+                    Configure(ref s, markup);
+                    string context = $"\"{source}\" width {width} height {height} {overflow} {alignment} {mode}";
+                    Compare(slow, fast, text, s, expected, actual, context, ref compared, ref faults);
+
+                    TextLayoutEngine.ItemWindow = false;
+                    Run(slow, text, s, expected);
+                    TextLayoutEngine.ItemWindow = true;
+                    if (Run(fast, text, s, actual) == null)
+                        LayoutComparison.AssertEqual(expected, actual, context + " (ItemWindow alone)");
+                }
+            }
+            Assert.Greater(compared, 250);
         }
 
         private static void Compare(TextLayoutEngine slow, TextLayoutEngine fast, string text,

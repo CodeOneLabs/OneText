@@ -298,6 +298,7 @@ namespace OneText.Tests
             TextLayoutEngine.SimpleTextShortcut = on;
             TextLayoutEngine.StyledLineFastPath = on;
             TextLayoutEngine.CachedBoldQuery = on;
+            TextLayoutEngine.ItemWindow = on;
             TextStyle.FlagsFirstEquals = on;
         }
 

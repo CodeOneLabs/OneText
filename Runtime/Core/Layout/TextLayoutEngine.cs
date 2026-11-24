@@ -894,6 +894,9 @@ namespace OneText
         private void MeasureItems(ReadOnlySpan<char> text, in TextLayoutSettings settings)
         {
             _measured.Clear();
+            _emitCursor = 0;
+            _itemsOrdered = true;
+            int previousEnd = int.MinValue;
             // AsianSpacingFor answers 0 before reading anything when both of
             // its rules are off, which is nearly every label; asked once here
             // rather than in a call per glyph.
@@ -901,6 +904,8 @@ namespace OneText
             for (int itemIndex = 0; itemIndex < _items.Count; itemIndex++)
             {
                 var item = _items[itemIndex];
+                if (item.Start < previousEnd || item.End <= item.Start) _itemsOrdered = false;
+                previousEnd = item.End;
                 item.MeasuredCount = -1;
                 if (item.Style.IsSprite)
                 {
@@ -2090,6 +2095,44 @@ namespace OneText
         /// </summary>
         public static bool LeanEmit = true;
 
+        /// <summary>
+        /// Whether a line looks only at the items it overlaps instead of at
+        /// every item of its paragraph. Same runs either way: the items skipped
+        /// are exactly the ones the loop would have found empty. A switch so
+        /// that can be measured and held to.
+        ///
+        /// A paragraph of Korean drawn from a CJK face with a Latin primary is
+        /// a new item at every space, because the space comes from the primary:
+        /// three hundred characters made 141 items over 16 lines, and each line
+        /// copied all 141 out of the list to find its nine.
+        /// </summary>
+        public static bool ItemWindow = true;
+
+        // Whether _items is in logical order with no overlaps and no empty
+        // item, which is what the window relies on; established by
+        // MeasureItems, which every itemization path ends in.
+        private bool _itemsOrdered;
+
+        // The first item the last line could have used. Lines are emitted in
+        // order, so the next one starts its search there.
+        private int _emitCursor;
+
+        /// <summary>
+        /// The index of the first item ending after <paramref name="start"/>.
+        /// Every item before it ends at or before the line starts, so it
+        /// contributes nothing to the line. A line can be emitted again (the
+        /// ellipsis re-emits the last one), so a cursor past the answer starts
+        /// over.
+        /// </summary>
+        private int FirstItemEndingAfter(int start)
+        {
+            int k = _emitCursor;
+            if (k > _items.Count || (k > 0 && _items[k - 1].End > start)) k = 0;
+            while (k < _items.Count && _items[k].End <= start) k++;
+            _emitCursor = k;
+            return k;
+        }
+
         // The line's runs for EmitPlainLine, in an array so they can be read
         // and placed where they lie. A run is a hundred-byte struct holding a
         // reference, and every pass over a List<TextRun> copied each one out
@@ -2113,8 +2156,11 @@ namespace OneText
             int glyphStart = result.Glyphs.Count;
 
             _lineRuns.Clear();
-            foreach (var item in _items)
+            bool window = ItemWindow && _itemsOrdered;
+            for (int k = window ? FirstItemEndingAfter(start) : 0; k < _items.Count; k++)
             {
+                var item = _items[k];
+                if (window && item.Start >= end) break;
                 int s = Math.Max(item.Start, start);
                 int e = Math.Min(item.End, end);
                 if (s >= e) continue;
@@ -2263,9 +2309,11 @@ namespace OneText
                 _plainRuns = new TextRun[(_items.Count + 1) * 2];
             var runs = _plainRuns;
             int count = 0;
-            for (int k = 0; k < _items.Count; k++)
+            bool window = ItemWindow && _itemsOrdered;
+            for (int k = window ? FirstItemEndingAfter(start) : 0; k < _items.Count; k++)
             {
                 var item = _items[k];
+                if (window && item.Start >= end) break;
                 int s = Math.Max(item.Start, start);
                 int e = Math.Min(item.End, end);
                 if (s >= e) continue;
