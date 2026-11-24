@@ -79,6 +79,20 @@ namespace OneText
         public static long UploadTicks, UploadCount, UploadedTiles;
         public static long CopyTicks;
 
+        /// <summary>
+        /// Time spent finding room for new tiles once the free space ran out
+        /// (eviction choice and release), time spent repacking, and how many
+        /// tiles each moved. Under sustained pressure these, not the field,
+        /// can be the frame.
+        /// </summary>
+        public static long EvictTicks, EvictCount, CompactTicks, CompactCount;
+
+        /// <summary>
+        /// Inside a rasterize: packing the batch for the jobs, and the overlap
+        /// work (scan on the calling thread, resolve, re-pack, re-bake).
+        /// </summary>
+        public static long PackTicks, ResolveTicks;
+
         public static long Now => Enabled ? Stopwatch.GetTimestamp() : 0L;
 
         public static void Add(ref long accumulator, long startedAt)
@@ -103,6 +117,8 @@ namespace OneText
             JobWaitTicks = 0;
             UploadTicks = UploadCount = UploadedTiles = 0;
             CopyTicks = 0;
+            EvictTicks = EvictCount = CompactTicks = CompactCount = 0;
+            PackTicks = ResolveTicks = 0;
         }
 
         public static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
@@ -166,6 +182,10 @@ namespace OneText
                 $"{(DispatchCount > 0 ? RasterizeCount / (double)DispatchCount : 0):F1} tiles, " +
                 $"{Ms(JobWaitTicks):F1} ms blocked on the job); " +
                 $"tile copy {Ms(CopyTicks):F1} ms ({perFrame(CopyTicks) * 1000:F0} us/frame); " +
+                $"pack {perFrame(PackTicks) * 1000:F0} us/frame, overlaps {perFrame(ResolveTicks) * 1000:F0} us/frame " +
+                $"({OverlapRebakes:n0} resolved); " +
+                $"evict {perFrame(EvictTicks) * 1000:F0} us/frame ({EvictCount:n0} tiles), " +
+                $"compact {perFrame(CompactTicks) * 1000:F0} us/frame ({CompactCount:n0}); " +
                 $"upload {Ms(UploadTicks):F1} ms ({perFrame(UploadTicks) * 1000:F0} us/frame, " +
                 $"{UploadCount:n0} uploads, {UploadedTiles:n0} tiles)";
         }

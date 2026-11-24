@@ -50,8 +50,76 @@ namespace OneText
         public static void RasterizeBatch(IReadOnlyList<RasterizeRequest> requests,
             List<RasterizedGlyph> results, bool precise = false)
         {
+            // The buffers below are this batch's; one still baking for someone
+            // else is finished (and handed to its owner) first.
+            FinishFlight();
+            if (BeginBatch(requests, results, precise, background: false)) EndBatch();
+        }
+
+        /// <summary>
+        /// Who started the batch now baking in the background, and is told to
+        /// take its tiles (<see cref="IBatchOwner.FinishBatch"/>) when anything
+        /// else needs the rasterizer. Null when nothing is in flight.
+        /// </summary>
+        internal interface IBatchOwner
+        {
+            /// <summary>Calls <see cref="EndBatch"/> and writes the tiles out.</summary>
+            void FinishBatch();
+        }
+
+        private static IBatchOwner s_owner;
+        private static JobHandle s_flight;
+        private static bool s_inFlight;
+
+        // The batch between BeginBatch and EndBatch.
+        private static IReadOnlyList<RasterizeRequest> s_batchRequests;
+        private static List<RasterizedGlyph> s_batchResults;
+        private static bool s_batchPrecise, s_batchScanning, s_batchScanFirst;
+        private static int s_batchTexels, s_batchGroups, s_batchFlagged;
+        private static long s_batchBeginTicks;
+
+        /// <summary>True while a background batch is baking.</summary>
+        internal static bool HasFlight => s_inFlight;
+
+        /// <summary>Has the owner of the batch in flight, if any, take it.</summary>
+        internal static void FinishFlight()
+        {
+            if (!s_inFlight) return;
+            var owner = s_owner;
+            if (owner != null) owner.FinishBatch();
+            else EndBatch();
+        }
+
+        /// <summary>
+        /// Starts a batch in the background and returns without waiting for
+        /// it: the workers bake while the caller goes on. <paramref name="requests"/>
+        /// and <paramref name="results"/> belong to the batch until the owner
+        /// calls <see cref="EndBatch"/>, which it must do before anything else
+        /// rasterizes (<see cref="FinishFlight"/> asks it to). False when there
+        /// was nothing to bake and nothing is in flight.
+        /// </summary>
+        internal static bool BeginBackground(IReadOnlyList<RasterizeRequest> requests,
+            List<RasterizedGlyph> results, bool precise, IBatchOwner owner)
+        {
+            FinishFlight();
+            if (!BeginBatch(requests, results, precise, background: true)) return false;
+            s_owner = owner;
+            return true;
+        }
+
+        /// <summary>
+        /// Sizes, packs and schedules a batch. With <paramref name="background"/>
+        /// everything the workers can do is scheduled and nothing is waited
+        /// on; otherwise this is the first half of the synchronous bake, and
+        /// the calling thread scans for overlaps while the fields bake, as it
+        /// always did. False when the batch has no texels (then it is already
+        /// finished: every result is sized and empty ones are marked).
+        /// </summary>
+        private static bool BeginBatch(IReadOnlyList<RasterizeRequest> requests,
+            List<RasterizedGlyph> results, bool precise, bool background)
+        {
             results.Clear();
-            if (requests == null || requests.Count == 0) return;
+            if (requests == null || requests.Count == 0) return false;
 
             long startedAt = AtlasDiagnostics.Now;
 
@@ -61,66 +129,36 @@ namespace OneText
             // First pass: size everything and lay out the tiles.
             foreach (var request in requests)
             {
-                int points = 0, contours = 0;
-                var min = new Vector2(float.MaxValue, float.MaxValue);
-                var max = new Vector2(float.MinValue, float.MinValue);
-                foreach (var contour in request.Contours)
+                var shape = Measure(request, precise, out int points, out int contours);
+                results.Add(shape);
+                if (shape.IsEmpty)
                 {
-                    if (contour.Count < 2) continue;
-                    points += contour.Count;
-                    contours++;
-                    foreach (var p in contour)
-                    {
-                        min = Vector2.Min(min, p);
-                        max = Vector2.Max(max, p);
-                    }
-                }
-
-                if (points == 0)
-                {
-                    results.Add(new RasterizedGlyph { IsEmpty = true });
                     s_descs.Add(default);
                     continue;
                 }
-
-                float unitsPerPixel = 1f / request.PixelsPerUnit;
-                int width = Mathf.Min(MaxTileEdge,
-                    Mathf.CeilToInt((max.x - min.x) * request.PixelsPerUnit) + 2 * Padding);
-                int height = Mathf.Min(MaxTileEdge,
-                    Mathf.CeilToInt((max.y - min.y) * request.PixelsPerUnit) + 2 * Padding);
-                var origin = min - new Vector2(Padding, Padding) * unitsPerPixel;
 
                 s_descs.Add(new SdfTileDesc
                 {
                     ContourStart = totalContours,
                     ContourCount = contours,
                     OutputStart = totalTexels,
-                    Width = width,
-                    Height = height,
-                    OriginUnits = new float2(origin.x, origin.y),
-                    UnitsPerPixel = unitsPerPixel,
-                });
-                results.Add(new RasterizedGlyph
-                {
-                    Width = width,
-                    Height = height,
-                    OriginUnits = origin,
-                    UnitsPerPixel = unitsPerPixel,
-                    Channels = precise ? 4 : 1,
+                    Width = shape.Width,
+                    Height = shape.Height,
+                    OriginUnits = new float2(shape.OriginUnits.x, shape.OriginUnits.y),
+                    UnitsPerPixel = shape.UnitsPerPixel,
                 });
 
                 totalPoints += points;
                 totalContours += contours;
-                totalTexels += width * height;
+                totalTexels += shape.Width * shape.Height;
             }
 
             if (totalTexels == 0)
             {
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.RasterizeTicks, startedAt);
-                return;
+                return false;
             }
 
-            int bytesPerTexel = precise ? 4 : 1;
             s_resolvedOf.Clear();
             for (int r = 0; r < requests.Count; r++) s_resolvedOf.Add(-1);
             s_resolvedUsed = 0;
@@ -137,7 +175,9 @@ namespace OneText
                     s_resolvedOf[r] = ResolveInto(requests[r], known, precise);
                 }
             }
+            long packStart = AtlasDiagnostics.Now;
             int groupCount = Pack(requests, null, precise, true, out int packedPoints);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.PackTicks, packStart);
 
             long jobStart = AtlasDiagnostics.Now;
             bool scanning = ResolveOverlaps && groupCount > 0;
@@ -150,6 +190,15 @@ namespace OneText
                 Overlapping = s_overlapping,
             };
 
+            s_batchRequests = requests;
+            s_batchResults = results;
+            s_batchPrecise = precise;
+            s_batchScanning = scanning;
+            s_batchScanFirst = scanning && s_expectOverlaps;
+            s_batchTexels = totalTexels;
+            s_batchGroups = groupCount;
+            s_batchFlagged = 0;
+
             // Two ways to pay for overlapping contours, chosen by what the last
             // batch found. Most fonts ship with their overlaps removed, and for
             // those the scan costs no wait at all: the fields are scheduled
@@ -160,21 +209,62 @@ namespace OneText
             // overlaps would pay that second bake on nearly every tile with a
             // join, so once a batch has found any, the next one scans first,
             // across the workers, and bakes each tile once, resolved.
-            int flagged = 0, redo = 0;
-            if (scanning && s_expectOverlaps)
+            if (s_batchScanFirst)
             {
                 scan.Schedule(groupCount, 4).Complete();
-                redo = ResolveFlagged(requests, groupCount, precise, out flagged);
+                long resolveStart = AtlasDiagnostics.Now;
+                int redo = ResolveFlagged(requests, groupCount, precise, out s_batchFlagged);
                 if (redo > 0) Pack(requests, null, precise, false, out packedPoints);
-                Dispatch(packedPoints, totalTexels, s_descs.Count, precise).Complete();
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, resolveStart);
+                s_flight = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+            }
+            else if (background)
+            {
+                // Nobody waits here to scan by hand, so the scan is a job too,
+                // beside the fields; both only read the packed contours.
+                var fields = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+                s_flight = scanning ? JobHandle.CombineDependencies(fields, scan.Schedule(groupCount, 4)) : fields;
             }
             else
             {
-                var fields = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+                s_flight = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+                long scanStart = AtlasDiagnostics.Now;
                 if (scanning) scan.Run(groupCount);
-                fields.Complete();
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, scanStart);
             }
+            s_inFlight = true;
+            if (background) JobHandle.ScheduleBatchedJobs();
             AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
+            // Charged when the batch ends, without the time it spent in the
+            // background while the caller did other work.
+            s_batchBeginTicks = AtlasDiagnostics.Enabled ? AtlasDiagnostics.Now - startedAt : 0;
+            return true;
+        }
+
+        /// <summary>
+        /// Waits for the batch <see cref="BeginBackground"/> started, re-bakes
+        /// what the scan flagged, and fills its results' pixels (valid until
+        /// the next batch). Only the batch's owner calls this.
+        /// </summary>
+        internal static void EndBatch()
+        {
+            if (!s_inFlight) return;
+            s_inFlight = false;
+            s_owner = null;
+            var requests = s_batchRequests;
+            var results = s_batchResults;
+            bool precise = s_batchPrecise;
+            s_batchRequests = null;
+            s_batchResults = null;
+
+            long endStart = AtlasDiagnostics.Now;
+            long jobStart = endStart;
+            s_flight.Complete();
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
+
+            int bytesPerTexel = precise ? 4 : 1;
+            int totalTexels = s_batchTexels;
+            int flagged = s_batchFlagged;
 
             // One copy for the whole batch into one reused buffer; the results
             // index into it rather than owning an array each.
@@ -183,12 +273,14 @@ namespace OneText
                 s_pixels = new byte[Mathf.NextPowerOfTwo(totalBytes)];
             NativeArray<byte>.Copy(s_output, 0, s_pixels, 0, totalBytes);
 
-            if (scanning && !s_expectOverlaps)
+            if (s_batchScanning && !s_batchScanFirst)
             {
-                redo = ResolveFlagged(requests, groupCount, precise, out flagged);
+                long resolveStart = AtlasDiagnostics.Now;
+                int redo = ResolveFlagged(requests, s_batchGroups, precise, out flagged);
                 if (redo > 0) Rebake(requests, precise);
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, resolveStart);
             }
-            if (scanning) s_expectOverlaps = flagged > 0;
+            if (s_batchScanning) s_expectOverlaps = flagged > 0;
             for (int k = 0; k < s_resolvedUsed; k++) s_resolved[k].Clear();
 
             for (int r = 0; r < results.Count; r++)
@@ -200,13 +292,62 @@ namespace OneText
                 results[r] = result;
             }
 
-            AtlasDiagnostics.Add(ref AtlasDiagnostics.RasterizeTicks, startedAt);
+            if (AtlasDiagnostics.Enabled)
+                AtlasDiagnostics.RasterizeTicks += s_batchBeginTicks + (AtlasDiagnostics.Now - endStart);
             if (AtlasDiagnostics.Enabled)
             {
                 AtlasDiagnostics.RasterizeCount += requests.Count;
                 AtlasDiagnostics.DispatchCount++;
                 AtlasDiagnostics.RasterizedPixels += totalTexels;
             }
+        }
+
+        /// <summary>
+        /// The tile a request will bake into, without baking it: its size, its
+        /// origin and its density, or <see cref="RasterizedGlyph.IsEmpty"/>
+        /// when it has no points. <see cref="RasterizeBatch"/> sizes every
+        /// request through this, so a caller that places a tile before the
+        /// field is computed (<see cref="GlyphAtlas"/>'s deferred bake) places
+        /// exactly the tile the batch will fill. No pixels.
+        /// </summary>
+        internal static RasterizedGlyph Measure(in RasterizeRequest request, bool precise)
+            => Measure(request, precise, out _, out _);
+
+        private static RasterizedGlyph Measure(in RasterizeRequest request, bool precise,
+            out int points, out int contours)
+        {
+            points = 0;
+            contours = 0;
+            var min = new Vector2(float.MaxValue, float.MaxValue);
+            var max = new Vector2(float.MinValue, float.MinValue);
+            foreach (var contour in request.Contours)
+            {
+                if (contour.Count < 2) continue;
+                points += contour.Count;
+                contours++;
+                foreach (var p in contour)
+                {
+                    min = Vector2.Min(min, p);
+                    max = Vector2.Max(max, p);
+                }
+            }
+
+            if (points == 0) return new RasterizedGlyph { IsEmpty = true };
+
+            float unitsPerPixel = 1f / request.PixelsPerUnit;
+            int width = Mathf.Min(MaxTileEdge,
+                Mathf.CeilToInt((max.x - min.x) * request.PixelsPerUnit) + 2 * Padding);
+            int height = Mathf.Min(MaxTileEdge,
+                Mathf.CeilToInt((max.y - min.y) * request.PixelsPerUnit) + 2 * Padding);
+            var origin = min - new Vector2(Padding, Padding) * unitsPerPixel;
+            return new RasterizedGlyph
+            {
+                Width = width,
+                Height = height,
+                OriginUnits = origin,
+                UnitsPerPixel = unitsPerPixel,
+                Channels = precise ? 4 : 1,
+            };
         }
 
         /// <summary>
@@ -264,7 +405,7 @@ namespace OneText
                 s_groupIds.Clear();
             }
 
-            int pi = 0, ci = 0, texelEnd = 0, groupCount = 0;
+            int pi = 0, ci = 0, texelEnd = 0, rowEnd = 0, groupCount = 0;
             for (int k = 0; k < tiles; k++)
             {
                 int r = subset?[k] ?? k;
@@ -355,6 +496,8 @@ namespace OneText
                 s_tiles[k] = desc;
                 texelEnd += desc.Width * desc.Height;
                 s_tileEnds[k] = texelEnd;
+                rowEnd += desc.Height;
+                s_rowEnds[k] = rowEnd;
             }
             return groupCount;
         }
@@ -364,6 +507,15 @@ namespace OneText
         /// first <paramref name="tileCount"/> tiles, their contours and points.
         /// The caller completes the handle.
         /// </summary>
+        /// <summary>
+        /// Off bakes the single-channel field a texel per job index
+        /// (<see cref="SdfBatchJob"/>); on, a tile row per index, choosing
+        /// each row's candidate segments once (<see cref="SdfRowJob"/>). Same
+        /// bytes. Only with <see cref="Cull"/>: the unculled field is the
+        /// reference the culled one is tested against and stays the texel job.
+        /// </summary>
+        public static bool RowJob = true;
+
         private static JobHandle Dispatch(int totalPoints, int totalTexels, int tileCount, bool precise)
         {
             // Scheduled, not Run(), even for the two or three tiles a single
@@ -377,6 +529,23 @@ namespace OneText
             // nearly all of that time is the work, spread across cores. Taking
             // the scheduler away does not remove a cost, it removes the
             // parallelism that was paying for it.
+            if (!precise && RowJob && Cull)
+            {
+                return new SdfRowJob
+                {
+                    Points = s_points,
+                    ContourRanges = s_ranges,
+                    ContourGroups = s_groups,
+                    ContourBounds = s_bounds,
+                    ContourKinds = s_kinds,
+                    Tiles = s_tiles,
+                    RowEnds = s_rowEnds,
+                    TileCount = tileCount,
+                    SpreadPixels = SpreadPixels,
+                    Output = s_output,
+                }.Schedule(s_rowEnds[tileCount - 1], 2);
+            }
+
             if (!precise)
             {
                 return new SdfBatchJob
@@ -551,6 +720,7 @@ namespace OneText
         private static readonly List<ResolvedContours> s_resolved = new List<ResolvedContours>();
         private static NativeArray<SdfTileDesc> s_tiles;
         private static NativeArray<int> s_tileEnds;
+        private static NativeArray<int> s_rowEnds;
         private static NativeArray<byte> s_output;
         private static NativeArray<byte> s_flags;
         private static NativeArray<float> s_orientation;
@@ -580,6 +750,7 @@ namespace OneText
             Grow(ref s_kinds, contours);
             Grow(ref s_tiles, tiles);
             Grow(ref s_tileEnds, tiles);
+            Grow(ref s_rowEnds, tiles);
             Grow(ref s_output, texels * (precise ? 4 : 1));
             if (!precise) return;
             Grow(ref s_flags, points);
@@ -609,6 +780,15 @@ namespace OneText
         /// </summary>
         public static void ReleaseBuffers()
         {
+            // Nothing may still be reading or writing them.
+            if (s_inFlight)
+            {
+                s_flight.Complete();
+                s_inFlight = false;
+                s_owner = null;
+                s_batchRequests = null;
+                s_batchResults = null;
+            }
             Release(ref s_points);
             Release(ref s_ranges);
             Release(ref s_groups);
@@ -618,6 +798,7 @@ namespace OneText
             Release(ref s_overlapping);
             Release(ref s_tiles);
             Release(ref s_tileEnds);
+            Release(ref s_rowEnds);
             Release(ref s_output);
             Release(ref s_flags);
             Release(ref s_orientation);

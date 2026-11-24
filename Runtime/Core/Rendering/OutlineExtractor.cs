@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using AOT;
 using OneText.Native;
+using Unity.Burst;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace OneText
@@ -143,6 +145,16 @@ namespace OneText
             if (font == null || !font.IsValid) throw new ArgumentException("Invalid font.", nameof(font));
             if (output == null) throw new ArgumentNullException(nameof(output));
 
+            if (NativeCallbacks)
+            {
+                int count = NativeOutline.Record(font, glyphId, out var ops);
+                if (count >= 0)
+                {
+                    Replay(ops, count, output, pixelsPerUnit);
+                    return;
+                }
+            }
+
             var dfuncs = EnsureDrawFuncs();
 
             t_current = output;
@@ -152,6 +164,104 @@ namespace OneText
             t_current = null;
             t_contour = null;
             t_pixelsPerUnit = 0f;
+        }
+
+        /// <summary>
+        /// Off draws every outline through managed callbacks: HarfBuzz calls
+        /// back into Mono once per segment, and the transition, the
+        /// thread-static state and the list writes cost ~80 ns a point, about
+        /// five times what HarfBuzz itself spends reading the glyph. A frame
+        /// that bakes two hundred CJK glyphs spent 2.4 ms there.
+        ///
+        /// On, the callbacks are Burst-compiled function pointers that only
+        /// record the commands into a pinned buffer handed over as HarfBuzz's
+        /// draw data, and the outline is built by replaying them with these
+        /// callbacks' arithmetic once the glyph is drawn (see
+        /// <see cref="NativeOutline"/>), so the points are the same bits
+        /// (<c>BakePathTests</c> compares them). Without Burst the recorders
+        /// run as managed callbacks: slower than on, still the same points.
+        /// </summary>
+        public static bool NativeCallbacks = true;
+
+        /// <summary>
+        /// Builds the outline from recorded drawing commands, in the order
+        /// HarfBuzz issued them, with the callbacks' arithmetic.
+        /// </summary>
+        private static void Replay(float[] ops, int count, GlyphOutline output, float pixelsPerUnit)
+        {
+            // The callbacks' state as locals rather than thread-statics: a
+            // thread-static read is several times the cost of the arithmetic
+            // around it, and the callbacks make four of them per segment.
+            // Each case below is its callback's body, expression for
+            // expression, so the points are those bits (BakePathTests).
+            List<Vector2> contour = null;
+            var pen = Vector2.zero;
+            int i = 0;
+            while (i < count)
+            {
+                float op = ops[i];
+                if (op == NativeOutline.OpMove)
+                {
+                    contour = output.BeginContour();
+                    pen = new Vector2(ops[i + 1], ops[i + 2]);
+                    contour.Add(pen);
+                    i += 3;
+                }
+                else if (op == NativeOutline.OpLine)
+                {
+                    pen = new Vector2(ops[i + 1], ops[i + 2]);
+                    contour.Add(pen);
+                    i += 3;
+                }
+                else if (op == NativeOutline.OpQuad)
+                {
+                    var p0 = pen;
+                    var c = new Vector2(ops[i + 1], ops[i + 2]);
+                    var p1 = new Vector2(ops[i + 3], ops[i + 4]);
+                    int steps = StepsFor((p0 - 2f * c + p1).magnitude / 8f, pixelsPerUnit);
+                    for (int k = 1; k <= steps; k++)
+                    {
+                        float t = k / (float)steps;
+                        float s = 1f - t;
+                        contour.Add(s * s * p0 + 2f * s * t * c + t * t * p1);
+                    }
+                    pen = p1;
+                    i += 5;
+                }
+                else if (op == NativeOutline.OpCubic)
+                {
+                    var p0 = pen;
+                    var c1 = new Vector2(ops[i + 1], ops[i + 2]);
+                    var c2 = new Vector2(ops[i + 3], ops[i + 4]);
+                    var p1 = new Vector2(ops[i + 5], ops[i + 6]);
+                    float second = Mathf.Max((p0 - 2f * c1 + c2).magnitude, (c1 - 2f * c2 + p1).magnitude);
+                    int steps = StepsFor(second * 3f / 8f, pixelsPerUnit);
+                    for (int k = 1; k <= steps; k++)
+                    {
+                        float t = k / (float)steps;
+                        float s = 1f - t;
+                        contour.Add(s * s * s * p0 + 3f * s * s * t * c1 + 3f * s * t * t * c2 + t * t * t * p1);
+                    }
+                    pen = p1;
+                    i += 7;
+                }
+                else
+                {
+                    if (contour != null && contour.Count > 0)
+                        contour.Add(contour[0]);
+                    i += 1;
+                }
+            }
+        }
+
+        /// <summary><see cref="StepsFor(float)"/> with the density passed in.</summary>
+        private static int StepsFor(float errorUnits, float pixelsPerUnit)
+        {
+            if (pixelsPerUnit <= 0f) return DefaultCurveSegments;
+            float errorPixels = errorUnits * pixelsPerUnit;
+            if (errorPixels <= _flatnessPixels) return 1;
+            int steps = Mathf.CeilToInt(Mathf.Sqrt(errorPixels / _flatnessPixels));
+            return Mathf.Clamp(steps, 1, MaxCurveSegments);
         }
 
         private static IntPtr EnsureDrawFuncs()
@@ -248,6 +358,171 @@ namespace OneText
         {
             if (t_contour != null && t_contour.Count > 0)
                 t_contour.Add(t_contour[0]);
+        }
+    }
+}
+
+namespace OneText
+{
+    /// <summary>
+    /// <see cref="OutlineExtractor"/>'s HarfBuzz callbacks as native code that
+    /// only records: each move, line, curve and close goes into a pinned
+    /// buffer as an opcode and its coordinates, and the outline is then built
+    /// by replaying that buffer through managed code that is the callbacks'
+    /// bodies with locals for their thread-static state. The flattening stays
+    /// managed, in Mono's arithmetic, so the points do not move by a bit; what
+    /// goes away is the native-to-managed transition and the thread-static
+    /// traffic per segment.
+    ///
+    /// (Flattening in Burst as well was tried first and rejected: a cubic's
+    /// interior points came out one unit in the last place away from Mono's
+    /// on some glyphs, which is a different tile.)
+    /// </summary>
+    [BurstCompile]
+    internal static unsafe class NativeOutline
+    {
+        internal struct State
+        {
+            public float* Ops;
+            public int Count, Capacity;
+            public int Overflow;
+        }
+
+        internal const float OpMove = 0f, OpLine = 1f, OpQuad = 2f, OpCubic = 3f, OpClose = 4f;
+
+        private static IntPtr s_dfuncs;
+        private static readonly object s_sync = new object();
+        private static bool s_failed;
+
+        // Kept alive for as long as HarfBuzz may call them: with Burst off
+        // these are what the function pointers point into.
+        private static FunctionPointer<HarfBuzzApi.DrawMoveToFunc> s_moveTo;
+        private static FunctionPointer<HarfBuzzApi.DrawLineToFunc> s_lineTo;
+        private static FunctionPointer<HarfBuzzApi.DrawQuadraticToFunc> s_quadTo;
+        private static FunctionPointer<HarfBuzzApi.DrawCubicToFunc> s_cubicTo;
+        private static FunctionPointer<HarfBuzzApi.DrawClosePathFunc> s_close;
+
+        [ThreadStatic] private static float[] t_ops;
+
+        internal static IntPtr DrawFuncs()
+        {
+            var existing = System.Threading.Volatile.Read(ref s_dfuncs);
+            if (existing != IntPtr.Zero || s_failed) return existing;
+            lock (s_sync)
+            {
+                if (s_dfuncs != IntPtr.Zero || s_failed) return s_dfuncs;
+                try
+                {
+                    s_moveTo = BurstCompiler.CompileFunctionPointer<HarfBuzzApi.DrawMoveToFunc>(MoveTo);
+                    s_lineTo = BurstCompiler.CompileFunctionPointer<HarfBuzzApi.DrawLineToFunc>(LineTo);
+                    s_quadTo = BurstCompiler.CompileFunctionPointer<HarfBuzzApi.DrawQuadraticToFunc>(QuadTo);
+                    s_cubicTo = BurstCompiler.CompileFunctionPointer<HarfBuzzApi.DrawCubicToFunc>(CubicTo);
+                    s_close = BurstCompiler.CompileFunctionPointer<HarfBuzzApi.DrawClosePathFunc>(ClosePath);
+                }
+                catch (Exception)
+                {
+                    // No Burst on this platform: the managed callbacks remain.
+                    s_failed = true;
+                    return IntPtr.Zero;
+                }
+                var dfuncs = HarfBuzzApi.hb_draw_funcs_create();
+                HarfBuzzApi.hb_draw_funcs_set_move_to_func(dfuncs, s_moveTo.Value, IntPtr.Zero, IntPtr.Zero);
+                HarfBuzzApi.hb_draw_funcs_set_line_to_func(dfuncs, s_lineTo.Value, IntPtr.Zero, IntPtr.Zero);
+                HarfBuzzApi.hb_draw_funcs_set_quadratic_to_func(dfuncs, s_quadTo.Value, IntPtr.Zero, IntPtr.Zero);
+                HarfBuzzApi.hb_draw_funcs_set_cubic_to_func(dfuncs, s_cubicTo.Value, IntPtr.Zero, IntPtr.Zero);
+                HarfBuzzApi.hb_draw_funcs_set_close_path_func(dfuncs, s_close.Value, IntPtr.Zero, IntPtr.Zero);
+                System.Threading.Volatile.Write(ref s_dfuncs, dfuncs);
+                return dfuncs;
+            }
+        }
+
+        /// <summary>
+        /// Records the glyph's drawing commands into this thread's buffer and
+        /// returns how many floats they took, or -1 when the native callbacks
+        /// are unavailable and the caller must draw the glyph itself.
+        /// </summary>
+        internal static int Record(FontData font, uint glyphId, out float[] ops)
+        {
+            ops = null;
+            var dfuncs = DrawFuncs();
+            if (dfuncs == IntPtr.Zero) return -1;
+
+            t_ops ??= new float[2048];
+            while (true)
+            {
+                var state = new State { Capacity = t_ops.Length };
+                fixed (float* buffer = t_ops)
+                {
+                    state.Ops = buffer;
+                    HarfBuzzApi.hb_font_draw_glyph(font.Font, glyphId, dfuncs, (IntPtr)(&state));
+                }
+                if (state.Overflow == 0)
+                {
+                    ops = t_ops;
+                    return state.Count;
+                }
+                // Drawn again into room enough: the glyph is recorded from the
+                // start every time, so nothing half-written survives.
+                t_ops = new float[t_ops.Length * 2];
+            }
+        }
+
+        private static float* Take(State* s, int floats)
+        {
+            if (s->Count + floats > s->Capacity)
+            {
+                s->Overflow = 1;
+                return null;
+            }
+            float* at = s->Ops + s->Count;
+            s->Count += floats;
+            return at;
+        }
+
+        [BurstCompile(CompileSynchronously = true)]
+        [MonoPInvokeCallback(typeof(HarfBuzzApi.DrawMoveToFunc))]
+        private static void MoveTo(IntPtr d, IntPtr dd, IntPtr st, float x, float y, IntPtr u)
+        {
+            float* at = Take((State*)dd, 3);
+            if (at == null) return;
+            at[0] = OpMove; at[1] = x; at[2] = y;
+        }
+
+        [BurstCompile(CompileSynchronously = true)]
+        [MonoPInvokeCallback(typeof(HarfBuzzApi.DrawLineToFunc))]
+        private static void LineTo(IntPtr d, IntPtr dd, IntPtr st, float x, float y, IntPtr u)
+        {
+            float* at = Take((State*)dd, 3);
+            if (at == null) return;
+            at[0] = OpLine; at[1] = x; at[2] = y;
+        }
+
+        [BurstCompile(CompileSynchronously = true)]
+        [MonoPInvokeCallback(typeof(HarfBuzzApi.DrawQuadraticToFunc))]
+        private static void QuadTo(IntPtr d, IntPtr dd, IntPtr st, float cx, float cy, float x, float y, IntPtr u)
+        {
+            float* at = Take((State*)dd, 5);
+            if (at == null) return;
+            at[0] = OpQuad; at[1] = cx; at[2] = cy; at[3] = x; at[4] = y;
+        }
+
+        [BurstCompile(CompileSynchronously = true)]
+        [MonoPInvokeCallback(typeof(HarfBuzzApi.DrawCubicToFunc))]
+        private static void CubicTo(IntPtr d, IntPtr dd, IntPtr st, float c1x, float c1y, float c2x, float c2y,
+            float x, float y, IntPtr u)
+        {
+            float* at = Take((State*)dd, 7);
+            if (at == null) return;
+            at[0] = OpCubic; at[1] = c1x; at[2] = c1y; at[3] = c2x; at[4] = c2y; at[5] = x; at[6] = y;
+        }
+
+        [BurstCompile(CompileSynchronously = true)]
+        [MonoPInvokeCallback(typeof(HarfBuzzApi.DrawClosePathFunc))]
+        private static void ClosePath(IntPtr d, IntPtr dd, IntPtr st, IntPtr u)
+        {
+            float* at = Take((State*)dd, 1);
+            if (at == null) return;
+            at[0] = OpClose;
         }
     }
 }

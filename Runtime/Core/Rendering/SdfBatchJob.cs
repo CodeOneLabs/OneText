@@ -164,3 +164,184 @@ namespace OneText
         }
     }
 }
+
+namespace OneText
+{
+    /// <summary>
+    /// <see cref="SdfBatchJob"/>, a tile row at a time.
+    ///
+    /// The texel job walks every contour of its tile, and every segment of
+    /// every contour its box does not rule out, for every texel: a CJK glyph
+    /// at UI sizes is a hundred-odd segments and the reach is a third of its
+    /// height, so nearly all of them, two hundred thousand texels a frame
+    /// when a frame bakes two hundred glyphs. A row shares its y, and most of
+    /// what the texel loop rejects it rejects on y alone, so the row picks its
+    /// candidates once: the segments that could be within reach of it, and
+    /// the few that could cross it. Each texel then runs the texel job's own
+    /// tests and arithmetic on those, unchanged.
+    ///
+    /// Same bytes, by construction rather than by luck: the row's filters are
+    /// conservative (a texel unit of slack either way), so every segment the
+    /// texel job would measure or count is still a candidate; the texel-level
+    /// tests that decide whether it is measured or counted are the texel
+    /// job's, on the same <c>p</c> from the same expression; a minimum and an
+    /// integer sum do not depend on the order they are taken in; and the
+    /// per-glyph fold happens at the same group boundaries. A group with no
+    /// candidates folds to what the texel job's empty group folds to.
+    /// <c>BakePathTests</c> holds the two jobs to the byte.
+    /// </summary>
+    [BurstCompile(FloatMode = FloatMode.Fast)]
+    internal struct SdfRowJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float2> Points;
+        [ReadOnly] public NativeArray<int2> ContourRanges;
+        [ReadOnly] public NativeArray<int> ContourGroups;
+        [ReadOnly] public NativeArray<float4> ContourBounds;
+        [ReadOnly] public NativeArray<byte> ContourKinds;
+        [ReadOnly] public NativeArray<SdfTileDesc> Tiles;
+
+        /// <summary>Exclusive prefix sums of tile heights: row ends.</summary>
+        [ReadOnly] public NativeArray<int> RowEnds;
+
+        public int TileCount;
+        public float SpreadPixels;
+
+        [WriteOnly] [NativeDisableParallelForRestriction] public NativeArray<byte> Output;
+
+        public void Execute(int row)
+        {
+            int tileIndex = FindTile(row);
+            var tile = Tiles[tileIndex];
+            int py = row - (tileIndex == 0 ? 0 : RowEnds[tileIndex - 1]);
+
+            float reach = SpreadPixels * tile.UnitsPerPixel;
+            // The row's y for choosing candidates only; texels recompute p as
+            // the texel job does. The slack covers any rounding between the two.
+            float rowY = tile.OriginUnits.y + (py + 0.5f) * tile.UnitsPerPixel;
+            float slack = tile.UnitsPerPixel;
+
+            int first = tile.ContourStart;
+            int last = tile.ContourStart + tile.ContourCount;
+
+            // Candidates as segment start indices into Points (b = a + 1),
+            // grouped into runs of consecutive contours of one glyph.
+            int segments = 0;
+            for (int c = first; c < last; c++) segments += math.max(0, ContourRanges[c].y - 1);
+            var near = new NativeArray<int>(math.max(1, segments), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var cross = new NativeArray<int>(math.max(1, segments), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var runs = new NativeArray<int4>(math.max(1, tile.ContourCount), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            int nearCount = 0, crossCount = 0, runCount = 0;
+            int currentGroup = tile.ContourCount > 0 ? ContourGroups[first] : 0;
+            int runNear = 0, runCross = 0;
+
+            for (int c = first; c < last; c++)
+            {
+                if (ContourGroups[c] != currentGroup)
+                {
+                    runs[runCount++] = new int4(runNear, nearCount, runCross, crossCount);
+                    runNear = nearCount;
+                    runCross = crossCount;
+                    currentGroup = ContourGroups[c];
+                }
+
+                int kind = ContourKinds[c];
+                bool wantDistance = (kind & ContourKind.Distance) != 0;
+                bool wantWinding = (kind & ContourKind.Winding) != 0;
+                float4 bounds = ContourBounds[c];
+                wantDistance &= rowY >= bounds.y - reach - slack && rowY <= bounds.w + reach + slack;
+                wantWinding &= rowY >= bounds.y - slack && rowY <= bounds.w + slack;
+                if (!wantDistance && !wantWinding) continue;
+
+                int start = ContourRanges[c].x;
+                int count = ContourRanges[c].y;
+                for (int i = 0; i < count - 1; i++)
+                {
+                    float ay = Points[start + i].y, by = Points[start + i + 1].y;
+                    float lo = math.min(ay, by), hi = math.max(ay, by);
+                    if (wantDistance && rowY >= lo - reach - slack && rowY <= hi + reach + slack)
+                        near[nearCount++] = start + i;
+                    if (wantWinding && rowY >= lo - slack && rowY <= hi + slack)
+                        cross[crossCount++] = start + i;
+                }
+            }
+            runs[runCount++] = new int4(runNear, nearCount, runCross, crossCount);
+
+            // What the texel job's group with nothing in reach folds to.
+            float empty = FoldGroup(float.MaxValue, 0);
+            int outputRow = tile.OutputStart + py * tile.Width;
+            for (int px = 0; px < tile.Width; px++)
+            {
+                float2 p = tile.OriginUnits + new float2(px + 0.5f, py + 0.5f) * tile.UnitsPerPixel;
+                float best = empty;
+                for (int r = 0; r < runCount; r++)
+                {
+                    var run = runs[r];
+                    float minSq = float.MaxValue;
+                    int winding = 0;
+                    for (int k = run.x; k < run.y; k++)
+                    {
+                        int s = near[k];
+                        float2 a = Points[s];
+                        float2 b = Points[s + 1];
+                        bool close = p.x >= math.min(a.x, b.x) - reach && p.x <= math.max(a.x, b.x) + reach &&
+                                     p.y >= math.min(a.y, b.y) - reach && p.y <= math.max(a.y, b.y) + reach;
+                        if (!close) continue;
+                        float2 ab = b - a;
+                        float2 ap = p - a;
+                        float t = math.saturate(math.dot(ap, ab) / math.max(math.dot(ab, ab), 1e-12f));
+                        float2 d = ap - ab * t;
+                        minSq = math.min(minSq, math.dot(d, d));
+                    }
+                    for (int k = run.z; k < run.w; k++)
+                    {
+                        int s = cross[k];
+                        float2 a = Points[s];
+                        float2 b = Points[s + 1];
+                        if (a.y <= p.y)
+                        {
+                            if (b.y > p.y)
+                            {
+                                float2 ab = b - a;
+                                float2 ap = p - a;
+                                if (ab.x * ap.y - ab.y * ap.x > 0f) winding++;
+                            }
+                        }
+                        else if (b.y <= p.y)
+                        {
+                            float2 ab = b - a;
+                            float2 ap = p - a;
+                            if (ab.x * ap.y - ab.y * ap.x < 0f) winding--;
+                        }
+                    }
+                    best = math.min(best, FoldGroup(minSq, winding));
+                }
+
+                float sdPixels = best / tile.UnitsPerPixel;
+                float v = math.saturate(0.5f - sdPixels / (2f * SpreadPixels));
+                Output[outputRow + px] = (byte)math.round(v * 255f);
+            }
+
+            near.Dispose();
+            cross.Dispose();
+            runs.Dispose();
+        }
+
+        private int FindTile(int row)
+        {
+            int lo = 0, hi = TileCount - 1;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (row < RowEnds[mid]) hi = mid;
+                else lo = mid + 1;
+            }
+            return lo;
+        }
+
+        private static float FoldGroup(float minSq, int winding)
+        {
+            float sd = math.sqrt(minSq);
+            return winding != 0 ? -sd : sd;
+        }
+    }
+}
