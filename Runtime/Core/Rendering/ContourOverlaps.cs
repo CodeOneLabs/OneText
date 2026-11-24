@@ -387,8 +387,17 @@ namespace OneText
 
         private static readonly ByLow s_byLow = new ByLow();
         private static readonly ByPlace s_byPlace = new ByPlace();
+        private static readonly List<Segment> s_segments = new List<Segment>();
+        private static readonly List<Split> s_splits = new List<Split>();
+        private static readonly List<List<Vector2>> s_group = new List<List<Vector2>>();
+        private static readonly List<Vector2> s_split = new List<Vector2>();
+        private static readonly List<bool> s_marks = new List<bool>();
+        private static readonly List<bool> s_vertexMarks = new List<bool>();
+        private static readonly List<int> s_boundaries = new List<int>();
+        private static readonly List<Piece> s_pieces = new List<Piece>();
 
         private enum Piece : byte { Visible, Buried, Point }
+        private static byte[] s_flags = new byte[256];
 
         /// <summary>
         /// Bumped whenever what counts as an overlap changes (the tolerance, the
@@ -538,354 +547,331 @@ namespace OneText
         /// <paramref name="overlapping"/> resolved, every other one as it was.
         /// </summary>
         public static void Resolve(in RasterizeRequest request, List<int> overlapping, bool precise,
-            ResolvedContours output) =>
-            (t_resolver ??= new Resolver()).Resolve(request, overlapping, precise, output);
-
-        // One resolver per thread: the scratch below is the resolver's, and a
-        // batch's overlaps are resolved on a worker (GlyphRasterizer's
-        // ResolveJob) while the main thread may be resolving another's. The
-        // same managed code either way, so the same arithmetic.
-        [System.ThreadStatic] private static Resolver t_resolver;
-
-        private sealed class Resolver
+            ResolvedContours output)
         {
-            private readonly List<Segment> _segments = new List<Segment>();
-            private readonly List<Split> _splits = new List<Split>();
-            private readonly List<List<Vector2>> _group = new List<List<Vector2>>();
-            private readonly List<Vector2> _split = new List<Vector2>();
-            private readonly List<bool> _marks = new List<bool>();
-            private readonly List<bool> _vertexMarks = new List<bool>();
-            private readonly List<int> _boundaries = new List<int>();
-            private readonly List<Piece> _pieces = new List<Piece>();
-            private byte[] _flags = new byte[256];
-
-            public void Resolve(in RasterizeRequest request, List<int> overlapping, bool precise,
-                ResolvedContours output)
+            output.Clear();
+            var contours = request.Contours;
+            int k = 0;
+            while (k < contours.Count)
             {
-                output.Clear();
-                var contours = request.Contours;
-                int k = 0;
-                while (k < contours.Count)
-                {
-                    int group = request.Groups?[k] ?? 0;
-                    _group.Clear();
-                    for (; k < contours.Count && (request.Groups?[k] ?? 0) == group; k++)
-                        if (contours[k].Count >= 2) _group.Add(contours[k]);
-                    if (_group.Count == 0) continue;
+                int group = request.Groups?[k] ?? 0;
+                s_group.Clear();
+                for (; k < contours.Count && (request.Groups?[k] ?? 0) == group; k++)
+                    if (contours[k].Count >= 2) s_group.Add(contours[k]);
+                if (s_group.Count == 0) continue;
 
-                    if (overlapping.Contains(group))
-                    {
-                        ResolveGroup(group, precise, output);
-                        continue;
-                    }
-                    foreach (var contour in _group) Emit(output, contour, group, ContourKind.Both, precise);
+                if (overlapping.Contains(group))
+                {
+                    ResolveGroup(group, precise, output);
+                    continue;
                 }
+                foreach (var contour in s_group) Emit(output, contour, group, ContourKind.Both, precise);
             }
+        }
 
-            private void Emit(ResolvedContours output, List<Vector2> contour, int group, byte kind,
-                bool precise)
+        private static void Emit(ResolvedContours output, List<Vector2> contour, int group, byte kind,
+            bool precise)
+        {
+            output.Add(contour, group, kind);
+            if (!precise) return;
+            int at = output.Flags.Count;
+            for (int i = 0; i < contour.Count; i++) output.Flags.Add(0);
+            if ((kind & ContourKind.Distance) == 0) return;
+            Grow(contour.Count);
+            MsdfEdgeColoring.Assign(contour, s_flags, 0);
+            for (int i = 0; i < contour.Count - 1; i++) output.Flags[at + i] = s_flags[i];
+        }
+
+        private static void Grow(int count)
+        {
+            if (s_flags.Length < count) s_flags = new byte[Mathf.NextPowerOfTwo(count)];
+        }
+
+        private static void ResolveGroup(int group, bool precise, ResolvedContours output)
+        {
+            CollectSegments();
+            FindSplits();
+
+            s_splits.Sort(s_byPlace);
+            int cursor = 0;
+            for (int c = 0; c < s_group.Count; c++)
             {
-                output.Add(contour, group, kind);
-                if (!precise) return;
-                int at = output.Flags.Count;
-                for (int i = 0; i < contour.Count; i++) output.Flags.Add(0);
-                if ((kind & ContourKind.Distance) == 0) return;
-                Grow(contour.Count);
-                MsdfEdgeColoring.Assign(contour, _flags, 0);
-                for (int i = 0; i < contour.Count - 1; i++) output.Flags[at + i] = _flags[i];
-            }
-
-            private void Grow(int count)
-            {
-                if (_flags.Length < count) _flags = new byte[Mathf.NextPowerOfTwo(count)];
-            }
-
-            private void ResolveGroup(int group, bool precise, ResolvedContours output)
-            {
-                CollectSegments();
-                FindSplits();
-
-                _splits.Sort(s_byPlace);
-                int cursor = 0;
-                for (int c = 0; c < _group.Count; c++)
+                var contour = s_group[c];
+                int splitsEnd = cursor;
+                while (splitsEnd < s_splits.Count && s_splits[splitsEnd].Contour == c) splitsEnd++;
+                if (splitsEnd == cursor)
                 {
-                    var contour = _group[c];
-                    int splitsEnd = cursor;
-                    while (splitsEnd < _splits.Count && _splits[splitsEnd].Contour == c) splitsEnd++;
-                    if (splitsEnd == cursor)
-                    {
-                        // Nothing meets it: one piece, buried whole or not at all.
-                        bool buried = IsBuried(contour, 0, contour.Count - 1);
-                        Emit(output, contour, group, buried ? ContourKind.Winding : ContourKind.Both, precise);
-                        continue;
-                    }
-
-                    BuildSplitContour(contour, cursor, splitsEnd);
-                    cursor = splitsEnd;
-                    EmitPieces(contour, group, precise, output);
-                }
-            }
-
-            private void CollectSegments()
-            {
-                const float tolSq = OverlapGeometry.Tolerance * OverlapGeometry.Tolerance;
-                _segments.Clear();
-                for (int c = 0; c < _group.Count; c++)
-                {
-                    var contour = _group[c];
-                    int from = _segments.Count, ordinal = 0;
-                    for (int i = 0; i < contour.Count - 1; i++)
-                    {
-                        float2 a = contour[i], b = contour[i + 1];
-                        if (math.lengthsq(b - a) <= tolSq) continue;
-                        _segments.Add(new Segment
-                        {
-                            A = a, B = b, Low = math.min(a.y, b.y), High = math.max(a.y, b.y),
-                            Contour = c, Index = i, Ordinal = ordinal++,
-                        });
-                    }
-                    bool closed = contour.Count > 2 &&
-                                  (contour[0] - contour[contour.Count - 1]).sqrMagnitude <= tolSq;
-                    int last = closed && ordinal > 2 ? ordinal - 1 : -1;
-                    for (int s = from; s < _segments.Count; s++)
-                    {
-                        var segment = _segments[s];
-                        segment.Last = last;
-                        _segments[s] = segment;
-                    }
-                }
-                _segments.Sort(s_byLow);
-            }
-
-            private void FindSplits()
-            {
-                _splits.Clear();
-                for (int i = 0; i < _segments.Count; i++)
-                {
-                    var s = _segments[i];
-                    float left = math.min(s.A.x, s.B.x) - OverlapGeometry.Tolerance;
-                    float right = math.max(s.A.x, s.B.x) + OverlapGeometry.Tolerance;
-                    float top = s.High + OverlapGeometry.Tolerance;
-                    for (int j = i + 1; j < _segments.Count; j++)
-                    {
-                        var t = _segments[j];
-                        if (t.Low > top) break;
-                        if (math.max(t.A.x, t.B.x) < left || math.min(t.A.x, t.B.x) > right) continue;
-                        if (s.Contour == t.Contour)
-                        {
-                            int gap = math.abs(s.Ordinal - t.Ordinal);
-                            if (gap == 1 || (s.Last > 0 && gap == s.Last)) continue;
-                        }
-                        AddSplits(s, t);
-                    }
-                }
-            }
-
-            /// <summary>Records where two segments meet, as a split on each.</summary>
-            private void AddSplits(in Segment s, in Segment t)
-            {
-                const float tol = OverlapGeometry.Tolerance;
-                float d1 = OverlapGeometry.Side(t.A, t.B, s.A), d2 = OverlapGeometry.Side(t.A, t.B, s.B);
-                float d3 = OverlapGeometry.Side(s.A, s.B, t.A), d4 = OverlapGeometry.Side(s.A, s.B, t.B);
-                if (OverlapGeometry.Straddles(d1, d2) && OverlapGeometry.Straddles(d3, d4))
-                {
-                    AddSplit(s, d1 / (d1 - d2));
-                    AddSplit(t, d3 / (d3 - d4));
-                    return;
-                }
-                float slackS = tol / math.max(math.length(s.B - s.A), 1e-6f);
-                float slackT = tol / math.max(math.length(t.B - t.A), 1e-6f);
-                // An endpoint lying on the other segment: the endpoint is a split
-                // of its own segment, and its foot is a split of the other. Two
-                // edges along each other come out as up to four of these.
-                TouchAt(s, 0f, s.A, d1, t, slackT);
-                TouchAt(s, 1f, s.B, d2, t, slackT);
-                TouchAt(t, 0f, t.A, d3, s, slackS);
-                TouchAt(t, 1f, t.B, d4, s, slackS);
-            }
-
-            private void TouchAt(in Segment owner, float end, float2 point, float side, in Segment other,
-                float slack)
-            {
-                if (math.abs(side) > OverlapGeometry.Tolerance) return;
-                float along = OverlapGeometry.Along(other.A, other.B, point);
-                if (!OverlapGeometry.Within(along, slack)) return;
-                AddSplit(owner, end);
-                AddSplit(other, math.saturate(along));
-            }
-
-            private void AddSplit(in Segment segment, float t) =>
-                _splits.Add(new Split { Contour = segment.Contour, Index = segment.Index, T = math.saturate(t) });
-
-            /// <summary>
-            /// The contour with every split inserted as a point of its own, into
-            /// <see cref="_split"/>, and which of its points are splits, into
-            /// <see cref="_marks"/>. A split within tolerance of a vertex is that
-            /// vertex.
-            /// </summary>
-            private void BuildSplitContour(List<Vector2> contour, int from, int to)
-            {
-                _vertexMarks.Clear();
-                for (int i = 0; i < contour.Count; i++) _vertexMarks.Add(false);
-                for (int k = from; k < to; k++)
-                {
-                    var split = _splits[k];
-                    float slack = OverlapGeometry.Tolerance /
-                                  Mathf.Max((contour[split.Index + 1] - contour[split.Index]).magnitude, 1e-6f);
-                    if (split.T <= slack) _vertexMarks[split.Index] = true;
-                    else if (split.T >= 1f - slack) _vertexMarks[split.Index + 1] = true;
+                    // Nothing meets it: one piece, buried whole or not at all.
+                    bool buried = IsBuried(contour, 0, contour.Count - 1);
+                    Emit(output, contour, group, buried ? ContourKind.Winding : ContourKind.Both, precise);
+                    continue;
                 }
 
-                _split.Clear();
-                _marks.Clear();
-                int cursor = from;
+                BuildSplitContour(contour, cursor, splitsEnd);
+                cursor = splitsEnd;
+                EmitPieces(contour, group, precise, output);
+            }
+        }
+
+        private static void CollectSegments()
+        {
+            const float tolSq = OverlapGeometry.Tolerance * OverlapGeometry.Tolerance;
+            s_segments.Clear();
+            for (int c = 0; c < s_group.Count; c++)
+            {
+                var contour = s_group[c];
+                int from = s_segments.Count, ordinal = 0;
                 for (int i = 0; i < contour.Count - 1; i++)
                 {
-                    var a = contour[i];
-                    var b = contour[i + 1];
-                    _split.Add(a);
-                    _marks.Add(_vertexMarks[i]);
-                    float slack = OverlapGeometry.Tolerance / Mathf.Max((b - a).magnitude, 1e-6f);
-                    float previous = 0f;
-                    for (; cursor < to && _splits[cursor].Index == i; cursor++)
+                    float2 a = contour[i], b = contour[i + 1];
+                    if (math.lengthsq(b - a) <= tolSq) continue;
+                    s_segments.Add(new Segment
                     {
-                        float t = _splits[cursor].T;
-                        if (t <= slack || t >= 1f - slack || t - previous <= slack) continue;
-                        _split.Add(Vector2.LerpUnclamped(a, b, t));
-                        _marks.Add(true);
-                        previous = t;
+                        A = a, B = b, Low = math.min(a.y, b.y), High = math.max(a.y, b.y),
+                        Contour = c, Index = i, Ordinal = ordinal++,
+                    });
+                }
+                bool closed = contour.Count > 2 &&
+                              (contour[0] - contour[contour.Count - 1]).sqrMagnitude <= tolSq;
+                int last = closed && ordinal > 2 ? ordinal - 1 : -1;
+                for (int s = from; s < s_segments.Count; s++)
+                {
+                    var segment = s_segments[s];
+                    segment.Last = last;
+                    s_segments[s] = segment;
+                }
+            }
+            s_segments.Sort(s_byLow);
+        }
+
+        private static void FindSplits()
+        {
+            s_splits.Clear();
+            for (int i = 0; i < s_segments.Count; i++)
+            {
+                var s = s_segments[i];
+                float left = math.min(s.A.x, s.B.x) - OverlapGeometry.Tolerance;
+                float right = math.max(s.A.x, s.B.x) + OverlapGeometry.Tolerance;
+                float top = s.High + OverlapGeometry.Tolerance;
+                for (int j = i + 1; j < s_segments.Count; j++)
+                {
+                    var t = s_segments[j];
+                    if (t.Low > top) break;
+                    if (math.max(t.A.x, t.B.x) < left || math.min(t.A.x, t.B.x) > right) continue;
+                    if (s.Contour == t.Contour)
+                    {
+                        int gap = math.abs(s.Ordinal - t.Ordinal);
+                        if (gap == 1 || (s.Last > 0 && gap == s.Last)) continue;
                     }
+                    AddSplits(s, t);
                 }
-                _split.Add(contour[contour.Count - 1]);
-                _marks.Add(_vertexMarks[contour.Count - 1]);
             }
+        }
 
-            /// <summary>
-            /// Classifies the pieces of <see cref="_split"/> and emits the
-            /// contour: as it was when nothing on it is buried, otherwise as a
-            /// wound-only original plus a measured-only polyline per visible piece.
-            /// </summary>
-            private void EmitPieces(List<Vector2> contour, int group, bool precise, ResolvedContours output)
+        /// <summary>Records where two segments meet, as a split on each.</summary>
+        private static void AddSplits(in Segment s, in Segment t)
+        {
+            const float tol = OverlapGeometry.Tolerance;
+            float d1 = OverlapGeometry.Side(t.A, t.B, s.A), d2 = OverlapGeometry.Side(t.A, t.B, s.B);
+            float d3 = OverlapGeometry.Side(s.A, s.B, t.A), d4 = OverlapGeometry.Side(s.A, s.B, t.B);
+            if (OverlapGeometry.Straddles(d1, d2) && OverlapGeometry.Straddles(d3, d4))
             {
-                const float tolSq = OverlapGeometry.Tolerance * OverlapGeometry.Tolerance;
-                int segments = _split.Count - 1;
-                bool closed = segments >= 2 && (_split[0] - _split[segments]).sqrMagnitude <= tolSq;
-                if (closed) _marks[0] |= _marks[segments];
-
-                _boundaries.Clear();
-                for (int i = 0; i < segments; i++)
-                    if (_marks[i] || (!closed && i == 0)) _boundaries.Add(i);
-                // A closed loop runs round to its first boundary again; an open one
-                // stops at its last point.
-                int pieces = _boundaries.Count;
-                if (pieces == 0)
-                {
-                    bool whole = IsBuried(contour, 0, contour.Count - 1);
-                    Emit(output, contour, group, whole ? ContourKind.Winding : ContourKind.Both, precise);
-                    return;
-                }
-
-                _pieces.Clear();
-                bool anyBuried = false;
-                for (int p = 0; p < pieces; p++)
-                {
-                    int start = _boundaries[p];
-                    int end = p + 1 < pieces ? _boundaries[p + 1] : (closed ? _boundaries[0] + segments : segments);
-                    var piece = Classify(start, end, segments);
-                    _pieces.Add(piece);
-                    anyBuried |= piece == Piece.Buried;
-                }
-
-                if (!anyBuried)
-                {
-                    Emit(output, contour, group, ContourKind.Both, precise);
-                    return;
-                }
-
-                Emit(output, contour, group, ContourKind.Winding, precise);
-                if (precise)
-                {
-                    // Coloured as the closed loop it is, so a piece keeps the
-                    // channels and run ends of the edge it was cut from: the cuts
-                    // are collinear points and turn no corner.
-                    Grow(_split.Count);
-                    MsdfEdgeColoring.Assign(_split, _flags, 0);
-                }
-                for (int p = 0; p < pieces; p++)
-                {
-                    // A point is not an edge. The close-path's repeated start comes
-                    // out as one whenever a split lands on it, and it can sit
-                    // anywhere, buried included, where measuring it would put back
-                    // a dent of exactly the kind this removes.
-                    if (_pieces[p] != Piece.Visible) continue;
-                    int start = _boundaries[p];
-                    int end = p + 1 < pieces ? _boundaries[p + 1] : (closed ? _boundaries[0] + segments : segments);
-                    var piece = output.Rent();
-                    for (int i = start; i <= end; i++) piece.Add(_split[Wrap(i, segments, closed)]);
-                    output.Add(piece, group, ContourKind.Distance);
-                    if (!precise) continue;
-                    for (int i = start; i < end; i++) output.Flags.Add(_flags[Wrap(i, segments, closed)]);
-                    output.Flags.Add(0);
-                }
+                AddSplit(s, d1 / (d1 - d2));
+                AddSplit(t, d3 / (d3 - d4));
+                return;
             }
+            float slackS = tol / math.max(math.length(s.B - s.A), 1e-6f);
+            float slackT = tol / math.max(math.length(t.B - t.A), 1e-6f);
+            // An endpoint lying on the other segment: the endpoint is a split
+            // of its own segment, and its foot is a split of the other. Two
+            // edges along each other come out as up to four of these.
+            TouchAt(s, 0f, s.A, d1, t, slackT);
+            TouchAt(s, 1f, s.B, d2, t, slackT);
+            TouchAt(t, 0f, t.A, d3, s, slackS);
+            TouchAt(t, 1f, t.B, d4, s, slackS);
+        }
 
-            private int Wrap(int i, int segments, bool closed) => closed && i >= segments ? i - segments : i;
+        private static void TouchAt(in Segment owner, float end, float2 point, float side, in Segment other,
+            float slack)
+        {
+            if (math.abs(side) > OverlapGeometry.Tolerance) return;
+            float along = OverlapGeometry.Along(other.A, other.B, point);
+            if (!OverlapGeometry.Within(along, slack)) return;
+            AddSplit(owner, end);
+            AddSplit(other, math.saturate(along));
+        }
 
-            /// <summary>What the piece of <see cref="_split"/> from point start to point end is.</summary>
-            private Piece Classify(int start, int end, int segments)
+        private static void AddSplit(in Segment segment, float t) =>
+            s_splits.Add(new Split { Contour = segment.Contour, Index = segment.Index, T = math.saturate(t) });
+
+        /// <summary>
+        /// The contour with every split inserted as a point of its own, into
+        /// <see cref="s_split"/>, and which of its points are splits, into
+        /// <see cref="s_marks"/>. A split within tolerance of a vertex is that
+        /// vertex.
+        /// </summary>
+        private static void BuildSplitContour(List<Vector2> contour, int from, int to)
+        {
+            s_vertexMarks.Clear();
+            for (int i = 0; i < contour.Count; i++) s_vertexMarks.Add(false);
+            for (int k = from; k < to; k++)
             {
-                // Probed on its longest segment, the one furthest from the splits
-                // at either end of it.
-                int best = start;
-                float longest = -1f;
-                for (int i = start; i < end; i++)
+                var split = s_splits[k];
+                float slack = OverlapGeometry.Tolerance /
+                              Mathf.Max((contour[split.Index + 1] - contour[split.Index]).magnitude, 1e-6f);
+                if (split.T <= slack) s_vertexMarks[split.Index] = true;
+                else if (split.T >= 1f - slack) s_vertexMarks[split.Index + 1] = true;
+            }
+
+            s_split.Clear();
+            s_marks.Clear();
+            int cursor = from;
+            for (int i = 0; i < contour.Count - 1; i++)
+            {
+                var a = contour[i];
+                var b = contour[i + 1];
+                s_split.Add(a);
+                s_marks.Add(s_vertexMarks[i]);
+                float slack = OverlapGeometry.Tolerance / Mathf.Max((b - a).magnitude, 1e-6f);
+                float previous = 0f;
+                for (; cursor < to && s_splits[cursor].Index == i; cursor++)
                 {
-                    int a = i >= segments ? i - segments : i;
-                    float length = (_split[a + 1] - _split[a]).sqrMagnitude;
-                    if (length <= longest) continue;
-                    longest = length;
-                    best = a;
+                    float t = s_splits[cursor].T;
+                    if (t <= slack || t >= 1f - slack || t - previous <= slack) continue;
+                    s_split.Add(Vector2.LerpUnclamped(a, b, t));
+                    s_marks.Add(true);
+                    previous = t;
                 }
-                if (longest <= OverlapGeometry.Tolerance * OverlapGeometry.Tolerance) return Piece.Point;
-                return InkBothSides(_split[best], _split[best + 1]) ? Piece.Buried : Piece.Visible;
+            }
+            s_split.Add(contour[contour.Count - 1]);
+            s_marks.Add(s_vertexMarks[contour.Count - 1]);
+        }
+
+        /// <summary>
+        /// Classifies the pieces of <see cref="s_split"/> and emits the
+        /// contour: as it was when nothing on it is buried, otherwise as a
+        /// wound-only original plus a measured-only polyline per visible piece.
+        /// </summary>
+        private static void EmitPieces(List<Vector2> contour, int group, bool precise, ResolvedContours output)
+        {
+            const float tolSq = OverlapGeometry.Tolerance * OverlapGeometry.Tolerance;
+            int segments = s_split.Count - 1;
+            bool closed = segments >= 2 && (s_split[0] - s_split[segments]).sqrMagnitude <= tolSq;
+            if (closed) s_marks[0] |= s_marks[segments];
+
+            s_boundaries.Clear();
+            for (int i = 0; i < segments; i++)
+                if (s_marks[i] || (!closed && i == 0)) s_boundaries.Add(i);
+            // A closed loop runs round to its first boundary again; an open one
+            // stops at its last point.
+            int pieces = s_boundaries.Count;
+            if (pieces == 0)
+            {
+                bool whole = IsBuried(contour, 0, contour.Count - 1);
+                Emit(output, contour, group, whole ? ContourKind.Winding : ContourKind.Both, precise);
+                return;
             }
 
-            /// <summary>Whether a contour that nothing meets is buried, probed on its longest segment.</summary>
-            private bool IsBuried(List<Vector2> contour, int start, int end)
+            s_pieces.Clear();
+            bool anyBuried = false;
+            for (int p = 0; p < pieces; p++)
             {
-                int best = start;
-                float longest = -1f;
-                for (int i = start; i < end; i++)
-                {
-                    float length = (contour[i + 1] - contour[i]).sqrMagnitude;
-                    if (length <= longest) continue;
-                    longest = length;
-                    best = i;
-                }
-                return InkBothSides(contour[best], contour[best + 1]);
+                int start = s_boundaries[p];
+                int end = p + 1 < pieces ? s_boundaries[p + 1] : (closed ? s_boundaries[0] + segments : segments);
+                var piece = Classify(start, end, segments);
+                s_pieces.Add(piece);
+                anyBuried |= piece == Piece.Buried;
             }
 
-            /// <summary>Ink on both sides of the segment a..b: the winding is nonzero either side of it.</summary>
-            private bool InkBothSides(float2 a, float2 b)
+            if (!anyBuried)
             {
-                float2 along = b - a;
-                float length = math.length(along);
-                if (length <= 1e-6f) return false;
-                float2 normal = new float2(-along.y, along.x) / length;
-                float2 mid = (a + b) * 0.5f;
-                float reach = math.min(ProbeReach, length * 0.25f);
-                return WindingAt(mid + normal * reach) != 0 && WindingAt(mid - normal * reach) != 0;
+                Emit(output, contour, group, ContourKind.Both, precise);
+                return;
             }
 
-            /// <summary>The group's winding at a point, over every edge the font drew.</summary>
-            private int WindingAt(float2 p)
+            Emit(output, contour, group, ContourKind.Winding, precise);
+            if (precise)
             {
-                int winding = 0;
-                foreach (var contour in _group)
-                    for (int i = 0; i < contour.Count - 1; i++)
-                        winding += OverlapGeometry.Crossing(contour[i], contour[i + 1], p);
-                return winding;
+                // Coloured as the closed loop it is, so a piece keeps the
+                // channels and run ends of the edge it was cut from: the cuts
+                // are collinear points and turn no corner.
+                Grow(s_split.Count);
+                MsdfEdgeColoring.Assign(s_split, s_flags, 0);
             }
+            for (int p = 0; p < pieces; p++)
+            {
+                // A point is not an edge. The close-path's repeated start comes
+                // out as one whenever a split lands on it, and it can sit
+                // anywhere, buried included, where measuring it would put back
+                // a dent of exactly the kind this removes.
+                if (s_pieces[p] != Piece.Visible) continue;
+                int start = s_boundaries[p];
+                int end = p + 1 < pieces ? s_boundaries[p + 1] : (closed ? s_boundaries[0] + segments : segments);
+                var piece = output.Rent();
+                for (int i = start; i <= end; i++) piece.Add(s_split[Wrap(i, segments, closed)]);
+                output.Add(piece, group, ContourKind.Distance);
+                if (!precise) continue;
+                for (int i = start; i < end; i++) output.Flags.Add(s_flags[Wrap(i, segments, closed)]);
+                output.Flags.Add(0);
+            }
+        }
+
+        private static int Wrap(int i, int segments, bool closed) => closed && i >= segments ? i - segments : i;
+
+        /// <summary>What the piece of <see cref="s_split"/> from point start to point end is.</summary>
+        private static Piece Classify(int start, int end, int segments)
+        {
+            // Probed on its longest segment, the one furthest from the splits
+            // at either end of it.
+            int best = start;
+            float longest = -1f;
+            for (int i = start; i < end; i++)
+            {
+                int a = i >= segments ? i - segments : i;
+                float length = (s_split[a + 1] - s_split[a]).sqrMagnitude;
+                if (length <= longest) continue;
+                longest = length;
+                best = a;
+            }
+            if (longest <= OverlapGeometry.Tolerance * OverlapGeometry.Tolerance) return Piece.Point;
+            return InkBothSides(s_split[best], s_split[best + 1]) ? Piece.Buried : Piece.Visible;
+        }
+
+        /// <summary>Whether a contour that nothing meets is buried, probed on its longest segment.</summary>
+        private static bool IsBuried(List<Vector2> contour, int start, int end)
+        {
+            int best = start;
+            float longest = -1f;
+            for (int i = start; i < end; i++)
+            {
+                float length = (contour[i + 1] - contour[i]).sqrMagnitude;
+                if (length <= longest) continue;
+                longest = length;
+                best = i;
+            }
+            return InkBothSides(contour[best], contour[best + 1]);
+        }
+
+        /// <summary>Ink on both sides of the segment a..b: the winding is nonzero either side of it.</summary>
+        private static bool InkBothSides(float2 a, float2 b)
+        {
+            float2 along = b - a;
+            float length = math.length(along);
+            if (length <= 1e-6f) return false;
+            float2 normal = new float2(-along.y, along.x) / length;
+            float2 mid = (a + b) * 0.5f;
+            float reach = math.min(ProbeReach, length * 0.25f);
+            return WindingAt(mid + normal * reach) != 0 && WindingAt(mid - normal * reach) != 0;
+        }
+
+        /// <summary>The group's winding at a point, over every edge the font drew.</summary>
+        private static int WindingAt(float2 p)
+        {
+            int winding = 0;
+            foreach (var contour in s_group)
+                for (int i = 0; i < contour.Count - 1; i++)
+                    winding += OverlapGeometry.Crossing(contour[i], contour[i + 1], p);
+            return winding;
         }
     }
 }

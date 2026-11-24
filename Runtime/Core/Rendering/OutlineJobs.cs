@@ -306,11 +306,12 @@ namespace OneText
             if (Thread.CurrentThread.ManagedThreadId == s_mainThread)
             {
                 // Glyphs placed with this font's current outlines are drawn with
-                // them, now, before anything changes; batches already baking
-                // with its handles are collected.
+                // them, now, before anything changes, and batches already baking
+                // with its handles are collected: an atlas keeps the glyphs of
+                // its pending and in-flight batches until it is idle, so every
+                // atlas a job could be drawing this font for says so here.
                 for (int i = 0; i < s_owners.Count; i++)
                     if (s_owners[i].HoldsWorkerGlyphsOf(id)) s_owners[i].CompletePendingBakes();
-                if (GlyphRasterizer.HasFlight && GlyphRasterizer.FlightsUseWorkerOutlines) GlyphRasterizer.FinishFlight();
             }
             FontHandles handles;
             lock (s_handleSync)
