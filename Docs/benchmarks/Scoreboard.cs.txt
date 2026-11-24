@@ -1,0 +1,61 @@
+using System;
+using System.Collections.Generic;
+using OneText;
+using OneText.Benchmarks;
+using OneText.UGUI;
+using UnityEngine;
+using Debug = UnityEngine.Debug;
+
+/// Every scenario, four arms in one process, interleaved: OneText with every hot-path switch off
+/// (the code 0.4.2 ran), with every switch on (the package as it ships), TextMeshPro dynamic and
+/// TextMeshPro static. Lives beside CompoundBench in the dev project because it needs TmpSubject.
+public static class Scoreboard
+{
+    public static void Switch(bool on) => HotPathSwitches.SetAll(on);
+
+    static ITextSubject One() => new OneTextSubject(new GlyphAtlasSettings { TextureSize = 1024, LayerCount = 4 }, prewarm: true);
+    static ITextSubject Tmp() => new TmpSubject(dynamic: true, atlasSize: 1024, prewarm: true);
+    static ITextSubject TmpStatic() => new TmpSubject(dynamic: false, atlasSize: 1024);
+
+    public static void Run()
+    {
+        var previous = BenchScene.ForceBurst();
+        var filter = Debug.unityLogger.filterLogType;
+        string only = Environment.GetEnvironmentVariable("SCORE_SCENARIOS") ?? "c1,c2,c3,m5w,m50w,m5n,m50n";
+        int reps = int.Parse(Environment.GetEnvironmentVariable("SCORE_REPS") ?? "3");
+        var scenarios = new List<(string key, string name, Func<ITextSubject, BenchRun> run)>
+        {
+            ("c1", "C1 global UI", s => BenchScenarios.GlobalUi(s, 600)),
+            ("c2", "C2 chat stream", s => BenchScenarios.ChatStream(s, 1000)),
+            ("c3", "C3 world labels", s => BenchScenarios.WorldSpaceLabels(s, 600)),
+            ("m5w", "matrix 5 warm", s => BenchScenarios.Churn(s, "m5w", 600, 200, 5, 1f)),
+            ("m50w", "matrix 50 warm", s => BenchScenarios.Churn(s, "m50w", 600, 200, 50, 1f)),
+            ("m5n", "matrix 5 new", s => BenchScenarios.Churn(s, "m5n", 600, 200, 5, 0f)),
+            ("m50n", "matrix 50 new", s => BenchScenarios.Churn(s, "m50n", 600, 200, 50, 0f)),
+        };
+        try
+        {
+            for (int rep = 0; rep < reps; rep++)
+                foreach (var sc in scenarios)
+                {
+                    if (Array.IndexOf(only.Split(','), sc.key) < 0) continue;
+                    Debug.unityLogger.filterLogType = LogType.Assert;
+                    Switch(false); var off = sc.run(One());
+                    Switch(true); var on = sc.run(One());
+                    var tmp = sc.run(Tmp());
+                    var tmpStatic = sc.run(TmpStatic());
+                    Debug.unityLogger.filterLogType = LogType.Log;
+                    Debug.Log($"[score] rep {rep} {sc.name,-15} | OFF {Row(off)} | ON {Row(on)} | TMPdyn {Row(tmp)} | TMPstatic {Row(tmpStatic)}");
+                }
+        }
+        finally
+        {
+            Switch(true);
+            BenchScene.RestoreBurst(previous);
+            Debug.unityLogger.filterLogType = filter;
+        }
+    }
+
+    static string Row(BenchRun r) =>
+        $"{r.Median * 1000,6:F0}/{r.P99 * 1000,6:F0}/{r.Max * 1000,7:F0} us {(r.WantedCharacters > 0 ? 100.0 * r.DrawnCharacters / r.WantedCharacters : 0):F0}%";
+}

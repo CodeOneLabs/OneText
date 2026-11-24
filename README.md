@@ -68,8 +68,8 @@ shaped, outlined, rasterized and placed.
 
 ## Fast where it hurts
 
-A language pack lands mid-session. TextMeshPro stops for **351.8 ms**. OneText
-takes **6.9 ms**. Medians, tails, draw calls — and the runs we lose — are in
+A language pack lands mid-session. TextMeshPro stops for **349.9 ms**. OneText
+takes **1.6 ms**. Medians, tails, draw calls, a phone — and the runs we lose — are in
 [Docs/BENCHMARKS.md](Docs/BENCHMARKS.md), because a comparison that lists only
 its wins is an advertisement.
 

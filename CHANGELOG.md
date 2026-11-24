@@ -33,13 +33,13 @@
 
   | Scenario | 0.4.2 | now | TextMeshPro dynamic |
   |---|---|---|---|
-  | C3: 200 world-space labels, 50 retexted | 468 | 180 | 381 |
-  | C1: live-service HUD | 304 | 133 | 281 |
-  | C2: chat stream of unseen glyphs | 394 | 107 | 682 |
-  | 5 rebuilds a frame, warm atlas | 117 | 67 | 95 |
-  | 50 rebuilds a frame, warm atlas | 1,013 | 476 | 887 |
-  | 5 rebuilds a frame, new glyphs | 2,046 | 334 | 10,659 |
-  | 50 rebuilds a frame, new glyphs | 21,236 | 1,681 | 2,427 |
+  | C3: 200 world-space labels, 50 retexted | 467 | 180 | 380 |
+  | C1: live-service HUD | 308 | 135 | 283 |
+  | C2: chat stream of unseen glyphs | 393 | 107 | 683 |
+  | 5 rebuilds a frame, warm atlas | 118 | 67 | 96 |
+  | 50 rebuilds a frame, warm atlas | 1,018 | 479 | 892 |
+  | 5 rebuilds a frame, new glyphs | 2,036 | 332 | 10,429 |
+  | 50 rebuilds a frame, new glyphs | 21,298 | 1,695 | 2,441 |
 
   The costs were per call, not per character, so most of this is short paths
   for the common case and work moved off the main thread:
@@ -77,6 +77,9 @@
   phone the package is 1.9 to 5.4x faster than 0.4.2 and ahead of TextMeshPro
   dynamic in six of the seven scenarios above; it is behind at the median of
   the last one (8.2 ms against 5.6 ms, with a p99 of 10.9 ms against 86 ms).
+  That row also turns on the font: with a CJK font that covers the whole
+  corpus, so that TextMeshPro draws all of it too, it is a narrow loss on the
+  desktop as well (3.5 ms against 3.2).
 
 ### Changed
 
