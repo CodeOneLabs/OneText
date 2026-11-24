@@ -733,7 +733,7 @@ namespace OneText.UGUI
 
                 long lookupStartedAt = AtlasDiagnostics.Now;
                 bool located = atlas.PrepareClusters(font, runDensity, _positioned,
-                    _clusters, _clusterLocations) &&
+                    _clusters, _clusterLocations, deferBake: true) &&
                     _clusterLocations.Count == _clusters.Count;
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
 

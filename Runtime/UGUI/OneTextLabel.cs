@@ -3682,7 +3682,7 @@ namespace OneText.UGUI
                     // Then the resolve below is a list read rather than a second
                     // walk of the atlas dictionary with a seven-field key.
                     bool located = atlas.PrepareClusters(font, runDensity, _positioned,
-                        _clusters, _clusterLocations) &&
+                        _clusters, _clusterLocations, deferBake: true) &&
                         _clusterLocations.Count == _clusters.Count;
                     AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
 

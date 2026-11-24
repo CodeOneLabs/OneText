@@ -448,6 +448,29 @@ namespace OneText.Native
             CallingConvention = CallingConvention.Cdecl)]
         internal static extern void hb_draw_funcs_set_close_path_func(IntPtr dfuncs, DrawClosePathFunc func, IntPtr userData, IntPtr destroy);
 
+        // The same five setters taking a raw function pointer, for callbacks
+        // compiled by Burst (OutlineExtractor.NativeCallbacks): those are
+        // native code already and must not be marshalled as delegates.
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_move_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_move_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_line_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_line_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_quadratic_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_quadratic_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_cubic_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_cubic_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_close_path_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_close_path_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
         [DllImport(Lib, EntryPoint = HbPrefix + "hb_font_draw_glyph",
             CallingConvention = CallingConvention.Cdecl)]
         internal static extern void hb_font_draw_glyph(IntPtr font, uint glyph, IntPtr dfuncs, IntPtr drawData);
