@@ -940,6 +940,13 @@ namespace OneText
         public static bool RowJob = true;
 
         /// <summary>
+        /// Don't zero the row job's stack scratch per texel row (see
+        /// <c>SdfRowJob.ZeroScratch</c>). Off = the clear the stackalloc did
+        /// before, for A/B. Same bytes either way.
+        /// </summary>
+        public static bool SkipRowScratchClear = true;
+
+        /// <summary>
         /// The row job reproduces the texel job's compiled arithmetic as ARM64
         /// executes it (its fused operations included), and has been held to
         /// it there. Elsewhere the texel job's own code generation differs and
@@ -977,6 +984,7 @@ namespace OneText
                     TileCount = tileCount,
                     SpreadPixels = SpreadPixels,
                     Output = s_output,
+                    ZeroScratch = !SkipRowScratchClear,
                 }.Schedule(s_rowEnds[tileCount - 1], 2, dependsOn);
             }
 

@@ -402,6 +402,24 @@ namespace OneText.Tests
             CollectionAssert.AreEqual(linked, indexed);
         }
 
+        /// <summary>The row job's scratch is written before it is read: not clearing it changes no byte.</summary>
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Row_Scratch_Left_Uncleared_Bakes_The_Same_Bytes(bool deferBake)
+        {
+            bool previous = GlyphRasterizer.SkipRowScratchClear;
+            try
+            {
+                GlyphRasterizer.RowJob = true;
+                GlyphRasterizer.SkipRowScratchClear = false;
+                var cleared = Script(deferBake, false, frames: 6);
+                GlyphRasterizer.SkipRowScratchClear = true;
+                var uncleared = Script(deferBake, false, frames: 6);
+                CollectionAssert.AreEqual(cleared, uncleared);
+            }
+            finally { GlyphRasterizer.SkipRowScratchClear = previous; }
+        }
+
         [Test]
         public void Raw_Tile_Copy_Writes_The_Same_Texels()
         {

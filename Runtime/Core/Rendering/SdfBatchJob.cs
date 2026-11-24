@@ -217,6 +217,19 @@ namespace OneText
 
         [WriteOnly] [NativeDisableParallelForRestriction] public NativeArray<byte> Output;
 
+        /// <summary>
+        /// Off clears the row's 16 KB stack scratch first, which is what the
+        /// stackalloc did before <c>SkipLocalsInit</c>: C# zero-fills a
+        /// stackalloc and Burst honours that unless told otherwise. Every
+        /// scratch array here is written before it is read (the counting-sort
+        /// counters are cleared explicitly), so the clear bought nothing; on a
+        /// phone it was 16 % of all CPU time in a frame of fifty new-glyph
+        /// labels, a quarter as much as the distance work itself, because it
+        /// runs once per texel row. Set from GlyphRasterizer.SkipRowScratchClear.
+        /// </summary>
+        public bool ZeroScratch;
+
+        [Unity.Burst.CompilerServices.SkipLocalsInit]
         public void Execute(int row)
         {
             int tileIndex = FindTile(row);
@@ -241,6 +254,7 @@ namespace OneText
             const int StackInts = 4096;
             int scratchInts = 11 * segs + 8 * contours + width + 6;
             int* onStack = stackalloc int[StackInts];
+            if (ZeroScratch) Unity.Collections.LowLevel.Unsafe.UnsafeUtility.MemClear(onStack, StackInts * sizeof(int));
             int* scratch = onStack;
             bool heap = scratchInts > StackInts;
             if (heap)
