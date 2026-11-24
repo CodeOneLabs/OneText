@@ -305,6 +305,16 @@ committed file is `100755`; a plugin Unity copies into a player is happier
 executable, and the vendored one was `644` for no reason anyone chose), leave
 the `.meta` alone, and read the checks in the run log before believing it.
 
+**It is due a rebuild.** The committed Linux binary predates seven entry points
+that `InertGlyphs` (the shaping shortcut for runs no lookup can touch) calls:
+`hb_face_reference_table`, `hb_face_collect_unicodes`,
+`hb_ot_layout_collect_lookups`, `hb_ot_layout_get_glyphs_in_class`,
+`hb_font_get_glyph_h_advance`, `hb_set_clear`, `hb_set_next_range`. Every other
+binary already exports them. Until the workflow is run, the shortcut catches the
+`EntryPointNotFoundException` on Linux and leaves every run to HarfBuzz, which
+is correct and merely slower; `NativesTests.EveryBinaryExportsEveryEntryPoint`
+allows exactly those seven to be missing there and nothing else.
+
 ## Web (WebGL): the one we build ourselves
 
 `Runtime/Plugins/WebGL/libHarfBuzzSharp.a` is 3.8 MB, a GNU archive of

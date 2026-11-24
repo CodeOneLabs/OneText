@@ -92,6 +92,25 @@ namespace OneText
 
         public bool IsValid => Font != IntPtr.Zero;
 
+        private InertGlyphs _inertGlyphs;
+
+        /// <summary>
+        /// The characters this handle can shape without HarfBuzz, analysed on
+        /// first use and again after every variation change (advances move
+        /// with the axes). See <see cref="OneText.InertGlyphs"/>.
+        /// </summary>
+        internal InertGlyphs InertGlyphs
+        {
+            get
+            {
+                var table = Volatile.Read(ref _inertGlyphs);
+                if (table != null && table.Generation == Generation) return table;
+                table = InertGlyphs.Build(this);
+                Volatile.Write(ref _inertGlyphs, table);
+                return table;
+            }
+        }
+
         /// <summary>
         /// A stable id for this handle, for callers outside the core that need
         /// to key a cache by "which font". The native handle is the real

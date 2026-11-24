@@ -120,6 +120,69 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void The_Remembered_Modifier_Answer_Follows_Every_Add_And_Remove()
+        {
+            // Every order of adding and removing two mesh effects and one
+            // component that is not one, with one or two changes between
+            // rebuilds, and the route checked after each rebuild against
+            // asking the GameObject outright.
+            _label.Text = "route";
+            var kinds = new[] { typeof(Shadow), typeof(Outline), typeof(LayoutElement) };
+            int checkedRoutes = 0;
+            foreach (var order in Permutations(new[] { 0, 1, 2, 3, 4, 5 }))
+            foreach (int batch in new[] { 1, 2 })
+            {
+                var live = new Component[kinds.Length];
+                int pending = 0;
+                foreach (int step in order)
+                {
+                    int kind = step % 3;
+                    bool add = step < 3;
+                    // Removing something not there yet adds it instead, so
+                    // every order is a real sequence of changes.
+                    if (add || live[kind] == null)
+                    {
+                        if (live[kind] == null) live[kind] = _label.gameObject.AddComponent(kinds[kind]);
+                    }
+                    else
+                    {
+                        Object.DestroyImmediate(live[kind]);
+                        live[kind] = null;
+                    }
+                    if (++pending < batch) continue;
+                    pending = 0;
+                    bool truth = _label.TryGetComponent<IMeshModifier>(out _);
+                    int before = OneTextLabel.DirectUploads;
+                    Rebuild();
+                    bool direct = OneTextLabel.DirectUploads == before + 1;
+                    Assert.AreEqual(!truth, direct,
+                        $"order {string.Join(",", order)} batch {batch}: modifier present {truth}, direct route {direct}");
+                    checkedRoutes++;
+                }
+                foreach (var c in live) if (c != null) Object.DestroyImmediate(c);
+                Rebuild();
+            }
+            Assert.Greater(checkedRoutes, 3000);
+        }
+
+        private static IEnumerable<int[]> Permutations(int[] items)
+        {
+            if (items.Length <= 1) { yield return items; yield break; }
+            for (int i = 0; i < items.Length; i++)
+            {
+                var rest = new int[items.Length - 1];
+                for (int j = 0, k = 0; j < items.Length; j++) if (j != i) rest[k++] = items[j];
+                foreach (var tail in Permutations(rest))
+                {
+                    var whole = new int[items.Length];
+                    whole[0] = items[i];
+                    tail.CopyTo(whole, 1);
+                    yield return whole;
+                }
+            }
+        }
+
+        [Test]
         public void An_Empty_Label_Hands_Over_An_Empty_Mesh()
         {
             _label.Text = "something";

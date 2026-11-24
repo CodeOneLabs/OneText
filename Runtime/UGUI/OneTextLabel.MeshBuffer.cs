@@ -332,7 +332,7 @@ namespace OneText.UGUI
             long startedAt = AtlasDiagnostics.Now;
             // An IMeshModifier is written against VertexHelper, so a label that
             // carries one keeps the route that has a VertexHelper in it.
-            if (!DirectMesh || TryGetComponent<IMeshModifier>(out _))
+            if (!DirectMesh || HasMeshModifier())
             {
                 base.UpdateGeometry();
                 // The renderer now holds uGUI's worker mesh, not ours.
@@ -544,6 +544,54 @@ namespace OneText.UGUI
         [UnityEditor.InitializeOnLoadMethod]
         private static void ReleaseMeshPoolOnAssemblyReload() =>
             UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += ReleaseMeshPool;
+#endif
+
+        /// <summary>
+        /// Off asks the GameObject for an <see cref="IMeshModifier"/> on every
+        /// rebuild, as it always did, instead of remembering the answer for as
+        /// long as the component list provably has not changed. Same route
+        /// either way; the switch is for A/B and the tests.
+        /// </summary>
+        public static bool CachedModifierCheck = true;
+
+        // The component list the answer below was read from: how many there
+        // were and which one was last. A player can only change the list
+        // through AddComponent, which appends (count and last both change),
+        // and Destroy/DestroyImmediate, which shrinks it (count changes), so
+        // the pair moves whenever the list does. The editor can also put a
+        // component back in the middle (undo, paste, reorder), which can leave
+        // both alone; every such operation publishes an object-change event or
+        // an undo, and either bumps s_componentEpoch.
+        private int _modifierListCount = -1;
+        private Component _modifierListLast;
+        private int _modifierListEpoch;
+        private bool _hasMeshModifier;
+        private static int s_componentEpoch;
+
+        private bool HasMeshModifier()
+        {
+            if (!CachedModifierCheck) return TryGetComponent<IMeshModifier>(out _);
+            var go = gameObject;
+            int count = go.GetComponentCount();
+            var last = count > 0 ? go.GetComponentAtIndex(count - 1) : null;
+            if (count != _modifierListCount || !ReferenceEquals(last, _modifierListLast) ||
+                _modifierListEpoch != s_componentEpoch)
+            {
+                _hasMeshModifier = TryGetComponent<IMeshModifier>(out _);
+                _modifierListCount = count;
+                _modifierListLast = last;
+                _modifierListEpoch = s_componentEpoch;
+            }
+            return _hasMeshModifier;
+        }
+
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void ForgetComponentListsOnEditorChanges()
+        {
+            UnityEditor.Undo.undoRedoPerformed += () => s_componentEpoch++;
+            UnityEditor.ObjectChangeEvents.changesPublished += (ref UnityEditor.ObjectChangeEventStream _) => s_componentEpoch++;
+        }
 #endif
 
         private static Bounds BoundsOf(QuadBuffer quads)
