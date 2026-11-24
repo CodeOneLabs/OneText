@@ -180,7 +180,8 @@ namespace OneText
         /// Whether <see cref="Equals(TextStyle)"/> compares the flags first.
         /// Same answer either way; a switch so the order can be measured.
         /// </summary>
-        public static bool FlagsFirstEquals = true;
+        [HotPathSwitch]
+        internal static bool FlagsFirstEquals = true;
 
         private bool EqualsInDeclarationOrder(in TextStyle other) =>
             SizeAbsolute.Equals(other.SizeAbsolute) &&

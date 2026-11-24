@@ -567,14 +567,16 @@ namespace OneText
         /// lookups instead of a walk of the disk. On by default; off is for
         /// measuring it, and the answer is the same either way.
         /// </summary>
-        public static bool IndexInBackground { get; set; } = true;
+        [HotPathSwitch]
+        internal static bool IndexInBackground { get; set; } = true;
 
         /// <summary>
         /// Whether the faces of a collection that share one cmap table read and
         /// parse it once (<see cref="SystemFontIndex"/>). On by default; off is
         /// for measuring it, and the coverage is the same either way.
         /// </summary>
-        public static bool ShareCollectionCmaps
+        [HotPathSwitch]
+        internal static bool ShareCollectionCmaps
         {
             get => SystemFontIndex.ShareCmaps;
             set => SystemFontIndex.ShareCmaps = value;

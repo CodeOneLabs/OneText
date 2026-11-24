@@ -55,7 +55,8 @@ namespace OneText.Unicode
         /// without decoding it and running the rules. Same answer either way;
         /// the switch exists to measure that and to prove it.
         /// </summary>
-        public static bool StandaloneShortcut = true;
+        [HotPathSwitch]
+        internal static bool StandaloneShortcut = true;
 
         private static bool AllStandalone(ReadOnlySpan<char> text)
         {

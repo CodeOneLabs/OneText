@@ -476,7 +476,8 @@ namespace OneText
         /// character per layout. Same answers either way; on so the switch
         /// exists to measure it and to prove that.
         /// </summary>
-        public static bool AsciiCoverageCache = true;
+        [HotPathSwitch]
+        internal static bool AsciiCoverageCache = true;
 
         /// <summary>
         /// The half of <see cref="IsSimple"/> that is about the text and the
@@ -514,7 +515,8 @@ namespace OneText
         /// primary draws some of it) skips break analysis, grapheme
         /// segmentation and bidi as simple text does. Same result either way.
         /// </summary>
-        public static bool SimpleTextShortcut = true;
+        [HotPathSwitch]
+        internal static bool SimpleTextShortcut = true;
 
         // Set once per Layout alongside _simple: true whenever _simple is,
         // and also for styled text that is simple in every other way.
@@ -530,7 +532,8 @@ namespace OneText
         /// The result is the same in every field; the switch exists so that
         /// can be measured and tested, both ways, in one process.
         /// </summary>
-        public static bool SimpleLineFastPath = true;
+        [HotPathSwitch]
+        internal static bool SimpleLineFastPath = true;
 
         /// <summary>
         /// Whether NoWrap text finds its paragraphs with
@@ -538,7 +541,8 @@ namespace OneText
         /// UAX #14 analysis and its tailorings, none of whose other answers
         /// a line that cannot wrap reads.
         /// </summary>
-        public static bool NoWrapMandatoryBreaksOnly = true;
+        [HotPathSwitch]
+        internal static bool NoWrapMandatoryBreaksOnly = true;
 
         /// <summary>
         /// The whole of <see cref="Layout(ReadOnlySpan{char}, in TextLayoutSettings, TextLayoutResult)"/>
@@ -680,7 +684,8 @@ namespace OneText
         /// machinery. Same result in every field; a switch so that can be
         /// measured and held to.
         /// </summary>
-        public static bool StyledLineFastPath = true;
+        [HotPathSwitch]
+        internal static bool StyledLineFastPath = true;
 
         /// <summary>
         /// <see cref="LayoutSimpleLine"/> for one line of styled simple text:
@@ -1252,13 +1257,15 @@ namespace OneText
         /// <see cref="BuildPlainItems"/>. Same items either way; the switch
         /// exists to measure that and to prove it.
         /// </summary>
-        public static bool PlainItemization = true;
+        [HotPathSwitch]
+        internal static bool PlainItemization = true;
 
         /// <summary>
         /// Whether the measuring pass decides once per layout, rather than in
         /// a call per glyph, that the East Asian spacing rules are off.
         /// </summary>
-        public static bool HoistedSpacingChecks = true;
+        [HotPathSwitch]
+        internal static bool HoistedSpacingChecks = true;
 
         /// <summary>
         /// The itemization loop of <see cref="BuildItems"/> for text with no
@@ -1343,7 +1350,8 @@ namespace OneText
         /// rather than once per character. Same items either way; the switch
         /// exists to measure that and to prove it.
         /// </summary>
-        public static bool StyledItemization = true;
+        [HotPathSwitch]
+        internal static bool StyledItemization = true;
 
         // Whether this layout's spans are ordered and disjoint, which is what
         // BuildStyledItems needs to walk them once. Decided per layout, read
@@ -1845,7 +1853,8 @@ namespace OneText
         /// Whether <see cref="SyntheticBoldFor"/> remembers the stack's answer
         /// within a layout. Same answer either way.
         /// </summary>
-        public static bool CachedBoldQuery = true;
+        [HotPathSwitch]
+        internal static bool CachedBoldQuery = true;
 
         private FontData _boldFont;
         private bool _boldFontHasBold;
@@ -2093,7 +2102,8 @@ namespace OneText
         /// emitted by <see cref="EmitPlainLine"/>. Same line either way; the
         /// switch exists to measure that and to prove it.
         /// </summary>
-        public static bool LeanEmit = true;
+        [HotPathSwitch]
+        internal static bool LeanEmit = true;
 
         /// <summary>
         /// Whether a line looks only at the items it overlaps instead of at
@@ -2106,7 +2116,8 @@ namespace OneText
         /// three hundred characters made 141 items over 16 lines, and each line
         /// copied all 141 out of the list to find its nine.
         /// </summary>
-        public static bool ItemWindow = true;
+        [HotPathSwitch]
+        internal static bool ItemWindow = true;
 
         // Whether _items is in logical order with no overlaps and no empty
         // item, which is what the window relies on; established by

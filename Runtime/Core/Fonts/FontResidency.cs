@@ -336,7 +336,8 @@ namespace OneText
         /// project settings once per call rather than three times. The same
         /// answer either way; off is for measuring it.
         /// </summary>
-        public static bool ReadSettingsOnce { get; set; } = true;
+        [HotPathSwitch]
+        internal static bool ReadSettingsOnce { get; set; } = true;
 
         /// <summary>
         /// Which on-demand fonts a stack is asking among. <see cref="Want.Any"/>

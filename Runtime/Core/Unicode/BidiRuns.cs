@@ -101,7 +101,8 @@ namespace OneText.Unicode
         /// answers left-to-right text without running the algorithm. Same
         /// answer either way; the switch exists to measure that and to prove it.
         /// </summary>
-        public static bool LeftToRightShortcut = true;
+        [HotPathSwitch]
+        internal static bool LeftToRightShortcut = true;
 
         /// <summary>
         /// True when no code point in [start, end) has a class that

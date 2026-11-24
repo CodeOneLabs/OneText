@@ -73,7 +73,8 @@ namespace OneText
         /// already arrived in order. For A/B measurement and the equivalence
         /// tests.
         /// </summary>
-        public static bool SkipOrderedSort = true;
+        [HotPathSwitch]
+        internal static bool SkipOrderedSort = true;
 
         /// <summary>
         /// Off splits through a List of spans, reading each span back through
@@ -82,7 +83,8 @@ namespace OneText
         /// array read by reference and hashes as it places. Same clusters,
         /// same hashes; for A/B and the tests.
         /// </summary>
-        public static bool LeanSplit = true;
+        [HotPathSwitch]
+        internal static bool LeanSplit = true;
 
         [System.ThreadStatic] private static InkSpan[] t_spanArray;
 

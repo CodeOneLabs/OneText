@@ -277,7 +277,8 @@ namespace OneText.UGUI
         /// what it cannot need. Same quads, same vertices; the switch is for
         /// A/B measurement and for the tests that hold the two together.
         /// </summary>
-        public static bool StraightQuads = true;
+        [HotPathSwitch]
+        internal static bool StraightQuads = true;
 
         // One buffer for every label, because uGUI rebuilds one graphic at a
         // time on one thread. The exception is a quad modifier that forces
@@ -306,14 +307,16 @@ namespace OneText.UGUI
         /// one against the other in the same session, and for a project that
         /// finds a canvas this route draws differently.
         /// </summary>
-        public static bool DirectMesh = true;
+        [HotPathSwitch]
+        internal static bool DirectMesh = true;
 
         /// <summary>
         /// Off measures the mesh bounds by walking the uploaded vertices, as it
         /// always did, instead of reading the extent kept while they were
         /// written. Same box either way; the switch is for A/B and the tests.
         /// </summary>
-        public static bool TrackedBounds = true;
+        [HotPathSwitch]
+        internal static bool TrackedBounds = true;
 
         // uGUI stops at 65000 vertices and says so; past that the old route
         // runs so the message is still the one people can search for.
@@ -374,7 +377,8 @@ namespace OneText.UGUI
         /// overloads (see <see cref="MeshUpload"/>): under IL2CPP the array
         /// overloads ask a reflection question per call. Same bytes.
         /// </summary>
-        public static bool NativeUpload = true;
+        [HotPathSwitch]
+        internal static bool NativeUpload = true;
 
         private static void Upload(OneTextLabel label, QuadBuffer quads, CanvasRenderer renderer)
         {
@@ -474,7 +478,8 @@ namespace OneText.UGUI
         /// Off uploads every label through one shared mesh, as it always did.
         /// Same vertices, indices and bounds; for A/B and the tests.
         /// </summary>
-        public static bool PooledMeshes = true;
+        [HotPathSwitch]
+        internal static bool PooledMeshes = true;
 
         private sealed class LabelMesh
         {
@@ -561,7 +566,8 @@ namespace OneText.UGUI
         /// long as the component list provably has not changed. Same route
         /// either way; the switch is for A/B and the tests.
         /// </summary>
-        public static bool CachedModifierCheck = true;
+        [HotPathSwitch]
+        internal static bool CachedModifierCheck = true;
 
         // The component list the answer below was read from: how many there
         // were and which one was last. A player can only change the list

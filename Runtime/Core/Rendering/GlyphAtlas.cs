@@ -373,7 +373,8 @@ namespace OneText
         /// for the tile already at the tail. Read when an atlas is constructed,
         /// because a dictionary cannot change its hash under keys it holds.
         /// </summary>
-        public static bool FastKeys = true;
+        [HotPathSwitch]
+        internal static bool FastKeys = true;
 
         private sealed class CheapKeyComparer : IEqualityComparer<Key>
         {
@@ -393,7 +394,8 @@ namespace OneText
         /// <see cref="FastKeys"/>, whose hash it indexes by; read when an atlas
         /// is constructed.
         /// </summary>
-        public static bool RecentHits = true;
+        [HotPathSwitch]
+        internal static bool RecentHits = true;
 
         private const int RecentSlots = 256;
         private readonly Entry[] _recent;
@@ -484,7 +486,8 @@ namespace OneText
         /// editor has no barrier and barely notices. Read when an atlas is
         /// constructed.
         /// </summary>
-        public static bool IndexedLru = true;
+        [HotPathSwitch]
+        internal static bool IndexedLru = true;
 
         private readonly bool _indexedLru;
         private Entry[] _byId = new Entry[256];
@@ -844,7 +847,8 @@ namespace OneText
         /// is drawn (the uGUI label) place the tiles now and leave the fields
         /// to one dispatch for the whole frame. See <see cref="CompletePendingBakes"/>.
         /// </summary>
-        public static bool DeferredBake = true;
+        [HotPathSwitch]
+        internal static bool DeferredBake = true;
 
         /// <summary>
         /// The same, and with <paramref name="deferBake"/> (and
@@ -1054,7 +1058,8 @@ namespace OneText
         /// then waits only for the last few labels' tiles. Same requests, same
         /// fields, written in placement order.
         /// </summary>
-        public static bool BackgroundBake = true;
+        [HotPathSwitch]
+        internal static bool BackgroundBake = true;
 
         /// <summary>
         /// Texels of placed tiles that make a background batch: enough for the
@@ -1074,7 +1079,8 @@ namespace OneText
         /// before, so a frame of fifty labels is not cut into a hundred
         /// dispatches. Same tiles, same order, same bytes.
         /// </summary>
-        public static bool EagerDispatch = true;
+        [HotPathSwitch]
+        internal static bool EagerDispatch = true;
 
         private bool WorkersIdle =>
             EagerDispatch && GlyphRasterizer.PipelinedBatches &&
@@ -1102,7 +1108,8 @@ namespace OneText
         /// goes, and sizing and packing read the bounds and copy the points
         /// once. Same points, same bounds, same tiles (<c>BakePathTests</c>).
         /// </summary>
-        public static bool FlatContours = true;
+        [HotPathSwitch]
+        internal static bool FlatContours = true;
 
         private readonly FlatContours _flat = new FlatContours();
 
@@ -1127,7 +1134,8 @@ namespace OneText
         /// about while the last batch found none (an overlap is resolved from
         /// lists, on this thread, after the batch).
         /// </summary>
-        public static bool WorkerOutlines = true;
+        [HotPathSwitch]
+        internal static bool WorkerOutlines = true;
 
         private readonly LazyGlyphs _lazy = new LazyGlyphs();
         private bool _registeredForOutlines;
@@ -1463,7 +1471,8 @@ namespace OneText
         /// head. Stamps are unique, so "oldest" has one answer either way.
         /// Read when an atlas is constructed.
         /// </summary>
-        public static bool FastEviction = true;
+        [HotPathSwitch]
+        internal static bool FastEviction = true;
 
         /// <summary>
         /// Off has every allocation look at every free span of every shelf of
@@ -1474,7 +1483,8 @@ namespace OneText
         /// tile is wider; the bound is exact again after any walk that finds
         /// nothing. The same span is chosen either way.
         /// </summary>
-        public static bool FastShelfScan = true;
+        [HotPathSwitch]
+        internal static bool FastShelfScan = true;
 
         private readonly bool _fastEviction;
         private readonly Dictionary<int, Bucket> _buckets = new Dictionary<int, Bucket>();
@@ -1850,7 +1860,8 @@ namespace OneText
         /// everything again. Under sustained eviction this is a few shelves a
         /// tile instead of a few hundred.
         /// </summary>
-        public static bool FitMemo = true;
+        [HotPathSwitch]
+        internal static bool FitMemo = true;
 
         private struct NotedShelf
         {
@@ -2459,7 +2470,8 @@ namespace OneText
         /// of those calls. On copies the same rows with a plain memcpy from
         /// the pinned tile into the layer. Same bytes, same places.
         /// </summary>
-        public static bool RawTileCopy = true;
+        [HotPathSwitch]
+        internal static bool RawTileCopy = true;
 
         /// <summary>
         /// Off asks the texture for a layer's pixels once per tile written; on,
@@ -2468,7 +2480,8 @@ namespace OneText
         /// same memory, and a batch of two hundred tiles asked two hundred
         /// times for the same four layers. Same rows, same bytes.
         /// </summary>
-        public static bool LayerPointersOnce = true;
+        [HotPathSwitch]
+        internal static bool LayerPointersOnce = true;
 
         private unsafe byte*[] _layerPointers;
 

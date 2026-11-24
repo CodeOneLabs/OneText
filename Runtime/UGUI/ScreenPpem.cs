@@ -135,7 +135,8 @@ namespace OneText.UGUI
         /// rebuild loop (see <see cref="ContextForRebuild"/>). A switch so the
         /// two can be held against each other.
         /// </summary>
-        public static bool ShareContextInRebuildLoop = true;
+        [HotPathSwitch]
+        internal static bool ShareContextInRebuildLoop = true;
 
         private static Context s_loopContext;
         private static Canvas s_loopCanvas;

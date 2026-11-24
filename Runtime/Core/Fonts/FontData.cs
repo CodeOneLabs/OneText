@@ -562,7 +562,8 @@ namespace OneText
         /// always used. For measuring one against the other in one session, and
         /// for the tests that hold the two to the same answers.
         /// </summary>
-        public static bool FlatInkBounds = true;
+        [HotPathSwitch]
+        internal static bool FlatInkBounds = true;
 
         // Glyph ids past this go to the dictionary. A real face stops at 65,535
         // (glyph ids are 16-bit in every table that names one); the headroom is

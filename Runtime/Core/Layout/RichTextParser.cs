@@ -318,7 +318,8 @@ namespace OneText
         /// and copying whole entries. Same results either way; a switch so
         /// the two can be measured and held against each other.
         /// </summary>
-        public static bool RefStack = true;
+        [HotPathSwitch]
+        internal static bool RefStack = true;
 
         /// <summary>
         /// The result being written to. A field rather than a parameter because
@@ -602,7 +603,8 @@ namespace OneText
         /// (<c>RichTextFastPathTests</c> holds the two against each other);
         /// the switch exists so they can be.
         /// </summary>
-        public static bool FastPath = true;
+        [HotPathSwitch]
+        internal static bool FastPath = true;
 
         private static bool IsAscii(ReadOnlySpan<char> span)
         {

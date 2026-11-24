@@ -24,7 +24,8 @@ namespace OneText
         /// <c>InertShapingTests</c> holds the two paths to that. Off = every
         /// run goes through <c>hb_shape</c>.
         /// </summary>
-        public static bool InertShortcut = true;
+        [HotPathSwitch]
+        internal static bool InertShortcut = true;
 
         public Shaper()
         {

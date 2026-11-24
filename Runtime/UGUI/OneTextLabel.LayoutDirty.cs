@@ -49,13 +49,15 @@ namespace OneText.UGUI
         /// nothing to rebuild. A switch so the two can be measured and held
         /// against each other; see <c>LayoutDirtyTests</c>.
         /// </summary>
-        public static bool SkipUnheardLayoutDirty = true;
+        [HotPathSwitch]
+        internal static bool SkipUnheardLayoutDirty = true;
 
         /// <summary>
         /// Read uGUI's dirty-layout callback field directly (it is protected)
         /// instead of through reflection. Same value; see NobodyListensToLayout.
         /// </summary>
-        public static bool DirectCallbackRead = true;
+        [HotPathSwitch]
+        internal static bool DirectCallbackRead = true;
 
         // Whether the last walk found nobody, and whether that answer is still
         // good. NonSerialized: a fact about the live hierarchy, not the asset.

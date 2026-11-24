@@ -79,7 +79,7 @@ Thread safety: shared and only read are the `hb_face_t` (made immutable at load)
 
 On ARM64 the single-channel field is baked by `SdfRowJob` (`GlyphRasterizer.RowJob`): a row picks its candidate segments once, sweeps the set a texel can reach in x, and measures four texels per candidate with Neon. It is compiled without fast-math and reproduces `SdfBatchJob`'s compiled arithmetic (its two fused operations as FMLA/FMLS, its reassociated final division), so its bytes are the texel job's; `BakePathTests.Row_Job_Bakes_The_Texel_Jobs_Bytes` holds it there. Other architectures use the texel job.
 
-Every one of these is a `public static bool` (default on) with an equivalence test in `Tests/Editor/BakePathTests.cs` or `Tests/Editor/WorkerOutlineTests.cs`.
+Every one of these is an `internal static bool` marked `[HotPathSwitch]` (default on; off runs the code it replaced) with an equivalence test in `Tests/Editor/BakePathTests.cs` or `Tests/Editor/WorkerOutlineTests.cs`. A benchmark reaches them by name through `OneText.Benchmarks.HotPathSwitches` in the dev assembly.
 
 ### Allocation, eviction, compaction
 

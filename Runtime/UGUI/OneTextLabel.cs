@@ -1508,7 +1508,8 @@ namespace OneText.UGUI
         /// is what the plain path assumes everywhere, so the layout is the
         /// same either way; a switch so that can be held to.
         /// </summary>
-        public static bool NeutralSpansAsPlain = true;
+        [HotPathSwitch]
+        internal static bool NeutralSpansAsPlain = true;
 
         // Whether any parsed span carries a non-default style. Set with the
         // parse that produced the spans.
@@ -1877,7 +1878,8 @@ namespace OneText.UGUI
         /// questions can change an answer. A switch so the two can be held
         /// against each other.
         /// </summary>
-        public static bool NativeStateOnce = true;
+        [HotPathSwitch]
+        internal static bool NativeStateOnce = true;
 
         /// <summary><see cref="EnsureLayout"/>, for a caller that has just had
         /// <see cref="EnsureNativeState"/> answer yes.</summary>

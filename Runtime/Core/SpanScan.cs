@@ -18,7 +18,8 @@ namespace OneText
     public static class SpanScan
     {
         /// <summary>Off = the <c>MemoryExtensions</c> calls, as before.</summary>
-        public static bool ScalarLoops = true;
+        [HotPathSwitch]
+        internal static bool ScalarLoops = true;
 
         public static int IndexOf(ReadOnlySpan<char> text, char value)
         {

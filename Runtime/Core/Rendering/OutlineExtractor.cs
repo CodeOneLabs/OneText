@@ -182,7 +182,8 @@ namespace OneText
         /// (<c>BakePathTests</c> compares them). Without Burst the recorders
         /// run as managed callbacks: slower than on, still the same points.
         /// </summary>
-        public static bool NativeCallbacks = true;
+        [HotPathSwitch]
+        internal static bool NativeCallbacks = true;
 
         /// <summary>
         /// With <see cref="NativeCallbacks"/>, flatten the recorded curves in
@@ -213,7 +214,8 @@ namespace OneText
         /// <c>GlyphAtlas.WorkerOutlines</c> run under IL2CPP, both of which
         /// need it.
         /// </summary>
-        public static bool NativeFlatten = true;
+        [HotPathSwitch]
+        internal static bool NativeFlatten = true;
 
         /// <summary>
         /// Builds the outline from recorded drawing commands, in the order

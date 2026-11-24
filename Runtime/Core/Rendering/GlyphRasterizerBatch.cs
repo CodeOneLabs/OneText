@@ -182,7 +182,8 @@ namespace OneText
         /// is for whatever is still baking when the frame needs its texels.
         /// Same requests, same fields, same bytes.
         /// </summary>
-        public static bool PipelinedBatches = true;
+        [HotPathSwitch]
+        internal static bool PipelinedBatches = true;
 
         /// <summary>
         /// One batch in flight: the buffers it was packed into and baked from,
@@ -937,14 +938,16 @@ namespace OneText
         /// bytes. Only with <see cref="Cull"/>: the unculled field is the
         /// reference the culled one is tested against and stays the texel job.
         /// </summary>
-        public static bool RowJob = true;
+        [HotPathSwitch]
+        internal static bool RowJob = true;
 
         /// <summary>
         /// Don't zero the row job's stack scratch per texel row (see
         /// <c>SdfRowJob.ZeroScratch</c>). Off = the clear the stackalloc did
         /// before, for A/B. Same bytes either way.
         /// </summary>
-        public static bool SkipRowScratchClear = true;
+        [HotPathSwitch]
+        internal static bool SkipRowScratchClear = true;
 
         /// <summary>
         /// The row job reproduces the texel job's compiled arithmetic as ARM64

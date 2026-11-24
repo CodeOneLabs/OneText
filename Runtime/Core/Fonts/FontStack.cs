@@ -88,7 +88,8 @@ namespace OneText
         /// off is for measuring it, and for the test that proves the first
         /// claim.
         /// </summary>
-        public static bool FastLookup { get; set; } = true;
+        [HotPathSwitch]
+        internal static bool FastLookup { get; set; } = true;
 
         private CoverageMap _map = CoverageMap.Create();
 
