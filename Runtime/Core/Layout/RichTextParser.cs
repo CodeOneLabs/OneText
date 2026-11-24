@@ -208,7 +208,7 @@ namespace OneText
 
         /// <inheritdoc cref="MightHaveMarkup(string)"/>
         public static bool MightHaveMarkup(ReadOnlySpan<char> text) =>
-            text.IndexOf('<') >= 0;
+            SpanScan.IndexOf(text, '<') >= 0;
 
         /// <summary>Placeholder character standing in for an inline sprite.</summary>
         public const char SpritePlaceholder = '￼'; // OBJECT REPLACEMENT CHARACTER

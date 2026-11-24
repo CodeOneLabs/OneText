@@ -333,7 +333,7 @@ namespace OneText.UGUI
         }
 
         private bool SourceEquals(ReadOnlySpan<char> value) =>
-            value.Length == _sourceLength && value.SequenceEqual(SourceSpan);
+            value.Length == _sourceLength && SpanScan.Equal(value, SourceSpan);
 
         private bool SourceEquals(string value) =>
             value == null ? _sourceLength == 0 : SourceEquals(value.AsSpan());

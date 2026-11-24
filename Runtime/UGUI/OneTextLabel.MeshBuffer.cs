@@ -369,6 +369,13 @@ namespace OneText.UGUI
         internal static Mesh LastDirectMesh { get; private set; }
         internal static int DirectUploads { get; private set; }
 
+        /// <summary>
+        /// Hand the vertex and index arrays to the mesh through the NativeArray
+        /// overloads (see <see cref="MeshUpload"/>): under IL2CPP the array
+        /// overloads ask a reflection question per call. Same bytes.
+        /// </summary>
+        public static bool NativeUpload = true;
+
         private static void Upload(OneTextLabel label, QuadBuffer quads, CanvasRenderer renderer)
         {
             DirectUploads++;
@@ -411,7 +418,8 @@ namespace OneText.UGUI
                 EnsureQuadIndices(quadCount);
                 mesh.SetVertexBufferParams(vertexCount, s_meshLayout);
                 mesh.SetIndexBufferParams(indexCount, IndexFormat.UInt16);
-                mesh.SetIndexBufferData(s_quadIndices, 0, 0, indexCount, Quiet);
+                if (NativeUpload) MeshUpload.SetIndices(mesh, s_quadIndices, indexCount, Quiet);
+                else mesh.SetIndexBufferData(s_quadIndices, 0, 0, indexCount, Quiet);
                 // The vertex range is spelled out because Quiet carries
                 // DontRecalculateBounds, and that flag is also what stops
                 // Unity working out firstVertex and vertexCount. Left at their
@@ -426,7 +434,8 @@ namespace OneText.UGUI
                 if (taken != null) taken.Quads = quadCount;
                 else s_directQuads = quadCount;
             }
-            mesh.SetVertexBufferData(quads.Vertices, 0, 0, vertexCount, 0, Quiet);
+            if (NativeUpload) MeshUpload.SetVertices(mesh, quads.Vertices, vertexCount, Quiet);
+            else mesh.SetVertexBufferData(quads.Vertices, 0, 0, vertexCount, 0, Quiet);
             mesh.bounds = TrackedBounds && quads.Tracked ? TrackedBoundsOf(quads) : BoundsOf(quads);
             renderer.SetMesh(mesh);
             if (taken != null)

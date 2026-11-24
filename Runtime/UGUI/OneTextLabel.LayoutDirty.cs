@@ -51,6 +51,12 @@ namespace OneText.UGUI
         /// </summary>
         public static bool SkipUnheardLayoutDirty = true;
 
+        /// <summary>
+        /// Read uGUI's dirty-layout callback field directly (it is protected)
+        /// instead of through reflection. Same value; see NobodyListensToLayout.
+        /// </summary>
+        public static bool DirectCallbackRead = true;
+
         // Whether the last walk found nobody, and whether that answer is still
         // good. NonSerialized: a fact about the live hierarchy, not the asset.
         [System.NonSerialized] private bool _layoutHearingKnown;
@@ -106,7 +112,13 @@ namespace OneText.UGUI
 #endif
             }
             if (!_layoutUnheard) return false;
-            // The one listener with no notification of its own.
+            // The one listener with no notification of its own. uGUI declares
+            // the field protected, so a subclass can read it as a field; the
+            // reflection read stays as the A/B arm (DirectCallbackRead off).
+            // Under IL2CPP FieldInfo.GetValue was ~4 % of a phone's C3 frame:
+            // every call checks the field's declaring type through a
+            // type-object lookup behind a mutex.
+            if (DirectCallbackRead) return m_OnDirtyLayoutCallback == null;
             return s_dirtyLayoutCallback != null && s_dirtyLayoutCallback.GetValue(this) == null;
         }
 
