@@ -294,6 +294,8 @@ namespace OneText.Tests
             TextLayoutEngine.PlainItemization = on;
             TextLayoutEngine.HoistedSpacingChecks = on;
             TextLayoutEngine.LeanEmit = on;
+            TextLayoutEngine.StyledItemization = on;
+            TextLayoutEngine.SimpleTextShortcut = on;
         }
 
         [Test]

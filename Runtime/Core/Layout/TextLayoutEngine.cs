@@ -188,9 +188,11 @@ namespace OneText
             _simple = IsSimple(text, settings, n);
             if (_simple && SimpleLineFastPath && LayoutSimpleLine(text, settings, result, primary, n))
                 return;
+            _spansOrdered = StyledItemization && SpansOrdered(settings.Spans);
+            _simpleText = _simple || (SimpleTextShortcut && IsSimpleText(text, settings, n));
 
             long breakStart = AtlasDiagnostics.Now;
-            if (_simple)
+            if (_simpleText)
             {
                 // No break opportunities at all: printable ASCII carries no
                 // mandatory break, and NoWrap means nothing reads the allowed
@@ -227,7 +229,7 @@ namespace OneText
             AtlasDiagnostics.Add(ref AtlasDiagnostics.BreakTicks, breakStart);
 
             long segmentStart = AtlasDiagnostics.Now;
-            if (_simple)
+            if (_simpleText)
             {
                 // One character, one grapheme, all the way down.
                 _graphemes.Clear();
@@ -471,6 +473,42 @@ namespace OneText
         /// exists to measure it and to prove that.
         /// </summary>
         public static bool AsciiCoverageCache = true;
+
+        /// <summary>
+        /// The half of <see cref="IsSimple"/> that is about the text and the
+        /// frame rather than about the fonts and the spans: one NoWrap
+        /// horizontal paragraph of printable ASCII that cannot reorder. Text
+        /// like that has no break opportunity anyone reads, one grapheme per
+        /// character and one bidi run at level 0 whatever its spans say and
+        /// whichever faces draw it, so a styled label skips the same three
+        /// analyses the plain one does and goes on to itemize as usual.
+        /// </summary>
+        private static bool IsSimpleText(ReadOnlySpan<char> text, in TextLayoutSettings settings, int length)
+        {
+            if (settings.Wrap != TextWrap.NoWrap) return false;
+            if (IsVertical(settings)) return false;
+            if (settings.Rubies != null && settings.Rubies.Count > 0) return false;
+            if (settings.BaseDirection != 0 &&
+                settings.BaseDirection != BidiAlgorithm.AutoDirection) return false;
+            for (int i = 0; i < length; i++)
+            {
+                char c = text[i];
+                if (c < ' ' || c > '~') return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Whether text that passes <see cref="IsSimpleText"/> but not
+        /// <see cref="IsSimple"/> (it has spans, or a face other than the
+        /// primary draws some of it) skips break analysis, grapheme
+        /// segmentation and bidi as simple text does. Same result either way.
+        /// </summary>
+        public static bool SimpleTextShortcut = true;
+
+        // Set once per Layout alongside _simple: true whenever _simple is,
+        // and also for styled text that is simple in every other way.
+        private bool _simpleText;
 
         private FontData _asciiFont;
         private IntPtr _asciiHandle;
@@ -865,6 +903,15 @@ namespace OneText
                 _bidiRuns.Add(new BidiRuns.Run { Start = start, Length = end - start, Level = 0 });
                 paragraphLevel = 0;
             }
+            else if (_simpleText)
+            {
+                // Printable ASCII under a base direction that is not
+                // right-to-left: nothing to reorder, one run at level 0, the
+                // answer IsSimple already relies on.
+                _bidiRuns.Clear();
+                _bidiRuns.Add(new BidiRuns.Run { Start = start, Length = end - start, Level = 0 });
+                paragraphLevel = 0;
+            }
             else
             {
                 paragraphLevel = BidiRuns.GetLogicalRuns(
@@ -879,6 +926,14 @@ namespace OneText
             if (!styled && !vertical && PlainItemization)
             {
                 BuildPlainItems(text, settings, end);
+                MeasureItems(text, settings);
+                MeasureRubies(text, settings, start, end);
+                return paragraphLevel;
+            }
+
+            if (styled && !vertical && StyledItemization && _spansOrdered)
+            {
+                BuildStyledItems(text, settings, end);
                 MeasureItems(text, settings);
                 MeasureRubies(text, settings, start, end);
                 return paragraphLevel;
@@ -1059,6 +1114,212 @@ namespace OneText
                     });
                 }
             }
+        }
+
+        /// <summary>
+        /// Whether styled horizontal text is itemized by
+        /// <see cref="BuildStyledItems"/>, which resolves a style once per span
+        /// rather than once per character. Same items either way; the switch
+        /// exists to measure that and to prove it.
+        /// </summary>
+        public static bool StyledItemization = true;
+
+        // Whether this layout's spans are ordered and disjoint, which is what
+        // BuildStyledItems needs to walk them once. Decided per layout, read
+        // per paragraph.
+        private bool _spansOrdered;
+
+        /// <summary>
+        /// True when every span starts at or after the end of the one before
+        /// it and none has a negative length: what the parser produces, and
+        /// the shape under which <see cref="ResolveStyle"/>'s answer for a
+        /// character is simply "the first span that ends after it". A list
+        /// built some other way (overlapping, out of order) keeps the general
+        /// loop, whose cursor has its own answer for those.
+        /// </summary>
+        private static bool SpansOrdered(IReadOnlyList<TextStyleSpan> spans)
+        {
+            if (spans == null) return false;
+            int previousEnd = int.MinValue;
+            for (int k = 0; k < spans.Count; k++)
+            {
+                var span = spans[k];
+                if (span.Length < 0 || span.Start < previousEnd) return false;
+                previousEnd = span.Start + span.Length;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// The general itemization loop of <see cref="BuildItems"/> for styled
+        /// horizontal text, with the style resolved per span instead of per
+        /// grapheme.
+        ///
+        /// The general loop asks <see cref="ResolveStyle"/> at every grapheme
+        /// start: an interface call that copies a seventy-byte span three or
+        /// four times, a named-style delegate, a size, a font override
+        /// delegate, a bold face lookup and a twelve-field style comparison,
+        /// all to arrive at the answer it had one character earlier. Over
+        /// ordered spans that answer only changes where a span ends, so this
+        /// walks the span list alongside the text and recomputes it there.
+        ///
+        /// Everything else is the general loop exactly: font and style are
+        /// still decided at grapheme starts only (a span that begins inside a
+        /// cluster takes effect at the next one, as there), an item still ends
+        /// for a font, a sprite, a size or a style, and two runs never share an
+        /// item. The item boundaries are the general path's, which is the
+        /// point: a colour change ends a shaping run there, so it ends one here.
+        /// </summary>
+        private void BuildStyledItems(ReadOnlySpan<char> text, in TextLayoutSettings settings, int end)
+        {
+            var fonts = settings.Fonts;
+            var spans = settings.Spans;
+            int spanCount = spans.Count;
+            string language = settings.Language;
+            float labelSize = settings.FontSize;
+            var resolveNamed = settings.ResolveNamedStyle;
+            var resolveOverride = settings.ResolveFontOverride;
+
+            // Letter spacing for a style that has no opinion of its own
+            // depends on the font alone, as in BuildPlainItems.
+            FontData spacedFont = null;
+            float spacing = 0f;
+
+            // The bold or italic face of the last regular face asked about.
+            // Resolve(cp, bold, italic) is the regular answer turned into a
+            // styled face by TryGetStyled, and that second half depends on the
+            // regular face and the style alone.
+            FontData styledFrom = null, styledFont = null;
+            var styledFace = FontStack.Face.Regular;
+
+            for (int r = 0; r < _bidiRuns.Count; r++)
+            {
+                var run = _bidiRuns[r];
+                int runEnd = Math.Min(run.Start + run.Length, end);
+
+                FontData current = null;
+                var currentStyle = TextStyle.Default;
+                float currentSize = labelSize;
+                int itemStart = run.Start;
+
+                // The style in force, and the index it stops being in force.
+                int k = 0;
+                int styleEnd = int.MinValue;
+                var style = TextStyle.Default;
+                float size = labelSize;
+                FontData overridden = null;
+                var face = FontStack.Face.Regular;
+                // Whether style or size differ from the current item's: the
+                // last two terms of the general loop's break test, which only
+                // change when one of the two sides does.
+                bool differs = false;
+
+                for (int i = run.Start; i < runEnd;)
+                {
+                    char c = text[i];
+                    int width = char.IsHighSurrogate(c) ? 2 : 1;
+                    if (_graphemeStart[i] || current == null)
+                    {
+                        if (i >= styleEnd)
+                        {
+                            while (k < spanCount && i >= spans[k].End) k++;
+                            if (k < spanCount)
+                            {
+                                var span = spans[k];
+                                style = span.Style;
+                                styleEnd = span.End;
+                                if (style.NamedStyle >= 0 && resolveNamed != null)
+                                    style = resolveNamed(style.NamedStyle, style);
+                            }
+                            else
+                            {
+                                style = TextStyle.Default;
+                                styleEnd = int.MaxValue;
+                            }
+                            size = style.ResolveSize(labelSize);
+                            overridden = null;
+                            if (style.FontOverride >= 0 && resolveOverride != null)
+                            {
+                                overridden = resolveOverride(style.FontOverride);
+                                if (overridden != null && !overridden.IsValid) overridden = null;
+                            }
+                            face = (style.Bold ? FontStack.Face.Bold : 0) |
+                                   (style.Italic ? FontStack.Face.Italic : 0);
+                            if (current != null)
+                                differs = size != currentSize || !style.Equals(currentStyle);
+                        }
+
+                        FontData font;
+                        if (overridden != null)
+                        {
+                            font = overridden;
+                        }
+                        else
+                        {
+                            int cp = width == 2 ? Codepoint(text, i) : c;
+                            font = fonts.Resolve(cp, false, false, PresentationAt(text, i, width, runEnd),
+                                language);
+                            if (face != FontStack.Face.Regular)
+                            {
+                                if (!ReferenceEquals(font, styledFrom) || face != styledFace)
+                                {
+                                    styledFrom = font;
+                                    styledFace = face;
+                                    styledFont = fonts.TryGetStyled(font, face, out var styled) ? styled : font;
+                                }
+                                font = styledFont;
+                            }
+                        }
+
+                        if (current == null)
+                        {
+                            current = font;
+                            currentStyle = style;
+                            currentSize = size;
+                            // A style always equals itself; a NaN size never does.
+                            differs = size != size;
+                        }
+                        else if (font != current || style.IsSprite || currentStyle.IsSprite || differs)
+                        {
+                            _items.Add(new Item
+                            {
+                                Font = current, Level = run.Level, Start = itemStart, End = i,
+                                Style = currentStyle, FontSize = currentSize,
+                                LetterSpacingEm = StyledSpacing(settings, currentStyle, current,
+                                    ref spacedFont, ref spacing),
+                            });
+                            current = font;
+                            currentStyle = style;
+                            currentSize = size;
+                            differs = size != size;
+                            itemStart = i;
+                        }
+                    }
+                    i += width;
+                }
+                if (current != null && itemStart < runEnd)
+                    _items.Add(new Item
+                    {
+                        Font = current, Level = run.Level, Start = itemStart, End = runEnd,
+                        Style = currentStyle, FontSize = currentSize,
+                        LetterSpacingEm = StyledSpacing(settings, currentStyle, current,
+                            ref spacedFont, ref spacing),
+                    });
+            }
+        }
+
+        /// <summary><see cref="ResolveLetterSpacing"/>, remembering the face's answer for the last face asked.</summary>
+        private static float StyledSpacing(in TextLayoutSettings settings, in TextStyle style, FontData font,
+            ref FontData spacedFont, ref float spacing)
+        {
+            if (style.HasLetterSpacing || settings.HasLetterSpacing)
+                return ResolveLetterSpacing(settings, style, font);
+            if (!ReferenceEquals(font, spacedFont))
+            {
+                spacedFont = font;
+                spacing = ResolveLetterSpacing(settings, style, font);
+            }
+            return spacing;
         }
 
         // ----------------------------------------------------------------- ruby
