@@ -208,6 +208,12 @@ namespace OneText
             internal readonly List<int> WorkerRequests = new List<int>();
             internal readonly List<List<int>> WorkerGroups = new List<List<int>>();
             internal readonly List<ResolvedContours> WorkerResolved = new List<ResolvedContours>();
+
+            // The scan's group-to-request tables as the batch packed them: the
+            // live lists, not the set's fields, which are written back only
+            // when the set stops being current (and the synchronous set may
+            // never have been).
+            internal List<int> GroupRequest, GroupIds;
             internal System.Runtime.InteropServices.GCHandle Self;
 
             internal Flight() => Self = System.Runtime.InteropServices.GCHandle.Alloc(this);
@@ -443,6 +449,8 @@ namespace OneText
                     {
                         // And what it finds is resolved there too, behind it.
                         flight.ResolvedOnWorker = true;
+                        flight.GroupRequest = s_groupRequest;
+                        flight.GroupIds = s_groupIds;
                         scanned = new ResolveJob
                         {
                             Points = s_points,
@@ -1115,7 +1123,6 @@ namespace OneText
         /// </summary>
         internal static void ResolveOnWorker(Flight flight, in ResolveJob job)
         {
-            var set = flight.Set;
             var requests = flight.Requests;
             flight.WorkerFlagged = 0;
             flight.WorkerRequests.Clear();
@@ -1124,7 +1131,7 @@ namespace OneText
             {
                 if (job.Overlapping[g] == 0) continue;
                 flight.WorkerFlagged++;
-                int r = set.GroupRequest[g];
+                int r = flight.GroupRequest[g];
                 if (used == 0 || flight.WorkerRequests[used - 1] != r)
                 {
                     flight.WorkerRequests.Add(r);
@@ -1132,7 +1139,7 @@ namespace OneText
                     flight.WorkerGroups[used].Clear();
                     used++;
                 }
-                flight.WorkerGroups[used - 1].Add(set.GroupIds[g]);
+                flight.WorkerGroups[used - 1].Add(flight.GroupIds[g]);
             }
             for (int k = 0; k < used; k++)
             {
@@ -1393,7 +1400,16 @@ namespace OneText
             }
         }
 
-        private static readonly BufferSet s_syncSet = new BufferSet();
+        // Holds the statics' own lists from the start, so its fields describe
+        // it even before it has ever stopped being current.
+        private static readonly BufferSet s_syncSet = StoredSet();
+
+        private static BufferSet StoredSet()
+        {
+            var set = new BufferSet();
+            Store(set);
+            return set;
+        }
         private static BufferSet s_current = s_syncSet;
 
         // The synchronous path's flight record, never pooled.

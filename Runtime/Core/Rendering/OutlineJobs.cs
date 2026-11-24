@@ -187,13 +187,14 @@ namespace OneText
         }
 
         // Every glyph flattened so far, at the density it was flattened at.
-        // 24 bytes of value a glyph and size; bounded, and simply emptied when
-        // full: a glyph it forgot is extracted on the main thread once more and
-        // remembered again, which is what every glyph's first bake does anyway.
+        // About 60 bytes an entry with the dictionary's own, so 2 MB at most;
+        // bounded, and simply emptied when full: a glyph it forgot is drawn on
+        // the main thread once more and remembered again, which is what every
+        // glyph's first bake does anyway. A CJK game at two sizes is 16,000.
         private static readonly Dictionary<StatsKey, GlyphFlatStats> s_stats =
             new Dictionary<StatsKey, GlyphFlatStats>(4096);
 
-        internal const int MaxStats = 1 << 17;
+        internal const int MaxStats = 1 << 15;
 
         internal static bool TryGetStats(FontData font, uint glyph, int ppem, out GlyphFlatStats stats) =>
             s_stats.TryGetValue(new StatsKey(font, glyph, ppem), out stats);
@@ -435,9 +436,10 @@ namespace OneText
         // ------------------------------------------------------------ the job
 
         // Per job thread: room for one glyph's recording, its flattened points
-        // and its contour starts. A glyph that needs more takes temporary
-        // memory for itself inside the job.
-        internal const int OpsPerThread = 4096, PointsPerThread = 4096, StartsPerThread = 256;
+        // and its contour starts (about 25 KB a thread; a CJK glyph at UI sizes
+        // records ~1,000 floats and flattens to a few hundred points). A glyph
+        // that needs more takes temporary memory for itself inside the job.
+        internal const int OpsPerThread = 2048, PointsPerThread = 2048, StartsPerThread = 256;
 
         private static NativeArray<float> s_ops;
         private static NativeArray<float2> s_points;

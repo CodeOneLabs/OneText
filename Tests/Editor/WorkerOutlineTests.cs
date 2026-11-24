@@ -199,7 +199,22 @@ namespace OneText.Tests
             var positioned = new List<PositionedGlyph>();
             var locations = new List<GlyphLocation>();
             using var shaper = new Shaper();
+            // The small atlas reports the tiles it cannot fit, which is
+            // expected; anything else logged (an exception in a job, say) is
+            // not, and fails the run rather than hiding in the log.
             LogAssert.ignoreFailingMessages = true;
+            int unexpected = 0;
+            string firstUnexpected = null;
+            void Watch(string message, string stack, LogType type)
+            {
+                if (type == LogType.Log || type == LogType.Warning) return;
+                if (message.Contains("does not fit")) return;
+                unexpected++;
+                firstUnexpected ??= message;
+            }
+            Application.logMessageReceivedThreaded += Watch;
+            try
+            {
             for (int frame = 0; frame < frames; frame++)
             {
                 for (int l = 0; l < lines.Length; l++)
@@ -236,6 +251,12 @@ namespace OneText.Tests
                 atlas.Flush();
                 log.Add($"flush f{frame} v{atlas.Version} texels {Texels(atlas)}");
             }
+            }
+            finally
+            {
+                Application.logMessageReceivedThreaded -= Watch;
+            }
+            Assert.AreEqual(0, unexpected, "logged while baking: " + firstUnexpected);
             var stats = atlas.GetStats();
             log.Add($"tiles {stats.TileCount} used {stats.UsedPixels} evictions {stats.Evictions} " +
                 $"compactions {stats.Compactions} drops {stats.Drops} shelves {stats.ShelfCount}");
@@ -292,6 +313,10 @@ namespace OneText.Tests
         [TestCase(true, true)]
         public void Batches_Side_By_Side_Write_What_One_At_A_Time_Did(bool pipelined, bool eager)
         {
+            // From a rasterizer that has never swapped its buffers, as a
+            // session that never pipelines has: the synchronous set's own
+            // fields are then not the lists in use.
+            GlyphRasterizer.ReleaseBuffers();
             GlyphAtlas.DeferredBake = true;
             GlyphAtlas.BackgroundBake = true;
             GlyphAtlas.WorkerOutlines = true;

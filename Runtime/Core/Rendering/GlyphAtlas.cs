@@ -809,7 +809,6 @@ namespace OneText
             // later, into a single-channel atlas, where the outline path the
             // job runs is the one this thread would have run.
             bool lazyOk = defer && WorkerOutlines && FlatContours && !Precise && OutlineJobs.Available;
-            if (lazyOk) OutlineJobs.Register(this);
             for (int c = 0; c < clusters.Count; c++)
             {
                 var cluster = clusters[c];
@@ -845,6 +844,12 @@ namespace OneText
                         out int lazyFirst, out int lazyCount))
                 {
                     RentContours(); // keeps the known-overlap pool in step
+                    if (!_registeredForOutlines)
+                    {
+                        // So a font about to change can have this atlas finish first.
+                        OutlineJobs.Register(this);
+                        _registeredForOutlines = true;
+                    }
                     request = new RasterizeRequest
                     {
                         Lazy = _lazy,
@@ -1035,6 +1040,7 @@ namespace OneText
         public static bool WorkerOutlines = true;
 
         private readonly LazyGlyphs _lazy = new LazyGlyphs();
+        private bool _registeredForOutlines;
 
         /// <summary>True when glyphs of the font with this cache id are placed and still to be drawn on the workers.</summary>
         internal bool HoldsWorkerGlyphsOf(int fontId) => _lazy.Uses(fontId) && HasPendingBakes;
@@ -2670,6 +2676,7 @@ namespace OneText
             _flights.Clear();
             _lazy.Clear();
             OutlineJobs.Unregister(this);
+            _registeredForOutlines = false;
             _pendingBakes.Clear();
             _pendingRequests.Clear();
             _pendingTexels = 0;
