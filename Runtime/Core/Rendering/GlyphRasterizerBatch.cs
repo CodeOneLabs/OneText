@@ -118,11 +118,18 @@ namespace OneText
         public static void RasterizeBatch(IReadOnlyList<RasterizeRequest> requests,
             List<RasterizedGlyph> results, bool precise = false)
         {
-            // The buffers below are this batch's; one still baking for someone
-            // else is finished (and handed to its owner) first.
+            // Everything still baking is finished (and handed to its owner)
+            // first: those tiles were placed before whatever this writes.
             FinishFlight();
-            if (BeginBatch(requests, results, precise, background: false)) EndBatch();
+            Use(s_syncSet);
+            var flight = s_syncFlight;
+            if (BeginBatch(requests, results, precise, background: false, flight))
+            {
+                s_flights.Add(flight);
+                EndBatch(flight);
+            }
         }
+
 
         /// <summary>
         /// Who started the batch now baking in the background, and is told to
@@ -135,44 +142,98 @@ namespace OneText
             void FinishBatch();
         }
 
-        private static IBatchOwner s_owner;
-        private static JobHandle s_flight;
-        private static bool s_inFlight;
+        /// <summary>
+        /// Off, one background batch at a time owns the rasterizer's buffers:
+        /// starting the next one first collects (waits for) the last, so a
+        /// frame that bakes two hundred tiles in a dozen batches makes the
+        /// main thread wait for the workers a dozen times, each time for a
+        /// batch it could have left baking. On, every background batch gets a
+        /// set of buffers of its own (<see cref="BufferSet"/>) and several bake
+        /// at once; the owner collects them in the order it started them, so
+        /// tiles are still written in placement order, and the only wait left
+        /// is for whatever is still baking when the frame needs its texels.
+        /// Same requests, same fields, same bytes.
+        /// </summary>
+        public static bool PipelinedBatches = true;
 
-        // The batch between BeginBatch and EndBatch.
-        private static IReadOnlyList<RasterizeRequest> s_batchRequests;
-        private static List<RasterizedGlyph> s_batchResults;
-        private static bool s_batchPrecise, s_batchScanning, s_batchScanFirst;
-        private static int s_batchTexels, s_batchGroups, s_batchFlagged;
-        private static long s_batchBeginTicks;
+        /// <summary>
+        /// One batch in flight: the buffers it was packed into and baked from,
+        /// the job baking it, and what <see cref="EndBatch"/> needs to finish it.
+        /// </summary>
+        internal sealed class Flight
+        {
+            internal BufferSet Set;
+            internal JobHandle Handle;
+            internal IBatchOwner Owner;
+            internal IReadOnlyList<RasterizeRequest> Requests;
+            internal List<RasterizedGlyph> Results;
+            internal bool Precise, Scanning, ScanFirst;
+            internal int Texels, Groups, Flagged;
+            internal long BeginTicks;
+
+            /// <summary>True once the workers are done with it (main thread).</summary>
+            internal bool IsDone => Handle.IsCompleted;
+        }
+
+        // Every batch in flight, oldest first, and the retired ones kept for reuse.
+        private static readonly List<Flight> s_flights = new List<Flight>();
+        private static readonly Stack<Flight> s_spareFlights = new Stack<Flight>();
 
         /// <summary>True while a background batch is baking.</summary>
-        internal static bool HasFlight => s_inFlight;
+        internal static bool HasFlight => s_flights.Count > 0;
 
-        /// <summary>Has the owner of the batch in flight, if any, take it.</summary>
+        /// <summary>
+        /// Has the owners of every batch in flight take them, oldest first:
+        /// for whoever is about to rasterize synchronously, which writes now.
+        /// </summary>
         internal static void FinishFlight()
         {
-            if (!s_inFlight) return;
-            var owner = s_owner;
-            if (owner != null) owner.FinishBatch();
-            else EndBatch();
+            while (s_flights.Count > 0)
+            {
+                var flight = s_flights[0];
+                if (flight.Owner != null) flight.Owner.FinishBatch();
+                // An owner that left its batch unfinished (or none) cannot hold
+                // the others up; this one is ended here, with nobody to write it.
+                if (s_flights.Count > 0 && s_flights[0] == flight) EndBatch(flight);
+            }
         }
 
         /// <summary>
         /// Starts a batch in the background and returns without waiting for
         /// it: the workers bake while the caller goes on. <paramref name="requests"/>
         /// and <paramref name="results"/> belong to the batch until the owner
-        /// calls <see cref="EndBatch"/>, which it must do before anything else
-        /// rasterizes (<see cref="FinishFlight"/> asks it to). False when there
-        /// was nothing to bake and nothing is in flight.
+        /// calls <see cref="EndBatch"/> with what this returns, which it must
+        /// do before it writes anything later (and before anything else
+        /// rasterizes, which <see cref="FinishFlight"/> asks it to). Null when
+        /// there was nothing to bake.
+        ///
+        /// With <see cref="PipelinedBatches"/> off this first ends every batch
+        /// still in flight, which is how a single set of buffers is shared.
         /// </summary>
-        internal static bool BeginBackground(IReadOnlyList<RasterizeRequest> requests,
+        internal static Flight BeginBackground(IReadOnlyList<RasterizeRequest> requests,
             List<RasterizedGlyph> results, bool precise, IBatchOwner owner)
         {
-            FinishFlight();
-            if (!BeginBatch(requests, results, precise, background: true)) return false;
-            s_owner = owner;
-            return true;
+            if (!PipelinedBatches) FinishFlight();
+            var flight = s_spareFlights.Count > 0 ? s_spareFlights.Pop() : new Flight();
+            if (!PipelinedBatches)
+            {
+                // A set of its own from a pipelined session is idle; let it go.
+                if (flight.Set != null && flight.Set != s_syncSet) flight.Set.Release();
+                flight.Set = s_syncSet;
+            }
+            else if (flight.Set == null || flight.Set == s_syncSet)
+            {
+                flight.Set = new BufferSet();
+            }
+            Use(flight.Set);
+            if (!BeginBatch(requests, results, precise, background: true, flight))
+            {
+                s_spareFlights.Push(flight);
+                return null;
+            }
+            flight.Owner = owner;
+            s_flights.Add(flight);
+            return flight;
         }
 
         /// <summary>
@@ -184,7 +245,7 @@ namespace OneText
         /// finished: every result is sized and empty ones are marked).
         /// </summary>
         private static bool BeginBatch(IReadOnlyList<RasterizeRequest> requests,
-            List<RasterizedGlyph> results, bool precise, bool background)
+            List<RasterizedGlyph> results, bool precise, bool background, Flight flight)
         {
             results.Clear();
             if (requests == null || requests.Count == 0) return false;
@@ -258,14 +319,14 @@ namespace OneText
                 Overlapping = s_overlapping,
             };
 
-            s_batchRequests = requests;
-            s_batchResults = results;
-            s_batchPrecise = precise;
-            s_batchScanning = scanning;
-            s_batchScanFirst = scanning && s_expectOverlaps;
-            s_batchTexels = totalTexels;
-            s_batchGroups = groupCount;
-            s_batchFlagged = 0;
+            flight.Requests = requests;
+            flight.Results = results;
+            flight.Precise = precise;
+            flight.Scanning = scanning;
+            flight.ScanFirst = scanning && s_expectOverlaps;
+            flight.Texels = totalTexels;
+            flight.Groups = groupCount;
+            flight.Flagged = 0;
 
             // Two ways to pay for overlapping contours, chosen by what the last
             // batch found. Most fonts ship with their overlaps removed, and for
@@ -277,35 +338,34 @@ namespace OneText
             // overlaps would pay that second bake on nearly every tile with a
             // join, so once a batch has found any, the next one scans first,
             // across the workers, and bakes each tile once, resolved.
-            if (s_batchScanFirst)
+            if (flight.ScanFirst)
             {
                 scan.Schedule(groupCount, 4).Complete();
                 long resolveStart = AtlasDiagnostics.Now;
-                int redo = ResolveFlagged(requests, groupCount, precise, out s_batchFlagged);
+                int redo = ResolveFlagged(requests, groupCount, precise, out flight.Flagged);
                 if (redo > 0) Pack(requests, null, precise, false, out packedPoints);
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, resolveStart);
-                s_flight = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+                flight.Handle = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
             }
             else if (background)
             {
                 // Nobody waits here to scan by hand, so the scan is a job too,
                 // beside the fields; both only read the packed contours.
                 var fields = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
-                s_flight = scanning ? JobHandle.CombineDependencies(fields, scan.Schedule(groupCount, 4)) : fields;
+                flight.Handle = scanning ? JobHandle.CombineDependencies(fields, scan.Schedule(groupCount, 4)) : fields;
             }
             else
             {
-                s_flight = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+                flight.Handle = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
                 long scanStart = AtlasDiagnostics.Now;
                 if (scanning) scan.Run(groupCount);
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, scanStart);
             }
-            s_inFlight = true;
             if (background) JobHandle.ScheduleBatchedJobs();
             AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
             // Charged when the batch ends, without the time it spent in the
             // background while the caller did other work.
-            s_batchBeginTicks = AtlasDiagnostics.Enabled ? AtlasDiagnostics.Now - startedAt : 0;
+            flight.BeginTicks = AtlasDiagnostics.Enabled ? AtlasDiagnostics.Now - startedAt : 0;
             return true;
         }
 
@@ -314,25 +374,27 @@ namespace OneText
         /// what the scan flagged, and fills its results' pixels (valid until
         /// the next batch). Only the batch's owner calls this.
         /// </summary>
-        internal static void EndBatch()
+        internal static void EndBatch(Flight flight)
         {
-            if (!s_inFlight) return;
-            s_inFlight = false;
-            s_owner = null;
-            var requests = s_batchRequests;
-            var results = s_batchResults;
-            bool precise = s_batchPrecise;
-            s_batchRequests = null;
-            s_batchResults = null;
+            int index = s_flights.IndexOf(flight);
+            if (index < 0) return;
+            s_flights.RemoveAt(index);
+            var requests = flight.Requests;
+            var results = flight.Results;
+            bool precise = flight.Precise;
+            flight.Requests = null;
+            flight.Results = null;
+            flight.Owner = null;
+            Use(flight.Set);
 
             long endStart = AtlasDiagnostics.Now;
             long jobStart = endStart;
-            s_flight.Complete();
+            flight.Handle.Complete();
             AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
 
             int bytesPerTexel = precise ? 4 : 1;
-            int totalTexels = s_batchTexels;
-            int flagged = s_batchFlagged;
+            int totalTexels = flight.Texels;
+            int flagged = flight.Flagged;
 
             // One copy for the whole batch into one reused buffer; the results
             // index into it rather than owning an array each.
@@ -341,14 +403,14 @@ namespace OneText
                 s_pixels = new byte[Mathf.NextPowerOfTwo(totalBytes)];
             NativeArray<byte>.Copy(s_output, 0, s_pixels, 0, totalBytes);
 
-            if (s_batchScanning && !s_batchScanFirst)
+            if (flight.Scanning && !flight.ScanFirst)
             {
                 long resolveStart = AtlasDiagnostics.Now;
-                int redo = ResolveFlagged(requests, s_batchGroups, precise, out flagged);
+                int redo = ResolveFlagged(requests, flight.Groups, precise, out flagged);
                 if (redo > 0) Rebake(requests, precise);
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, resolveStart);
             }
-            if (s_batchScanning) s_expectOverlaps = flagged > 0;
+            if (flight.Scanning) s_expectOverlaps = flagged > 0;
             for (int k = 0; k < s_resolvedUsed; k++) s_resolved[k].Clear();
 
             for (int r = 0; r < results.Count; r++)
@@ -361,13 +423,14 @@ namespace OneText
             }
 
             if (AtlasDiagnostics.Enabled)
-                AtlasDiagnostics.RasterizeTicks += s_batchBeginTicks + (AtlasDiagnostics.Now - endStart);
+                AtlasDiagnostics.RasterizeTicks += flight.BeginTicks + (AtlasDiagnostics.Now - endStart);
             if (AtlasDiagnostics.Enabled)
             {
                 AtlasDiagnostics.RasterizeCount += requests.Count;
                 AtlasDiagnostics.DispatchCount++;
                 AtlasDiagnostics.RasterizedPixels += totalTexels;
             }
+            if (flight != s_syncFlight) s_spareFlights.Push(flight);
         }
 
         /// <summary>
@@ -865,7 +928,7 @@ namespace OneText
 
         // ------------------------------------------------------------ buffers
 
-        private static readonly List<SdfTileDesc> s_descs = new List<SdfTileDesc>();
+        private static List<SdfTileDesc> s_descs = new List<SdfTileDesc>();
         private static byte[] s_pixels = System.Array.Empty<byte>();
 
         // Edge colours are decided in managed code (the corner test wants the
@@ -882,16 +945,16 @@ namespace OneText
         // came from, and the overlap scan's verdict on it.
         private static NativeArray<int2> s_groupSpans;
         private static NativeArray<byte> s_overlapping;
-        private static readonly List<int> s_groupRequest = new List<int>();
-        private static readonly List<int> s_groupIds = new List<int>();
+        private static List<int> s_groupRequest = new List<int>();
+        private static List<int> s_groupIds = new List<int>();
 
         // The requests baked again with their overlaps resolved, the groups of
         // each that were flagged, what the resolution made of them, and for
         // every request of the batch which of those it is (-1: none).
         private static readonly List<int> s_redoRequests = new List<int>();
-        private static readonly List<int> s_resolvedOf = new List<int>();
+        private static List<int> s_resolvedOf = new List<int>();
         private static readonly List<List<int>> s_redoGroups = new List<List<int>>();
-        private static readonly List<ResolvedContours> s_resolved = new List<ResolvedContours>();
+        private static List<ResolvedContours> s_resolved = new List<ResolvedContours>();
         private static NativeArray<SdfTileDesc> s_tiles;
         private static NativeArray<int> s_tileEnds;
         private static NativeArray<int> s_rowEnds;
@@ -907,6 +970,78 @@ namespace OneText
         // The source glyph that won each texel, so the interpolation pass can
         // find the seams between them.
         private static NativeArray<byte> s_winners;
+
+        /// <summary>
+        /// Everything one batch packs into and bakes from. The statics above
+        /// are the set in use (<see cref="Use"/>): the synchronous path and the
+        /// unpipelined background batch use <see cref="s_syncSet"/>, every
+        /// pipelined background batch a set of its own, so that one can bake
+        /// while the next is packed. Swapping is a copy of struct handles; a
+        /// job that was scheduled with a set's arrays keeps reading them.
+        /// </summary>
+        internal sealed class BufferSet
+        {
+            internal NativeArray<float2> Points;
+            internal NativeArray<int2> Ranges, GroupSpans;
+            internal NativeArray<int> Groups, TileEnds, RowEnds;
+            internal NativeArray<float4> Bounds;
+            internal NativeArray<byte> Kinds, Overlapping, Output, Flags, Marks, Winners;
+            internal NativeArray<SdfTileDesc> Tiles;
+            internal NativeArray<float> Orientation;
+            internal List<SdfTileDesc> Descs = new List<SdfTileDesc>();
+            internal List<int> GroupRequest = new List<int>(), GroupIds = new List<int>(), ResolvedOf = new List<int>();
+            internal List<ResolvedContours> Resolved = new List<ResolvedContours>();
+            internal int ResolvedUsed;
+
+            internal void Release()
+            {
+                GlyphRasterizer.Release(ref Points);
+                GlyphRasterizer.Release(ref Ranges);
+                GlyphRasterizer.Release(ref GroupSpans);
+                GlyphRasterizer.Release(ref Groups);
+                GlyphRasterizer.Release(ref TileEnds);
+                GlyphRasterizer.Release(ref RowEnds);
+                GlyphRasterizer.Release(ref Bounds);
+                GlyphRasterizer.Release(ref Kinds);
+                GlyphRasterizer.Release(ref Overlapping);
+                GlyphRasterizer.Release(ref Output);
+                GlyphRasterizer.Release(ref Flags);
+                GlyphRasterizer.Release(ref Marks);
+                GlyphRasterizer.Release(ref Winners);
+                GlyphRasterizer.Release(ref Tiles);
+                GlyphRasterizer.Release(ref Orientation);
+            }
+        }
+
+        private static readonly BufferSet s_syncSet = new BufferSet();
+        private static BufferSet s_current = s_syncSet;
+
+        // The synchronous path's flight record, never pooled.
+        private static readonly Flight s_syncFlight = new Flight { Set = s_syncSet };
+
+        /// <summary>Makes <paramref name="set"/> the one the statics hold, keeping the previous one's state.</summary>
+        private static void Use(BufferSet set)
+        {
+            if (s_current == set) return;
+            Store(s_current);
+            s_current = set;
+            s_points = set.Points; s_ranges = set.Ranges; s_groupSpans = set.GroupSpans; s_groups = set.Groups;
+            s_tileEnds = set.TileEnds; s_rowEnds = set.RowEnds; s_bounds = set.Bounds; s_kinds = set.Kinds;
+            s_overlapping = set.Overlapping; s_output = set.Output; s_flags = set.Flags; s_marks = set.Marks;
+            s_winners = set.Winners; s_tiles = set.Tiles; s_orientation = set.Orientation;
+            s_descs = set.Descs; s_groupRequest = set.GroupRequest; s_groupIds = set.GroupIds;
+            s_resolvedOf = set.ResolvedOf; s_resolved = set.Resolved; s_resolvedUsed = set.ResolvedUsed;
+        }
+
+        private static void Store(BufferSet set)
+        {
+            set.Points = s_points; set.Ranges = s_ranges; set.GroupSpans = s_groupSpans; set.Groups = s_groups;
+            set.TileEnds = s_tileEnds; set.RowEnds = s_rowEnds; set.Bounds = s_bounds; set.Kinds = s_kinds;
+            set.Overlapping = s_overlapping; set.Output = s_output; set.Flags = s_flags; set.Marks = s_marks;
+            set.Winners = s_winners; set.Tiles = s_tiles; set.Orientation = s_orientation;
+            set.Descs = s_descs; set.GroupRequest = s_groupRequest; set.GroupIds = s_groupIds;
+            set.ResolvedOf = s_resolvedOf; set.Resolved = s_resolved; set.ResolvedUsed = s_resolvedUsed;
+        }
 
         private static void WriteOrientation(int first, int last, float area)
         {
@@ -955,14 +1090,20 @@ namespace OneText
         public static void ReleaseBuffers()
         {
             // Nothing may still be reading or writing them.
-            if (s_inFlight)
+            foreach (var flight in s_flights)
             {
-                s_flight.Complete();
-                s_inFlight = false;
-                s_owner = null;
-                s_batchRequests = null;
-                s_batchResults = null;
+                flight.Handle.Complete();
+                flight.Requests = null;
+                flight.Results = null;
+                flight.Owner = null;
+                if (flight != s_syncFlight) s_spareFlights.Push(flight);
             }
+            s_flights.Clear();
+            // The statics are one set's arrays; put them back where they
+            // belong, then release every set.
+            Use(s_syncSet);
+            foreach (var spare in s_spareFlights)
+                if (spare.Set != null && spare.Set != s_syncSet) spare.Set.Release();
             Release(ref s_points);
             Release(ref s_ranges);
             Release(ref s_groups);
@@ -980,6 +1121,9 @@ namespace OneText
             Release(ref s_winners);
             s_pixels = System.Array.Empty<byte>();
             s_flagBytes = System.Array.Empty<byte>();
+            // The sync set holds copies of the arrays just disposed; a copy
+            // still answers IsCreated, so it is overwritten with the defaults.
+            Store(s_syncSet);
         }
 
         private static void Release<T>(ref NativeArray<T> array) where T : struct

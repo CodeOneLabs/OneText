@@ -905,11 +905,30 @@ namespace OneText
         private List<RasterizeRequest> _pendingRequests = new List<RasterizeRequest>();
         private int _pendingTexels;
 
-        // The bakes handed to the workers in the background, waiting for
-        // their fields; always placed before everything in _pendingBakes.
-        private List<PendingBake> _flightBakes = new List<PendingBake>();
-        private List<RasterizeRequest> _flightRequests = new List<RasterizeRequest>();
-        private readonly List<RasterizedGlyph> _flightResults = new List<RasterizedGlyph>();
+        /// <summary>
+        /// Bakes handed to the workers in the background, waiting for their
+        /// fields: the slots, the requests, the results the rasterizer fills,
+        /// and its record of the batch.
+        /// </summary>
+        private sealed class Flight
+        {
+            public List<PendingBake> Bakes = new List<PendingBake>();
+            public List<RasterizeRequest> Requests = new List<RasterizeRequest>();
+            public readonly List<RasterizedGlyph> Results = new List<RasterizedGlyph>();
+            public GlyphRasterizer.Flight Batch;
+        }
+
+        // Batches in flight, oldest first (always placed before everything in
+        // _pendingBakes), and retired ones for reuse.
+        private readonly List<Flight> _flights = new List<Flight>();
+        private readonly Stack<Flight> _spareFlights = new Stack<Flight>();
+
+        /// <summary>
+        /// Batches one atlas keeps in flight at most before it collects the
+        /// oldest: each is a set of the rasterizer's buffers, and past the
+        /// workers' throughput more of them only hold memory.
+        /// </summary>
+        internal const int MaxFlights = 8;
 
         /// <summary>
         /// Off bakes a frame's deferred tiles all at the flush, with the main
@@ -930,11 +949,11 @@ namespace OneText
         public static int BackgroundBakeTexels = 16384;
 
         /// <summary>True while placed tiles are waiting for their fields.</summary>
-        internal bool HasPendingBakes => _pendingBakes.Count > 0 || _flightBakes.Count > 0;
+        internal bool HasPendingBakes => _pendingBakes.Count > 0 || _flights.Count > 0;
 
         private void ResetPoolsIfIdle()
         {
-            if (_pendingBakes.Count > 0 || _flightBakes.Count > 0) return;
+            if (_pendingBakes.Count > 0 || _flights.Count > 0) return;
             _pooledUsed = 0;
             _pooledLines = 0;
             _flat.Clear();
@@ -979,45 +998,86 @@ namespace OneText
             return true;
         }
 
-        /// <summary>Hands what is placed so far to the workers, collecting the previous batch first.</summary>
+        /// <summary>
+        /// Hands what is placed so far to the workers. Without
+        /// <see cref="GlyphRasterizer.PipelinedBatches"/> the previous batch is
+        /// collected first (one set of buffers between them); with it, only
+        /// batches already done are, and the rest keep baking.
+        /// </summary>
         private void BakeInBackground()
         {
-            FinishBatchInternal();
+            if (GlyphRasterizer.PipelinedBatches)
+            {
+                CollectFinishedFlights();
+                if (_flights.Count >= MaxFlights) FinishOldestFlight();
+            }
+            else
+            {
+                FinishBatchInternal();
+            }
             if (_pendingBakes.Count == 0) return;
-            (_flightBakes, _pendingBakes) = (_pendingBakes, _flightBakes);
-            (_flightRequests, _pendingRequests) = (_pendingRequests, _flightRequests);
+            var flight = _spareFlights.Count > 0 ? _spareFlights.Pop() : new Flight();
+            (flight.Bakes, _pendingBakes) = (_pendingBakes, flight.Bakes);
+            (flight.Requests, _pendingRequests) = (_pendingRequests, flight.Requests);
             _pendingTexels = 0;
-            if (!GlyphRasterizer.BeginBackground(_flightRequests, _flightResults, Precise, this))
-                WriteFlight(); // nothing to bake: nothing to wait for either
+            flight.Batch = GlyphRasterizer.BeginBackground(flight.Requests, flight.Results, Precise, this);
+            if (flight.Batch == null)
+            {
+                // Nothing to bake, so nothing to write, before or after the
+                // batches still baking.
+                RetireFlight(flight);
+                return;
+            }
+            _flights.Add(flight);
         }
 
         void GlyphRasterizer.IBatchOwner.FinishBatch() => FinishBatchInternal();
 
+        /// <summary>Collects every batch in flight, oldest first.</summary>
         private void FinishBatchInternal()
         {
-            if (_flightBakes.Count == 0) return;
-            GlyphRasterizer.EndBatch();
-            WriteFlight();
+            while (_flights.Count > 0) FinishOldestFlight();
         }
 
-        private void WriteFlight()
+        /// <summary>Collects the batches at the head of the queue whose workers are done, without waiting.</summary>
+        private void CollectFinishedFlights()
+        {
+            while (_flights.Count > 0 && _flights[0].Batch.IsDone) FinishOldestFlight();
+        }
+
+        private void FinishOldestFlight()
+        {
+            var flight = _flights[0];
+            _flights.RemoveAt(0);
+            GlyphRasterizer.EndBatch(flight.Batch);
+            WriteFlight(flight);
+        }
+
+        private void WriteFlight(Flight flight)
         {
             if (IsUsable)
             {
                 long copyStart = AtlasDiagnostics.Now;
-                for (int i = 0; i < _flightBakes.Count && i < _flightResults.Count; i++)
+                for (int i = 0; i < flight.Bakes.Count && i < flight.Results.Count; i++)
                 {
-                    var slot = _flightBakes[i];
-                    var raster = _flightResults[i];
+                    var slot = flight.Bakes[i];
+                    var raster = flight.Results[i];
                     if (raster.IsEmpty || raster.Pixels == null ||
                         raster.Width != slot.Width || raster.Height != slot.Height) continue;
                     CopyIntoSlot(slot.Layer, slot.X, slot.Y, raster);
                 }
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.CopyTicks, copyStart);
             }
-            _flightBakes.Clear();
-            _flightRequests.Clear();
-            _flightResults.Clear();
+            RetireFlight(flight);
+        }
+
+        private void RetireFlight(Flight flight)
+        {
+            flight.Bakes.Clear();
+            flight.Requests.Clear();
+            flight.Results.Clear();
+            flight.Batch = null;
+            _spareFlights.Push(flight);
         }
 
         /// <summary>
@@ -1028,7 +1088,15 @@ namespace OneText
         /// </summary>
         public void CompletePendingBakes()
         {
-            // The background batch was placed first, so it is written first.
+            if (GlyphRasterizer.PipelinedBatches && BackgroundBake && _pendingBakes.Count > 0)
+            {
+                // The rest goes to the workers too, behind the batches already
+                // baking, and the earlier ones are written while it bakes.
+                BakeInBackground();
+                FinishBatchInternal();
+                return;
+            }
+            // The background batches were placed first, so they are written first.
             FinishBatchInternal();
             if (_pendingBakes.Count == 0) return;
             _pendingTexels = 0;
@@ -2228,10 +2296,8 @@ namespace OneText
             }
             // A batch still baking writes into buffers it does not own once we
             // are gone; collect it, then drop everything.
-            if (_flightBakes.Count > 0) GlyphRasterizer.EndBatch();
-            _flightBakes.Clear();
-            _flightRequests.Clear();
-            _flightResults.Clear();
+            foreach (var flight in _flights) GlyphRasterizer.EndBatch(flight.Batch);
+            _flights.Clear();
             _pendingBakes.Clear();
             _pendingRequests.Clear();
             _pendingTexels = 0;
