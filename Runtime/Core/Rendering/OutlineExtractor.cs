@@ -201,14 +201,19 @@ namespace OneText
         /// glyph of several faces (<c>BakePathTests</c>).
         ///
         /// IL2CPP compiles the same C# to C++ float arithmetic, which rounds
-        /// differently again, and that has not been measured; it keeps the
-        /// managed flattening (and the recording, which is exact anywhere).
+        /// at every operation: a Burst flattening written for Mono differed
+        /// from IL2CPP's managed one on 3,775 of 4,029 CFF glyph outlines on a
+        /// phone (by up to 1.8e-4 px, enough to move atlas bytes by one and a
+        /// few texels by up to 6/255). So under IL2CPP the Burst code does
+        /// IL2CPP's arithmetic instead (every product and sum rounded to float;
+        /// see <c>NativeOutline.Magnitude</c> and the cubic in
+        /// <c>NativeOutline.Flatten</c>), held to the managed callbacks on the
+        /// device glyph for glyph, and the switch is on there too: which is
+        /// also what lets <c>GlyphAtlas.FlatContours</c> and
+        /// <c>GlyphAtlas.WorkerOutlines</c> run under IL2CPP, both of which
+        /// need it.
         /// </summary>
-#if ENABLE_IL2CPP
-        public static bool NativeFlatten = false;
-#else
         public static bool NativeFlatten = true;
-#endif
 
         /// <summary>
         /// Builds the outline from recorded drawing commands, in the order
@@ -691,7 +696,15 @@ namespace OneText
         // Vector2.magnitude, as Mono evaluates (float)Math.Sqrt(x * x + y * y):
         // the products and their sum in double, one rounding to float at the end.
         private static float Magnitude(float x, float y) =>
+#if ENABLE_IL2CPP
+            // IL2CPP's Vector2.magnitude: each product and the sum rounded to
+            // float (C++ float arithmetic, no contraction across IL2CPP's
+            // helper calls), then sqrt in double. Measured equal to the managed
+            // callbacks bit for bit on a phone; see NativeFlatten.
+            (float)math.sqrt((double)(x * x + y * y));
+#else
             (float)math.sqrt((double)x * x + (double)y * y);
+#endif
 
         private static int StepsFor(float errorUnits, float pixelsPerUnit, float flatness)
         {
@@ -792,10 +805,18 @@ namespace OneText
                         float s = 1f - t;
                         // Chains of three products, rounded once each, as Mono
                         // passes them to Vector2's operator*.
+#if ENABLE_IL2CPP
+                        // IL2CPP rounds every product of the chain to float.
+                        float a = s * s * s;
+                        float b = 3f * s * s * t;
+                        float e = 3f * s * t * t;
+                        float f = t * t * t;
+#else
                         float a = (float)((double)s * s * s);
                         float b = (float)((double)3f * s * s * t);
                         float e = (float)((double)3f * s * t * t);
                         float f = (float)((double)t * t * t);
+#endif
                         float qx = penX * a, qy = penY * a;
                         float rx = c1x * b, ry = c1y * b;
                         qx = qx + rx;
