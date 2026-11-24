@@ -457,39 +457,39 @@ namespace OneText
                     minSq4[run] = math.select(minSq4[run], math.min(minSq4[run], dSq), close);
                 }
 
+                // Winding, four lanes at once: whether a segment crosses the
+                // row depends on y alone, and the texel job's sign test is a
+                // comparison of two products (it compiled x - y > 0 to x > y).
+                float4 best4 = new float4(empty);
+                for (int r = 0; r < runCount; r++)
+                {
+                    var range = runs[r];
+                    int4 wind = int4.zero;
+                    for (int k = range.z; k < range.w; k++)
+                    {
+                        int s = cross[k];
+                        float2 a = Points[s];
+                        float2 b = Points[s + 1];
+                        float abx = b.x - a.x, aby = b.y - a.y;
+                        float up = abx * (pyc - a.y);
+                        float4 right = aby * (pxs - a.x);
+                        if (a.y <= pyc)
+                        {
+                            if (b.y > pyc) wind += math.select(int4.zero, new int4(1), up > right);
+                        }
+                        else if (b.y <= pyc)
+                        {
+                            wind -= math.select(int4.zero, new int4(1), up < right);
+                        }
+                    }
+                    float4 sd = math.sqrt(minSq4[r]);
+                    best4 = math.min(best4, math.select(sd, -sd, wind != 0));
+                }
+
                 for (int lane = 0; lane < 4 && px0 + lane < width; lane++)
                 {
                     int px = px0 + lane;
-                    var p = new float2(pxs[lane], pyc);
-                    float best = empty;
-                    for (int r = 0; r < runCount; r++)
-                    {
-                        var range = runs[r];
-                        int wind = 0;
-                        for (int k = range.z; k < range.w; k++)
-                        {
-                            int s = cross[k];
-                            float2 a = Points[s];
-                            float2 b = Points[s + 1];
-                            if (a.y <= p.y)
-                            {
-                                if (b.y > p.y)
-                                {
-                                    float2 ab = b - a;
-                                    float2 ap = p - a;
-                                    if (ab.x * ap.y > ab.y * ap.x) wind++;
-                                }
-                            }
-                            else if (b.y <= p.y)
-                            {
-                                float2 ab = b - a;
-                                float2 ap = p - a;
-                                if (ab.x * ap.y < ab.y * ap.x) wind--;
-                            }
-                        }
-                        best = math.min(best, FoldGroup(minSq4[r][lane], wind));
-                    }
-
+                    float best = best4[lane];
                     float v = math.saturate(0.5f - best / scale);
                     Output[outputRow + px] = (byte)math.round(v * 255f);
                 }
