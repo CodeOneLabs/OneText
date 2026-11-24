@@ -150,7 +150,8 @@ namespace OneText
                 int count = NativeOutline.Record(font, glyphId, out var ops);
                 if (count >= 0)
                 {
-                    Replay(ops, count, output, pixelsPerUnit);
+                    if (NativeFlatten) NativeOutline.FlattenInto(ops, count, output, pixelsPerUnit, _flatnessPixels);
+                    else Replay(ops, count, output, pixelsPerUnit);
                     return;
                 }
             }
@@ -182,6 +183,32 @@ namespace OneText
         /// run as managed callbacks: slower than on, still the same points.
         /// </summary>
         public static bool NativeCallbacks = true;
+
+        /// <summary>
+        /// With <see cref="NativeCallbacks"/>, flatten the recorded curves in
+        /// Burst too rather than in managed code, which costs ~35 ns a point in
+        /// Mono: about three quarters of what extraction still cost.
+        ///
+        /// The arithmetic has to be Mono's, not merely the same formula. Mono
+        /// evaluates a chain of float operations in double and rounds only
+        /// where the value is stored or passed (a local, a field, an argument),
+        /// so <c>3f * s * s * t</c> rounds once where float arithmetic rounds
+        /// three times, and <c>x * x + y * y</c> in <c>Vector2.magnitude</c>
+        /// once where it rounds three times. A first Burst version written in
+        /// plain float drew some cubic points one unit in the last place off.
+        /// This one does each chain in double and rounds at each of Mono's
+        /// stores, and is held to the managed callbacks bit for bit on every
+        /// glyph of several faces (<c>BakePathTests</c>).
+        ///
+        /// IL2CPP compiles the same C# to C++ float arithmetic, which rounds
+        /// differently again, and that has not been measured; it keeps the
+        /// managed flattening (and the recording, which is exact anywhere).
+        /// </summary>
+#if ENABLE_IL2CPP
+        public static bool NativeFlatten = false;
+#else
+        public static bool NativeFlatten = true;
+#endif
 
         /// <summary>
         /// Builds the outline from recorded drawing commands, in the order
@@ -262,6 +289,24 @@ namespace OneText
             if (errorPixels <= _flatnessPixels) return 1;
             int steps = Mathf.CeilToInt(Mathf.Sqrt(errorPixels / _flatnessPixels));
             return Mathf.Clamp(steps, 1, MaxCurveSegments);
+        }
+
+        /// <summary>
+        /// Draws a glyph straight into <paramref name="into"/>, each point
+        /// moved by <paramref name="offset"/>, tagged <paramref name="group"/>,
+        /// with its bounds: what <c>GlyphAtlas</c> made of an outline by
+        /// copying it into lists (dropping contours under two points). False,
+        /// with nothing written, when the native path is not available.
+        /// </summary>
+        internal static bool AppendFlat(FontData font, uint glyphId, float pixelsPerUnit, Vector2 offset,
+            int group, FlatContours into)
+        {
+            if (!NativeCallbacks || !NativeFlatten) return false;
+            if (font == null || !font.IsValid) throw new ArgumentException("Invalid font.", nameof(font));
+            int count = NativeOutline.Record(font, glyphId, out var ops);
+            if (count < 0) return false;
+            NativeOutline.AppendFlat(ops, count, pixelsPerUnit, _flatnessPixels, offset, group, into);
+            return true;
         }
 
         private static IntPtr EnsureDrawFuncs()
@@ -466,6 +511,272 @@ namespace OneText
                 t_ops = new float[t_ops.Length * 2];
             }
         }
+
+        [ThreadStatic] private static float2[] t_points;
+        [ThreadStatic] private static int[] t_starts;
+
+        /// <summary>
+        /// Flattens recorded commands in Burst and appends the contours to
+        /// <paramref name="output"/>, the same points the managed callbacks
+        /// would have produced (see <see cref="OutlineExtractor.NativeFlatten"/>).
+        /// </summary>
+        internal static void FlattenInto(float[] ops, int count, GlyphOutline output, float pixelsPerUnit,
+            float flatness)
+        {
+            t_points ??= new float2[1024];
+            t_starts ??= new int[64];
+            while (true)
+            {
+                int points, contours;
+                fixed (float* o = ops)
+                fixed (float2* p = t_points)
+                fixed (int* st = t_starts)
+                {
+                    Flatten(o, count, pixelsPerUnit, flatness, p, t_points.Length, st, t_starts.Length,
+                        out points, out contours);
+                }
+                if (points < 0) { t_points = new float2[t_points.Length * 2]; continue; }
+                if (contours < 0) { t_starts = new int[t_starts.Length * 2]; continue; }
+                for (int c = 0; c < contours; c++)
+                {
+                    int start = t_starts[c];
+                    int end = c + 1 < contours ? t_starts[c + 1] : points;
+                    var contour = output.BeginContour();
+                    if (contour.Capacity < end - start) contour.Capacity = end - start;
+                    for (int i = start; i < end; i++)
+                        contour.Add(new Vector2(t_points[i].x, t_points[i].y));
+                }
+                return;
+            }
+        }
+
+        internal static void AppendFlat(float[] ops, int count, float pixelsPerUnit, float flatness,
+            Vector2 offset, int group, FlatContours into)
+        {
+            t_points ??= new float2[1024];
+            t_starts ??= new int[64];
+            while (true)
+            {
+                int points, contours;
+                fixed (float* o = ops)
+                fixed (float2* p = t_points)
+                fixed (int* st = t_starts)
+                {
+                    Flatten(o, count, pixelsPerUnit, flatness, p, t_points.Length, st, t_starts.Length,
+                        out points, out contours);
+                }
+                if (points < 0) { t_points = new float2[t_points.Length * 2]; continue; }
+                if (contours < 0) { t_starts = new int[t_starts.Length * 2]; continue; }
+                into.Reserve(points, contours);
+                fixed (float2* p = t_points)
+                fixed (int* st = t_starts)
+                fixed (float2* dst = into.Points)
+                fixed (int2* ranges = into.Ranges)
+                fixed (int* groups = into.Groups)
+                fixed (float4* bounds = into.Bounds)
+                {
+                    Offset(p, points, st, contours, offset.x, offset.y, group,
+                        dst, into.PointCount, ranges, groups, bounds, into.ContourCount,
+                        out int pointsAdded, out int contoursAdded);
+                    into.PointCount += pointsAdded;
+                    into.ContourCount += contoursAdded;
+                }
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Appends each contour of two or more points, moved by the offset
+        /// (<c>p + offset</c>: one rounding per component, as Vector2's +), with
+        /// its bounds taken the way the packer takes them (<c>Vector2.Min</c>
+        /// keeps the later of equal values).
+        /// </summary>
+        [BurstCompile(FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard)]
+        private static void Offset(float2* points, int pointCount, int* starts, int contourCount, float offsetX, float offsetY,
+            int group, float2* dst, int dstPoints, int2* ranges, int* groups, float4* bounds, int dstContours,
+            out int pointsAdded, out int contoursAdded)
+        {
+            int n = dstPoints, c = dstContours;
+            for (int k = 0; k < contourCount; k++)
+            {
+                int start = starts[k];
+                int end = k + 1 < contourCount ? starts[k + 1] : pointCount;
+                if (end - start < 2) continue;
+                float lx = float.MaxValue, ly = float.MaxValue, hx = float.MinValue, hy = float.MinValue;
+                int first = n;
+                for (int i = start; i < end; i++)
+                {
+                    float x = points[i].x + offsetX;
+                    float y = points[i].y + offsetY;
+                    lx = lx < x ? lx : x;
+                    ly = ly < y ? ly : y;
+                    hx = hx > x ? hx : x;
+                    hy = hy > y ? hy : y;
+                    dst[n++] = new float2(x, y);
+                }
+                ranges[c] = new int2(first, end - start);
+                groups[c] = group;
+                bounds[c] = new float4(lx, ly, hx, hy);
+                c++;
+            }
+            pointsAdded = n - dstPoints;
+            contoursAdded = c - dstContours;
+        }
+
+        // Vector2.magnitude, as Mono evaluates (float)Math.Sqrt(x * x + y * y):
+        // the products and their sum in double, one rounding to float at the end.
+        private static float Magnitude(float x, float y) =>
+            (float)math.sqrt((double)x * x + (double)y * y);
+
+        private static int StepsFor(float errorUnits, float pixelsPerUnit, float flatness)
+        {
+            if (pixelsPerUnit <= 0f) return 8; // OutlineExtractor.DefaultCurveSegments
+            float errorPixels = errorUnits * pixelsPerUnit;
+            if (errorPixels <= flatness) return 1;
+            float quotient = errorPixels / flatness;
+            float root = (float)math.sqrt((double)quotient);
+            int steps = (int)math.ceil((double)root);
+            return steps < 1 ? 1 : steps > 24 ? 24 : steps; // MaxCurveSegments
+        }
+
+        /// <summary>
+        /// The managed callbacks' flattening, one recorded command after
+        /// another. Returns the point and contour counts, or -1 for whichever
+        /// buffer was too small (nothing usable was written then).
+        /// </summary>
+        [BurstCompile(FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard)]
+        private static void Flatten(float* ops, int count, float pixelsPerUnit, float flatness,
+            float2* points, int capacity, int* starts, int startCapacity, out int pointCount, out int contourCount)
+        {
+            int n = 0, contours = 0, contourStart = -1;
+            float penX = 0f, penY = 0f;
+            int i = 0;
+            pointCount = 0;
+            contourCount = 0;
+            while (i < count)
+            {
+                float op = ops[i];
+                if (op == OpMove || op == OpLine)
+                {
+                    if (op == OpMove)
+                    {
+                        if (contours >= startCapacity) { contourCount = -1; pointCount = n; return; }
+                        starts[contours++] = n;
+                        contourStart = n;
+                    }
+                    if (n >= capacity) { pointCount = -1; return; }
+                    penX = ops[i + 1];
+                    penY = ops[i + 2];
+                    points[n++] = new float2(penX, penY);
+                    i += 3;
+                }
+                else if (op == OpQuad)
+                {
+                    float cx = ops[i + 1], cy = ops[i + 2], x1 = ops[i + 3], y1 = ops[i + 4];
+                    // (p0 - 2f * c + p1).magnitude / 8f: each Vector2 operator
+                    // rounds its components, then the magnitude as above.
+                    float vx = penX - cx * 2f;
+                    float vy = penY - cy * 2f;
+                    vx = vx + x1;
+                    vy = vy + y1;
+                    float mag = Magnitude(vx, vy);
+                    int steps = StepsFor(mag / 8f, pixelsPerUnit, flatness);
+                    if (n + steps > capacity) { pointCount = -1; return; }
+                    for (int k = 1; k <= steps; k++)
+                    {
+                        float t = k / (float)steps;
+                        float s = 1f - t;
+                        // s * s * p0 + 2f * s * t * c + t * t * p1: every scalar
+                        // here is one rounding in either arithmetic (2f * s is exact).
+                        float a = s * s;
+                        float b = 2f * s * t;
+                        float e = t * t;
+                        float qx = penX * a, qy = penY * a;
+                        float rx = cx * b, ry = cy * b;
+                        qx = qx + rx;
+                        qy = qy + ry;
+                        float wx = x1 * e, wy = y1 * e;
+                        qx = qx + wx;
+                        qy = qy + wy;
+                        points[n++] = new float2(qx, qy);
+                    }
+                    penX = x1;
+                    penY = y1;
+                    i += 5;
+                }
+                else if (op == OpCubic)
+                {
+                    float c1x = ops[i + 1], c1y = ops[i + 2], c2x = ops[i + 3], c2y = ops[i + 4];
+                    float x1 = ops[i + 5], y1 = ops[i + 6];
+                    float ux = penX - c1x * 2f, uy = penY - c1y * 2f;
+                    ux = ux + c2x;
+                    uy = uy + c2y;
+                    float vx = c1x - c2x * 2f, vy = c1y - c2y * 2f;
+                    vx = vx + x1;
+                    vy = vy + y1;
+                    float m1 = Magnitude(ux, uy), m2 = Magnitude(vx, vy);
+                    float second = m1 > m2 ? m1 : m2;
+                    // second * 3f / 8f, one chain: exact in double before the
+                    // rounding, as it is in float (3x is exact, /8 is exact).
+                    float error = (float)((double)second * 3f / 8f);
+                    int steps = StepsFor(error, pixelsPerUnit, flatness);
+                    if (n + steps > capacity) { pointCount = -1; return; }
+                    for (int k = 1; k <= steps; k++)
+                    {
+                        float t = k / (float)steps;
+                        float s = 1f - t;
+                        // Chains of three products, rounded once each, as Mono
+                        // passes them to Vector2's operator*.
+                        float a = (float)((double)s * s * s);
+                        float b = (float)((double)3f * s * s * t);
+                        float e = (float)((double)3f * s * t * t);
+                        float f = (float)((double)t * t * t);
+                        float qx = penX * a, qy = penY * a;
+                        float rx = c1x * b, ry = c1y * b;
+                        qx = qx + rx;
+                        qy = qy + ry;
+                        float sx = c2x * e, sy = c2y * e;
+                        qx = qx + sx;
+                        qy = qy + sy;
+                        float wx = x1 * f, wy = y1 * f;
+                        qx = qx + wx;
+                        qy = qy + wy;
+                        points[n++] = new float2(qx, qy);
+                    }
+                    penX = x1;
+                    penY = y1;
+                    i += 7;
+                }
+                else
+                {
+                    if (contourStart >= 0 && n > contourStart)
+                    {
+                        if (n >= capacity) { pointCount = -1; return; }
+                        points[n] = points[contourStart];
+                        n++;
+                    }
+                    i += 1;
+                }
+            }
+            pointCount = n;
+            contourCount = contours;
+        }
+
+        /// <summary>
+        /// True when the Burst-compiled methods here really run as Burst code
+        /// (tests: a flattening that matches because it fell back to managed
+        /// code proves nothing about the native one).
+        /// </summary>
+        [BurstCompile]
+        internal static bool RunsInBurst()
+        {
+            bool burst = true;
+            ClearIfManaged(ref burst);
+            return burst;
+        }
+
+        [BurstDiscard]
+        private static void ClearIfManaged(ref bool burst) => burst = false;
 
         private static float* Take(State* s, int floats)
         {

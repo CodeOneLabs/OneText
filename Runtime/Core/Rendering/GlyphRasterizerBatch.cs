@@ -23,6 +23,74 @@ namespace OneText
         /// and the atlas passes it on.
         /// </summary>
         public List<int> KnownOverlaps;
+
+        /// <summary>
+        /// Instead of <see cref="Contours"/> and <see cref="Groups"/>: contours
+        /// <see cref="FlatFirst"/> .. + <see cref="FlatCount"/> of a shared
+        /// flat buffer, already offset, bounded and free of contours under two
+        /// points. Only single-channel requests are built this way.
+        /// </summary>
+        internal FlatContours Flat;
+        internal int FlatFirst, FlatCount;
+    }
+
+    /// <summary>
+    /// Contours of many requests in flat arrays: what <see cref="GlyphAtlas"/>
+    /// builds a frame's misses into when it can (see
+    /// <see cref="GlyphAtlas.FlatContours"/>), so sizing and packing a batch is
+    /// a copy per request rather than a walk over lists of lists.
+    /// </summary>
+    internal sealed class FlatContours
+    {
+        public float2[] Points = new float2[4096];
+        public int PointCount;
+
+        /// <summary>Per contour: first point and point count (always two or more).</summary>
+        public int2[] Ranges = new int2[256];
+
+        /// <summary>Per contour: the source glyph it belongs to, within its request.</summary>
+        public int[] Groups = new int[256];
+
+        /// <summary>Per contour: (min x, min y, max x, max y) of its points.</summary>
+        public float4[] Bounds = new float4[256];
+        public int ContourCount;
+
+        public void Clear()
+        {
+            PointCount = 0;
+            ContourCount = 0;
+        }
+
+        public void Reserve(int points, int contours)
+        {
+            if (PointCount + points > Points.Length)
+                System.Array.Resize(ref Points, Mathf.NextPowerOfTwo(PointCount + points));
+            if (ContourCount + contours > Ranges.Length)
+            {
+                int size = Mathf.NextPowerOfTwo(ContourCount + contours);
+                System.Array.Resize(ref Ranges, size);
+                System.Array.Resize(ref Groups, size);
+                System.Array.Resize(ref Bounds, size);
+            }
+        }
+
+        /// <summary>
+        /// The contours of a flat request as lists, for the managed code that
+        /// only reads lists (overlap resolution); rare, so not pooled hard.
+        /// </summary>
+        public void ToLists(int first, int count, List<List<Vector2>> contours, List<int> groups)
+        {
+            contours.Clear();
+            groups.Clear();
+            for (int c = first; c < first + count; c++)
+            {
+                var range = Ranges[c];
+                var list = new List<Vector2>(range.y);
+                for (int i = range.x; i < range.x + range.y; i++) list.Add(new Vector2(Points[i].x, Points[i].y));
+                contours.Add(list);
+                groups.Add(Groups[c]);
+            }
+        }
     }
 
     public static partial class GlyphRasterizer
@@ -320,6 +388,21 @@ namespace OneText
             contours = 0;
             var min = new Vector2(float.MaxValue, float.MaxValue);
             var max = new Vector2(float.MinValue, float.MinValue);
+            if (request.Flat != null)
+            {
+                // The contours' own bounds, which are the same minima and
+                // maxima over the same points.
+                var flat = request.Flat;
+                for (int c = request.FlatFirst; c < request.FlatFirst + request.FlatCount; c++)
+                {
+                    points += flat.Ranges[c].y;
+                    contours++;
+                    var b = flat.Bounds[c];
+                    min = Vector2.Min(min, new Vector2(b.x, b.y));
+                    max = Vector2.Max(max, new Vector2(b.z, b.w));
+                }
+            }
+            else
             foreach (var contour in request.Contours)
             {
                 if (contour.Count < 2) continue;
@@ -385,6 +468,11 @@ namespace OneText
                     foreach (var contour in contours) totalPoints += contour.Count;
                     totalContours += contours.Count;
                 }
+                else if (requests[r].Flat != null)
+                {
+                    totalPoints += FlatPoints(requests[r], out _);
+                    totalContours += requests[r].FlatCount;
+                }
                 else
                 {
                     foreach (var contour in requests[r].Contours)
@@ -412,84 +500,19 @@ namespace OneText
                 var request = requests[r];
                 var resolved = s_resolvedOf[r] >= 0 ? s_resolved[s_resolvedOf[r]] : null;
                 bool spans = recordSpans && resolved == null && request.KnownOverlaps == null;
-                var contours = resolved?.Contours ?? request.Contours;
-                var groups = resolved?.Groups ?? request.Groups;
-                int tileStart = ci, flag = 0;
-                // Contour winding decides the sign of a pseudo-distance, and it
-                // is a property of the source glyph, not of one of its contours:
-                // a counter is wound against its outline on purpose. Summed over
-                // the group, where the outline dominates.
-                int groupStart = ci, currentGroup = int.MinValue;
-                float groupArea = 0f;
-
-                for (int c = 0; c < contours.Count; c++)
+                int tileStarts = ci;
+                if (resolved == null && request.Flat != null)
                 {
-                    var contour = contours[c];
-                    if (contour.Count < 2) continue;
-                    int group = groups?[c] ?? 0;
-                    byte kind = resolved?.Kinds[c] ?? ContourKind.Both;
-                    if (precise && ci > groupStart && group != currentGroup)
-                    {
-                        WriteOrientation(groupStart, ci, groupArea);
-                        groupStart = ci;
-                        groupArea = 0f;
-                    }
-                    // One span per source glyph, which is what the overlap
-                    // scan looks at: a glyph's own contours, nobody else's.
-                    if (spans)
-                    {
-                        if (ci == tileStart || group != currentGroup)
-                        {
-                            s_groupSpans[groupCount++] = new int2(ci, 1);
-                            s_groupRequest.Add(r);
-                            s_groupIds.Add(group);
-                        }
-                        else
-                        {
-                            var span = s_groupSpans[groupCount - 1];
-                            s_groupSpans[groupCount - 1] = new int2(span.x, span.y + 1);
-                        }
-                    }
-                    currentGroup = group;
-                    s_groups[ci] = group;
-                    s_kinds[ci] = kind;
-                    s_ranges[ci] = new int2(pi, contour.Count);
-                    if (precise)
-                    {
-                        if (resolved == null)
-                        {
-                            MsdfEdgeColoring.Assign(contour, s_flagBytes, pi);
-                        }
-                        else
-                        {
-                            for (int i = 0; i < contour.Count; i++) s_flagBytes[pi + i] = resolved.Flags[flag + i];
-                            flag += contour.Count;
-                        }
-                    }
-
-                    // The orientation is the glyph's, so only the contours it
-                    // was drawn with count towards it: a visible piece of a
-                    // resolved overlap is a copy of part of one of them, and
-                    // open besides.
-                    bool wound = (kind & ContourKind.Winding) != 0;
-                    var lo = new Vector2(float.MaxValue, float.MaxValue);
-                    var hi = new Vector2(float.MinValue, float.MinValue);
-                    var previous = contour[contour.Count - 1];
-                    foreach (var p in contour)
-                    {
-                        lo = Vector2.Min(lo, p);
-                        hi = Vector2.Max(hi, p);
-                        if (wound) groupArea += previous.x * p.y - p.x * previous.y;
-                        previous = p;
-                        s_points[pi++] = new float2(p.x, p.y);
-                    }
-                    s_bounds[ci++] = new float4(lo.x, lo.y, hi.x, hi.y);
+                    PackFlat(request, spans, r, ref pi, ref ci, ref groupCount);
                 }
-                if (precise && ci > groupStart) WriteOrientation(groupStart, ci, groupArea);
+                else
+                {
+                    PackLists(request, resolved, precise, spans, r, ref pi, ref ci, ref groupCount);
+                }
 
                 var desc = s_descs[r];
-                desc.ContourStart = tileStart;
-                desc.ContourCount = ci - tileStart;
+                desc.ContourStart = tileStarts;
+                desc.ContourCount = ci - tileStarts;
                 // A subset is a batch of its own and its texels start at zero;
                 // a full pack writes every tile where the results expect it.
                 if (subset != null) desc.OutputStart = texelEnd;
@@ -500,6 +523,133 @@ namespace OneText
                 s_rowEnds[k] = rowEnd;
             }
             return groupCount;
+        }
+
+        /// <summary>Points of a flat request, and the index of its first.</summary>
+        private static int FlatPoints(in RasterizeRequest request, out int firstPoint)
+        {
+            firstPoint = 0;
+            if (request.FlatCount == 0) return 0;
+            var flat = request.Flat;
+            firstPoint = flat.Ranges[request.FlatFirst].x;
+            var last = flat.Ranges[request.FlatFirst + request.FlatCount - 1];
+            return last.x + last.y - firstPoint;
+        }
+
+        /// <summary>
+        /// <see cref="PackLists"/> for a flat request: the points are one copy,
+        /// the bounds were taken when they were made. Single-channel only.
+        /// </summary>
+        private static void PackFlat(in RasterizeRequest request, bool spans, int r,
+            ref int pi, ref int ci, ref int groupCount)
+        {
+            var flat = request.Flat;
+            int points = FlatPoints(request, out int firstPoint);
+            if (points > 0) NativeArray<float2>.Copy(flat.Points, firstPoint, s_points, pi, points);
+            int tileStart = ci, currentGroup = int.MinValue;
+            for (int c = request.FlatFirst; c < request.FlatFirst + request.FlatCount; c++)
+            {
+                int group = flat.Groups[c];
+                if (spans)
+                {
+                    if (ci == tileStart || group != currentGroup)
+                    {
+                        s_groupSpans[groupCount++] = new int2(ci, 1);
+                        s_groupRequest.Add(r);
+                        s_groupIds.Add(group);
+                    }
+                    else
+                    {
+                        var span = s_groupSpans[groupCount - 1];
+                        s_groupSpans[groupCount - 1] = new int2(span.x, span.y + 1);
+                    }
+                }
+                currentGroup = group;
+                s_groups[ci] = group;
+                s_kinds[ci] = ContourKind.Both;
+                s_ranges[ci] = new int2(pi + (flat.Ranges[c].x - firstPoint), flat.Ranges[c].y);
+                s_bounds[ci++] = flat.Bounds[c];
+            }
+            pi += points;
+        }
+
+        private static void PackLists(in RasterizeRequest request, ResolvedContours resolved, bool precise,
+            bool spans, int r, ref int pi, ref int ci, ref int groupCount)
+        {
+            var contours = resolved?.Contours ?? request.Contours;
+            var groups = resolved?.Groups ?? request.Groups;
+            int tileStart = ci, flag = 0;
+            // Contour winding decides the sign of a pseudo-distance, and it
+            // is a property of the source glyph, not of one of its contours:
+            // a counter is wound against its outline on purpose. Summed over
+            // the group, where the outline dominates.
+            int groupStart = ci, currentGroup = int.MinValue;
+            float groupArea = 0f;
+
+            for (int c = 0; c < contours.Count; c++)
+            {
+                var contour = contours[c];
+                if (contour.Count < 2) continue;
+                int group = groups?[c] ?? 0;
+                byte kind = resolved?.Kinds[c] ?? ContourKind.Both;
+                if (precise && ci > groupStart && group != currentGroup)
+                {
+                    WriteOrientation(groupStart, ci, groupArea);
+                    groupStart = ci;
+                    groupArea = 0f;
+                }
+                // One span per source glyph, which is what the overlap
+                // scan looks at: a glyph's own contours, nobody else's.
+                if (spans)
+                {
+                    if (ci == tileStart || group != currentGroup)
+                    {
+                        s_groupSpans[groupCount++] = new int2(ci, 1);
+                        s_groupRequest.Add(r);
+                        s_groupIds.Add(group);
+                    }
+                    else
+                    {
+                        var span = s_groupSpans[groupCount - 1];
+                        s_groupSpans[groupCount - 1] = new int2(span.x, span.y + 1);
+                    }
+                }
+                currentGroup = group;
+                s_groups[ci] = group;
+                s_kinds[ci] = kind;
+                s_ranges[ci] = new int2(pi, contour.Count);
+                if (precise)
+                {
+                    if (resolved == null)
+                    {
+                        MsdfEdgeColoring.Assign(contour, s_flagBytes, pi);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < contour.Count; i++) s_flagBytes[pi + i] = resolved.Flags[flag + i];
+                        flag += contour.Count;
+                    }
+                }
+
+                // The orientation is the glyph's, so only the contours it
+                // was drawn with count towards it: a visible piece of a
+                // resolved overlap is a copy of part of one of them, and
+                // open besides.
+                bool wound = (kind & ContourKind.Winding) != 0;
+                var lo = new Vector2(float.MaxValue, float.MaxValue);
+                var hi = new Vector2(float.MinValue, float.MinValue);
+                var previous = contour[contour.Count - 1];
+                foreach (var p in contour)
+                {
+                    lo = Vector2.Min(lo, p);
+                    hi = Vector2.Max(hi, p);
+                    if (wound) groupArea += previous.x * p.y - p.x * previous.y;
+                    previous = p;
+                    s_points[pi++] = new float2(p.x, p.y);
+                }
+                s_bounds[ci++] = new float4(lo.x, lo.y, hi.x, hi.y);
+            }
+            if (precise && ci > groupStart) WriteOrientation(groupStart, ci, groupArea);
         }
 
         /// <summary>
@@ -659,7 +809,21 @@ namespace OneText
         {
             int k = s_resolvedUsed++;
             if (s_resolved.Count == k) s_resolved.Add(new ResolvedContours());
-            ContourOverlaps.Resolve(request, groups, precise, s_resolved[k]);
+            if (request.Flat != null)
+            {
+                // The resolver reads lists. A handful of glyphs a frame, at
+                // most, come this way.
+                var listed = request;
+                listed.Contours = new List<List<Vector2>>(request.FlatCount);
+                listed.Groups = new List<int>(request.FlatCount);
+                request.Flat.ToLists(request.FlatFirst, request.FlatCount, listed.Contours, listed.Groups);
+                listed.Flat = null;
+                ContourOverlaps.Resolve(listed, groups, precise, s_resolved[k]);
+            }
+            else
+            {
+                ContourOverlaps.Resolve(request, groups, precise, s_resolved[k]);
+            }
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OverlapRebakes++;
             return k;
         }

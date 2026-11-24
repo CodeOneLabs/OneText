@@ -824,8 +824,6 @@ namespace OneText
                 // Repeated words in one run share a tile; bake it once.
                 if (_entries.ContainsKey(key) || !_batchPending.Add(key)) continue;
 
-                var contours = RentContours();
-                var groups = RentGroups();
                 // Timed around the extraction alone, not around the loop. A warm
                 // run walks every cluster here and extracts none, and charging
                 // that walk to "outline" reported 24 us a frame of outline work
@@ -833,17 +831,36 @@ namespace OneText
                 // as a hot rasterizer and is really the cache saying no. The
                 // walk is lookup, and the caller already counts it as lookup.
                 long outlineStart = AtlasDiagnostics.Now;
-                BuildClusterContours(font, positioned, cluster.Start, cluster.Count, contours, groups, pixelsPerUnit);
+                RasterizeRequest request;
+                if (FlatContours && !Precise && TryBuildFlat(font, positioned, cluster.Start, cluster.Count,
+                        pixelsPerUnit, out int flatFirst, out int flatCount))
+                {
+                    RentContours(); // keeps the known-overlap pool in step
+                    request = new RasterizeRequest
+                    {
+                        Flat = _flat,
+                        FlatFirst = flatFirst,
+                        FlatCount = flatCount,
+                        PixelsPerUnit = pixelsPerUnit,
+                    };
+                }
+                else
+                {
+                    var contours = RentContours();
+                    var groups = RentGroups();
+                    BuildClusterContours(font, positioned, cluster.Start, cluster.Count, contours, groups, pixelsPerUnit);
+                    request = new RasterizeRequest
+                    {
+                        Contours = contours,
+                        Groups = groups,
+                        PixelsPerUnit = pixelsPerUnit,
+                    };
+                }
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.OutlineTicks, outlineStart);
                 glyphsExtracted += cluster.Count;
 
-                _batchRequests.Add(new RasterizeRequest
-                {
-                    Contours = contours,
-                    Groups = groups,
-                    PixelsPerUnit = pixelsPerUnit,
-                    KnownOverlaps = KnownOverlapsOf(font, positioned, cluster.Start, cluster.Count, RentKnown()),
-                });
+                request.KnownOverlaps = KnownOverlapsOf(font, positioned, cluster.Start, cluster.Count, RentKnown());
+                _batchRequests.Add(request);
                 _batchKeys.Add(key);
             }
 
@@ -916,6 +933,46 @@ namespace OneText
             if (_pendingBakes.Count > 0 || _flightBakes.Count > 0) return;
             _pooledUsed = 0;
             _pooledLines = 0;
+            _flat.Clear();
+        }
+
+        /// <summary>
+        /// Off builds every miss's contours as lists of lists, copied out of
+        /// the extracted outline, walked again to size the tile and again to
+        /// pack it for the job: four passes of managed code over every point,
+        /// a millisecond and more of a frame that bakes two hundred glyphs. On
+        /// (single-channel atlases, with the native outline path), the outline
+        /// is drawn straight into one flat buffer, offset and bounded as it
+        /// goes, and sizing and packing read the bounds and copy the points
+        /// once. Same points, same bounds, same tiles (<c>BakePathTests</c>).
+        /// </summary>
+        public static bool FlatContours = true;
+
+        private readonly FlatContours _flat = new FlatContours();
+
+        /// <summary>
+        /// A cluster's contours into <see cref="_flat"/>, as
+        /// <see cref="BuildClusterContours"/> would build them; false (and
+        /// nothing kept) when the native outline path is unavailable.
+        /// </summary>
+        private bool TryBuildFlat(FontData font, List<PositionedGlyph> positioned, int start, int count,
+            float pixelsPerUnit, out int first, out int contours)
+        {
+            first = _flat.ContourCount;
+            int points = _flat.PointCount;
+            for (int i = start; i < start + count; i++)
+            {
+                var g = positioned[i];
+                if (!OutlineExtractor.AppendFlat(font, g.GlyphId, pixelsPerUnit, new Vector2(g.X, g.Y), i - start, _flat))
+                {
+                    _flat.ContourCount = first;
+                    _flat.PointCount = points;
+                    contours = 0;
+                    return false;
+                }
+            }
+            contours = _flat.ContourCount - first;
+            return true;
         }
 
         /// <summary>Hands what is placed so far to the workers, collecting the previous batch first.</summary>

@@ -191,7 +191,7 @@ namespace OneText
     /// <c>BakePathTests</c> holds the two jobs to the byte.
     /// </summary>
     [BurstCompile(FloatMode = FloatMode.Fast)]
-    internal struct SdfRowJob : IJobParallelFor
+    internal unsafe struct SdfRowJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float2> Points;
         [ReadOnly] public NativeArray<int2> ContourRanges;
@@ -227,9 +227,20 @@ namespace OneText
             // grouped into runs of consecutive contours of one glyph.
             int segments = 0;
             for (int c = first; c < last; c++) segments += math.max(0, ContourRanges[c].y - 1);
-            var near = new NativeArray<int>(math.max(1, segments), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-            var cross = new NativeArray<int>(math.max(1, segments), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-            var runs = new NativeArray<int4>(math.max(1, tile.ContourCount), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            // Scratch on the stack for every glyph a UI draws; the heap only
+            // for the rare tile with thousands of segments.
+            const int StackInts = 1536;
+            int scratchInts = 2 * math.max(1, segments) + 5 * math.max(1, tile.ContourCount);
+            int* onStack = stackalloc int[StackInts];
+            int* scratch = onStack;
+            bool heap = scratchInts > StackInts;
+            if (heap)
+                scratch = (int*)Unity.Collections.LowLevel.Unsafe.UnsafeUtility.Malloc(
+                    scratchInts * sizeof(int), 16, Allocator.Temp);
+            int* near = scratch;
+            int* cross = near + math.max(1, segments);
+            int4* runs = (int4*)(cross + math.max(1, segments));
+            int* hints = (int*)(runs + math.max(1, tile.ContourCount));
             int nearCount = 0, crossCount = 0, runCount = 0;
             int currentGroup = tile.ContourCount > 0 ? ContourGroups[first] : 0;
             int runNear = 0, runCross = 0;
@@ -268,6 +279,14 @@ namespace OneText
 
             // What the texel job's group with nothing in reach folds to.
             float empty = FoldGroup(float.MaxValue, 0);
+            // Per run, the candidate that was nearest the previous texel: the
+            // next texel's nearest is almost always it or a neighbour, and
+            // measuring it first lets the bound below skip the rest.
+            for (int r = 0; r < runCount; r++) hints[r] = runs[r].x;
+            // A tenth of a texel: orders of magnitude above the rounding in
+            // either the bound or the distance, so a skipped segment is one
+            // whose distance could not have been the minimum.
+            float margin = 0.1f * tile.UnitsPerPixel;
             int outputRow = tile.OutputStart + py * tile.Width;
             for (int px = 0; px < tile.Width; px++)
             {
@@ -277,21 +296,41 @@ namespace OneText
                 {
                     var run = runs[r];
                     float minSq = float.MaxValue;
+                    float skipSq = float.MaxValue;
                     int winding = 0;
-                    for (int k = run.x; k < run.y; k++)
+                    int hint = hints[r], nearest = hint;
+                    for (int j = run.x - 1; j < run.y; j++)
                     {
+                        // The hint first (j = run.x - 1), then everything else.
+                        int k = j < run.x ? hint : j;
+                        if (j >= run.x && k == hint) continue;
+                        if (k >= run.y) continue;
                         int s = near[k];
                         float2 a = Points[s];
                         float2 b = Points[s + 1];
-                        bool close = p.x >= math.min(a.x, b.x) - reach && p.x <= math.max(a.x, b.x) + reach &&
-                                     p.y >= math.min(a.y, b.y) - reach && p.y <= math.max(a.y, b.y) + reach;
+                        float loX = math.min(a.x, b.x), hiX = math.max(a.x, b.x);
+                        float loY = math.min(a.y, b.y), hiY = math.max(a.y, b.y);
+                        bool close = p.x >= loX - reach && p.x <= hiX + reach &&
+                                     p.y >= loY - reach && p.y <= hiY + reach;
                         if (!close) continue;
+                        // No point of the segment is nearer than its box.
+                        float bx = math.max(math.max(loX - p.x, p.x - hiX), 0f);
+                        float by = math.max(math.max(loY - p.y, p.y - hiY), 0f);
+                        if (bx * bx + by * by > skipSq) continue;
                         float2 ab = b - a;
                         float2 ap = p - a;
                         float t = math.saturate(math.dot(ap, ab) / math.max(math.dot(ab, ab), 1e-12f));
                         float2 d = ap - ab * t;
-                        minSq = math.min(minSq, math.dot(d, d));
+                        float dSq = math.dot(d, d);
+                        if (dSq < minSq)
+                        {
+                            minSq = dSq;
+                            nearest = k;
+                            float limit = math.sqrt(minSq) + margin;
+                            skipSq = limit * limit;
+                        }
                     }
+                    hints[r] = nearest;
                     for (int k = run.z; k < run.w; k++)
                     {
                         int s = cross[k];
@@ -321,9 +360,7 @@ namespace OneText
                 Output[outputRow + px] = (byte)math.round(v * 255f);
             }
 
-            near.Dispose();
-            cross.Dispose();
-            runs.Dispose();
+            if (heap) Unity.Collections.LowLevel.Unsafe.UnsafeUtility.Free(scratch, Allocator.Temp);
         }
 
         private int FindTile(int row)

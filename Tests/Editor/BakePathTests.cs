@@ -24,7 +24,7 @@ namespace OneText.Tests
         private static byte[] Bytes(string path) => File.ReadAllBytes(Path.GetFullPath(path));
 
         private (bool, bool) _burst;
-        private bool _native, _deferred, _fastEviction, _rawCopy, _rowJob, _background;
+        private bool _native, _flatten, _flat, _deferred, _fastEviction, _rawCopy, _rowJob, _background;
         private int _backgroundTexels;
 
         [SetUp]
@@ -34,6 +34,8 @@ namespace OneText.Tests
             BurstCompiler.Options.EnableBurstCompilation = true;
             BurstCompiler.Options.EnableBurstCompileSynchronously = true;
             _native = OutlineExtractor.NativeCallbacks;
+            _flatten = OutlineExtractor.NativeFlatten;
+            _flat = GlyphAtlas.FlatContours;
             _deferred = GlyphAtlas.DeferredBake;
             _fastEviction = GlyphAtlas.FastEviction;
             _rawCopy = GlyphAtlas.RawTileCopy;
@@ -48,6 +50,8 @@ namespace OneText.Tests
             BurstCompiler.Options.EnableBurstCompilation = _burst.Item1;
             BurstCompiler.Options.EnableBurstCompileSynchronously = _burst.Item2;
             OutlineExtractor.NativeCallbacks = _native;
+            OutlineExtractor.NativeFlatten = _flatten;
+            GlyphAtlas.FlatContours = _flat;
             GlyphAtlas.DeferredBake = _deferred;
             GlyphAtlas.FastEviction = _fastEviction;
             GlyphAtlas.RawTileCopy = _rawCopy;
@@ -65,9 +69,10 @@ namespace OneText.Tests
             yield return Fonts + "NotoSansVariable.ttf";
         }
 
-        private static string Points(FontData font, uint glyph, float pixelsPerUnit, bool native)
+        private static string Points(FontData font, uint glyph, float pixelsPerUnit, bool native, bool flatten = true)
         {
             OutlineExtractor.NativeCallbacks = native;
+            OutlineExtractor.NativeFlatten = flatten;
             var outline = new GlyphOutline();
             OutlineExtractor.Extract(font, glyph, outline, pixelsPerUnit);
             var sb = new StringBuilder();
@@ -92,7 +97,10 @@ namespace OneText.Tests
                     string managed = Points(font, g, ppu, native: false);
                     string native = Points(font, g, ppu, native: true);
                     if (managed != native)
-                        Assert.Fail($"{name} glyph {g} at {ppem} ppem: the native callbacks drew different points");
+                        Assert.Fail($"{name} glyph {g} at {ppem} ppem: the native flattening drew different points");
+                    string replayed = Points(font, g, ppu, native: true, flatten: false);
+                    if (managed != replayed)
+                        Assert.Fail($"{name} glyph {g} at {ppem} ppem: the replayed recording drew different points");
                     compared++;
                     if (managed.Length > 0) withPoints++;
                 }
@@ -103,6 +111,7 @@ namespace OneText.Tests
         [Test]
         public void Native_Outline_Callbacks_Draw_The_Same_Points_Bit_For_Bit()
         {
+            Assert.IsTrue(NativeOutline.RunsInBurst(), "the native path fell back to managed code; nothing would be compared");
             foreach (var path in OutlineFonts())
             {
                 using var font = FontData.Load(Bytes(path));
@@ -306,6 +315,50 @@ namespace OneText.Tests
             }
 
             Assert.AreEqual(Run(false), Run(true));
+        }
+
+        /// <summary>
+        /// Misses drawn straight into one flat buffer against misses built as
+        /// lists: same sizes, same slots, same texels, both bakes, including
+        /// the variable font, whose overlapping contours go through the
+        /// resolver (which reads lists) and the re-bake.
+        /// </summary>
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Flat_Contours_Bake_What_The_Lists_Baked(bool deferBake)
+        {
+            GlyphAtlas.FlatContours = false;
+            var lists = Script(deferBake, false);
+            GlyphAtlas.FlatContours = true;
+            var flat = Script(deferBake, false);
+            AssertPressure(lists);
+            CollectionAssert.AreEqual(lists, flat);
+
+            using var variable = FontData.Load(Bytes(Fonts + "NotoSansVariable.ttf"));
+            string Bake(bool on)
+            {
+                GlyphAtlas.FlatContours = on;
+                var shaped = new List<ShapedGlyph>();
+                using (var shaper = new Shaper()) shaper.Shape(variable, "AaBbQq&@%#WwMm8$ fi ŒœÆæ", shaped);
+                var clusters = new List<GlyphClusters.Cluster>();
+                var positioned = new List<PositionedGlyph>();
+                GlyphClusters.Split(variable, shaped, 0, shaped.Count, clusters, positioned,
+                    1000f * variable.UnitsPerEm / 56f, GlyphClusters.DefaultMergeGapUnits(variable));
+                using var atlas = new GlyphAtlas(new GlyphAtlasSettings { TextureSize = 512, LayerCount = 1 });
+                var log = new StringBuilder();
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    atlas.PrepareClusters(variable, 56f + pass * 40f, positioned, clusters, null, deferBake);
+                    foreach (var cluster in clusters)
+                    {
+                        var at = atlas.GetOrAddCluster(variable, 56f + pass * 40f, positioned, cluster.Start, cluster.Count, cluster.Hash);
+                        log.Append(at.UvRect).Append(at.OriginUnits).Append(at.SizeUnits).Append(';');
+                    }
+                    atlas.Flush();
+                }
+                return log + Texels(atlas);
+            }
+            Assert.AreEqual(Bake(false), Bake(true));
         }
 
         [Test]
