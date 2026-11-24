@@ -297,6 +297,62 @@ namespace OneText.Tests
             }
         }
 
+        /// <summary>
+        /// Pipelining switched off and on again between frames, after batches
+        /// that grew their buffers: the buffers a pipelined batch leaves
+        /// behind are let go without touching anything still in use, and the
+        /// tiles are the same throughout. (The golden A/B found the first
+        /// version releasing a set the rasterizer was still pointing at.)
+        /// </summary>
+        [Test]
+        public void Pipelining_Switched_Off_And_On_Lets_Its_Buffers_Go_Cleanly()
+        {
+            GlyphAtlas.DeferredBake = true;
+            GlyphAtlas.BackgroundBake = true;
+            GlyphAtlas.WorkerOutlines = true;
+            var reference = Script(deferBake: false, out _);
+            foreach (var (pipelined, texels) in new[] { (true, 1 << 30), (false, 1), (true, 1), (false, 1 << 30), (true, 2048) })
+            {
+                GlyphRasterizer.PipelinedBatches = pipelined;
+                GlyphAtlas.BackgroundBakeTexels = texels;
+                AssertSame(reference, Script(deferBake: true, out _), $"pipelined {pipelined} texels {texels}");
+            }
+            GlyphRasterizer.ReleaseBuffers();
+            GlyphRasterizer.PipelinedBatches = true;
+            AssertSame(reference, Script(deferBake: true, out _), "after releasing every buffer");
+
+            // Labels only ever defer, so nothing switches the rasterizer back
+            // to its own buffers between frames: a batch that grew its set is
+            // still the one in use when pipelining goes off.
+            string Frames(bool deferBake)
+            {
+                using var font = FontData.Load(Bytes(Fonts + "NotoSans.ttf"));
+                using var atlas = new GlyphAtlas(new GlyphAtlasSettings { TextureSize = 512, LayerCount = 1 });
+                var log = new StringBuilder();
+                // Small batches, each into a set; then one batch big enough to
+                // grow the set it lands in; then pipelining off.
+                var texts = new[] { "Small ones", "Grow the buffers of one batch, then let them go", "Then bake again" };
+                var sizes = new[] { 30f, 96f, 40f };
+                for (int i = 0; i < texts.Length; i++)
+                {
+                    GlyphRasterizer.PipelinedBatches = i != 2;
+                    GlyphAtlas.BackgroundBakeTexels = i == 1 ? 1 << 30 : 1;
+                    var shaped = new List<ShapedGlyph>();
+                    using (var shaper = new Shaper()) shaper.Shape(font, texts[i], shaped);
+                    var clusters = new List<GlyphClusters.Cluster>();
+                    var positioned = new List<PositionedGlyph>();
+                    GlyphClusters.Split(font, shaped, 0, shaped.Count, clusters, positioned,
+                        1000f * font.UnitsPerEm / sizes[i], GlyphClusters.DefaultMergeGapUnits(font));
+                    atlas.PrepareClusters(font, sizes[i], positioned, clusters, null, deferBake);
+                    atlas.Flush();
+                    log.Append(Texels(atlas));
+                }
+                return log.ToString();
+            }
+            GlyphRasterizer.ReleaseBuffers();
+            Assert.AreEqual(Frames(false), Frames(true));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void The_Remembered_Walk_Finds_The_Slots_The_Full_Walk_Found(bool deferBake)

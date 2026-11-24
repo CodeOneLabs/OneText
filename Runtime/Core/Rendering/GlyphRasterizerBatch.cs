@@ -280,7 +280,14 @@ namespace OneText
             if (!PipelinedBatches)
             {
                 // A set of its own from a pipelined session is idle; let it go.
-                if (flight.Set != null && flight.Set != s_syncSet) flight.Set.Release();
+                // If it is the one the statics hold, they hold its newest
+                // arrays (its fields are written back only when it stops being
+                // current), so it is put back first.
+                if (flight.Set != null && flight.Set != s_syncSet)
+                {
+                    if (s_current == flight.Set) Use(s_syncSet);
+                    flight.Set.Release();
+                }
                 flight.Set = s_syncSet;
             }
             else if (flight.Set == null || flight.Set == s_syncSet)
