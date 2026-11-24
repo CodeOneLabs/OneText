@@ -83,27 +83,76 @@ namespace OneText.Benchmarks
         private OneTextSettings _settings;
         private OneTextSettings _previousSettings;
 
+        /// <summary>
+        /// Font files to load instead of the benchmark's own, by font index,
+        /// with any beyond the third appended as further project fallbacks.
+        ///
+        /// For the row that draws exactly what a pre-baked TextMeshPro atlas
+        /// draws: the same faces cut down to the characters that atlas holds,
+        /// so a character it lacks is one this subject cannot find either.
+        /// A frame time beside TextMeshPro static's means nothing otherwise,
+        /// because that subject skips every character it was not baked with.
+        /// </summary>
+        private readonly IReadOnlyList<byte[]> _fontBytes;
+        private readonly string _tag;
+
+        /// <summary>
+        /// Codepoints to bake per font, beside the scenario's own charset, each with the font's
+        /// notdef: what a pre-baked atlas holds before the first frame (TextMeshPro static's
+        /// replacement box is baked too), so neither side bakes inside the timed loop.
+        /// </summary>
+        private readonly IReadOnlyList<IReadOnlyCollection<int>> _prewarmPerFont;
+
+        /// <summary>
+        /// Every (font index, size, text) the run will show, laid out once on the scene's own canvas
+        /// before the first label exists, so the atlas already holds every tile the timed loop will
+        /// ask for, merged clusters included: the counterpart of a static atlas baked from a known
+        /// character set. A charset prewarm cannot do this alone, because two glyphs whose ink
+        /// overlaps are baked as one tile, and which pairs meet depends on the text.
+        /// </summary>
+        private readonly IReadOnlyList<(int Font, float Size, string Text)> _ghostTexts;
+        private bool _ghosted;
+
         public OneTextSubject(GlyphAtlasSettings budget, bool prewarm = false, bool parity = false,
-            bool systemFallbackOnly = false)
+            bool systemFallbackOnly = false, IReadOnlyList<byte[]> fontBytes = null, string tag = null,
+            IReadOnlyList<IReadOnlyCollection<int>> prewarmPerFont = null,
+            IReadOnlyList<(int Font, float Size, string Text)> ghostTexts = null)
         {
             _budget = budget.Validated();
             _prewarm = prewarm;
             _parity = parity;
             _systemFallbackOnly = systemFallbackOnly;
+            _fontBytes = fontBytes;
+            _tag = tag;
+            _prewarmPerFont = prewarmPerFont;
+            _ghostTexts = ghostTexts;
         }
+
+        /// <summary>The labels this subject created, for a census of what they drew.</summary>
+        public IReadOnlyList<OneTextLabel> Labels => _labels;
 
         public string Name => $"OneText {_budget.MemoryBytes / (1024 * 1024)}MB" +
             (_prewarm ? " +prewarm" : "") +
             (_parity ? " (no system fonts)" : "") +
+            (_tag != null ? $" ({_tag})" : "") +
             (_systemFallbackOnly ? " (system fallback only)" : "") +
             (_systemFallbackOnly && !SystemFonts.RememberAnswers ? ", no memory" : "");
 
         public void Setup()
         {
-            _fonts.Add(Load(BenchFonts.Read(BenchFonts.Latin), "NotoSans"));
-            _fonts.Add(Load(BenchFonts.Read(BenchFonts.Arabic), "NotoSansArabic"));
-            if (BenchFonts.CjkPath != null)
-                _fonts.Add(Load(File.ReadAllBytes(BenchFonts.CjkPath), "SystemCJK"));
+            if (_fontBytes != null)
+            {
+                for (int i = 0; i < _fontBytes.Count; i++)
+                    _fonts.Add(Load(_fontBytes[i], i == 0 ? "NotoSans" : i == 1 ? "NotoSansArabic" :
+                        i == 2 ? "SystemCJK" : "Fallback" + i));
+            }
+            else
+            {
+                _fonts.Add(Load(BenchFonts.Read(BenchFonts.Latin), "NotoSans"));
+                _fonts.Add(Load(BenchFonts.Read(BenchFonts.Arabic), "NotoSansArabic"));
+                if (BenchFonts.CjkPath != null)
+                    _fonts.Add(Load(File.ReadAllBytes(BenchFonts.CjkPath), "SystemCJK"));
+            }
 
             _previousSystemFonts = SystemFonts.Enabled;
             if (_parity) SystemFonts.Enabled = false;
@@ -144,8 +193,29 @@ namespace OneText.Benchmarks
             return asset;
         }
 
+        private void LayOutGhosts(Transform parent)
+        {
+            _ghosted = true;
+            var go = new GameObject("GhostLabel", typeof(RectTransform), typeof(CanvasRenderer));
+            go.transform.SetParent(parent, false);
+            var label = go.AddComponent<OneTextLabel>();
+            label.rectTransform.sizeDelta = new Vector2(1200f, 40f);
+            label.Wrap = TextWrap.NoWrap;
+            label.color = Color.white;
+            foreach (var ghost in _ghostTexts)
+            {
+                label.Font = _fonts[Mathf.Min(ghost.Font, _fonts.Count - 1)];
+                label.FontSize = ghost.Size;
+                label.Text = ghost.Text;
+                Canvas.ForceUpdateCanvases();
+                AtlasFlushScheduler.FlushNow();
+            }
+            Object.DestroyImmediate(go);
+        }
+
         public object CreateLabel(Transform parent, Rect rect, float fontSize, int fontIndex)
         {
+            if (_ghostTexts != null && !_ghosted) LayOutGhosts(parent);
             var go = new GameObject("OneLabel", typeof(RectTransform), typeof(CanvasRenderer));
             go.transform.SetParent(parent, false);
             var label = go.AddComponent<OneTextLabel>();
@@ -248,6 +318,19 @@ namespace OneText.Benchmarks
             var stack = new FontStack();
             foreach (var asset in _fonts) stack.Add(asset.Font);
             AtlasPrewarm.Warm(SharedGlyphAtlas.Atlas, stack, codepoints, sizes);
+            if (_prewarmPerFont != null)
+            {
+                for (int i = 0; i < _prewarmPerFont.Count && i < _fonts.Count; i++)
+                {
+                    // One font alone, so a codepoint it lacks resolves to its own
+                    // notdef (the system tier is off in this mode) and that tile
+                    // is baked too: a private-use codepoint no scenario writes.
+                    var single = new FontStack();
+                    single.Add(_fonts[i].Font);
+                    var warm = new List<int>(_prewarmPerFont[i]) { 0xE000 };
+                    AtlasPrewarm.Warm(SharedGlyphAtlas.Atlas, single, warm, sizes);
+                }
+            }
             AtlasFlushScheduler.FlushNow();
         }
 
