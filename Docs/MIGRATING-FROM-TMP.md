@@ -328,7 +328,7 @@ end of the text, and a tag that is unknown or malformed is printed as typed.
 | `<font=name>` | a font asset in the label's named fonts, by asset name |
 | `<style=name>` | a `OneTextStyle` in the label's named styles, by asset name |
 | `<link=id>` | an id, raised through the label's `LinkClicked` event |
-| `<sprite=3>`, `<sprite=name>` | an index or a sprite name in the label's `OneTextSpriteSheet` |
+| `<sprite=3>`, `<sprite=name>`, `<sprite name="name">` | an index or a sprite name in the label's `OneTextSpriteSheet`. The `name=` form is TMP's own spelling. It is read from the release after 0.4.2; in 0.4.2 and earlier it prints literally, and `<sprite=name>` is the form to write there. |
 | `<outline>` `<shadow>` `<glow>` | optional colour and parameters, e.g. `<outline=black w=0.6>` |
 | `<ruby=reading>` | the annotation text |
 | `<josa=…>` | a Korean particle, in either of its two forms; the right one is written for the text before it |
@@ -354,9 +354,8 @@ TMP tags that print literally. The scan reports each as `unsupported-tag`.
 
 Five more differences the scan does not flag:
 
-- `<sprite name="x">` is not reported, but the parser takes everything after
-  the tag name as the sprite's name and finds no sprite called `name="x"`, so
-  the tag prints literally. Write `<sprite=x>`.
+- `<sprite name="x" tint=1>` draws the sprite, but only the name is read.
+  Whatever follows it (`tint=`, `color=`) is ignored.
 - `<voffset>`, `<cspace>` and `<mspace>` read a bare number as ems. TMP reads
   a bare number as pixels, so `<cspace=10>` is ten ems here. Rewrite such
   values in ems.
