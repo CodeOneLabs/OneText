@@ -100,7 +100,7 @@ under TMP's own names and values, so even the enum-typed lines compile.
 The Hub's **Onboarding** tab does the rest. It scans your scenes, prefabs and
 scripts, counts every TMP and legacy text component, and reports what will not
 survive — a margin with no counterpart, a tag OneText would print literally, a
-dropdown that keeps needing TMP — before it changes anything. Then it swaps
+password field that would lose its masking — before it changes anything. Then it swaps
 the components, re-points every reference and carries the listeners, and
 rewrites the mechanical type renames in your own source. Boring, on
 purpose.
@@ -109,6 +109,9 @@ You do not have to do it all in one afternoon. Tick the scenes and prefabs you
 want and convert those; the fields elsewhere in the project that named a
 component inside them are found and re-pointed anyway, so the part you did not
 convert keeps working. Scan again whenever you want to see what is left.
+
+The whole of it, finding by finding and member by member, is in
+[Docs/MIGRATING-FROM-TMP.md](Docs/MIGRATING-FROM-TMP.md).
 
 ## Status
 
@@ -164,7 +167,7 @@ features:
 
 | | |
 |---|---|
-| **Now** | Public remote and CI's first green run, the playable browser demo, the platform and IME matrix verified on real hardware, OpenUPM, a TMP migration guide in prose |
+| **Now** | Public remote and CI's first green run, the playable browser demo, the platform and IME matrix verified on real hardware, OpenUPM. The TMP migration guide in prose is written: [Docs/MIGRATING-FROM-TMP.md](Docs/MIGRATING-FROM-TMP.md) |
 | **Next** | Tate-chū-yoko, vertical editing, Thai proven against real data, COLRv1 colour variations |
 | **Later** | UI Toolkit frontend, ECS/DOTS, accessibility |
 | **1.0** | A trust claim, not a feature list: every platform verified on real hardware, CI green as a standing condition, external projects shipping on the package |

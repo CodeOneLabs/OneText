@@ -553,6 +553,70 @@ namespace OneText.Tests
         }
 
         [Test]
+        public void Sprite_CanBeAddressedByTextMeshProsNameAttribute()
+        {
+            // <sprite name="icon"> is how TextMesh Pro writes a named sprite,
+            // and so how every string in a project that came from it does. The
+            // attribute list used to be taken whole as the name, so the sheet
+            // was asked for a sprite called name="icon" and the tag printed.
+            var created = new List<Object>();
+            try
+            {
+                var sheet = NewSheet(32, 32, Color.red, created);
+                foreach (string tag in new[]
+                         {
+                             "<sprite name=\"icon\">", "<sprite name=icon>", "<sprite name='icon'>",
+                             "<sprite NAME=\"icon\">", "<sprite name = \"icon\">",
+                             "<sprite name=\"icon\" tint=1>",
+                         })
+                {
+                    var result = new RichTextResult();
+                    RichTextParser.Parse("a" + tag + "b", result, null, null, sheet.IndexOf);
+                    Assert.AreEqual(3, result.Text.Length, $"{tag} was not taken as one sprite");
+                    Assert.IsTrue(result.StyleAt(1).IsSprite, $"{tag} did not resolve");
+                    Assert.AreEqual(0, result.StyleAt(1).Sprite, tag);
+                }
+            }
+            finally
+            {
+                foreach (var o in created) if (o != null) Object.DestroyImmediate(o);
+            }
+        }
+
+        [Test]
+        public void Sprite_NameAttribute_StaysLiteralWhenItNamesNothing()
+        {
+            var created = new List<Object>();
+            try
+            {
+                var sheet = NewSheet(32, 32, Color.red, created);
+                foreach (string tag in new[]
+                         {
+                             // No such sprite; no name at all; a quote that never closes.
+                             "<sprite name=\"nosuch\">", "<sprite name=\"\">", "<sprite name=\"icon>",
+                             // A name is a name: "0" is not the first sprite.
+                             "<sprite name=\"0\">",
+                             // The two forms the migration reports as having no counterpart.
+                             "<sprite index=0>", "<sprite anim=\"0,4,10\">",
+                         })
+                {
+                    var result = new RichTextResult();
+                    RichTextParser.Parse(tag, result, null, null, sheet.IndexOf);
+                    Assert.AreEqual(tag, result.Text, $"{tag} should print as typed");
+                }
+
+                // World text has no sheet to ask, and says so the same way.
+                var unresolved = new RichTextResult();
+                RichTextParser.Parse("<sprite name=\"icon\">", unresolved, null, null, null);
+                Assert.AreEqual("<sprite name=\"icon\">", unresolved.Text);
+            }
+            finally
+            {
+                foreach (var o in created) if (o != null) Object.DestroyImmediate(o);
+            }
+        }
+
+        [Test]
         public void Sprite_CanBeAddressedByName()
         {
             var created = new List<Object>();
