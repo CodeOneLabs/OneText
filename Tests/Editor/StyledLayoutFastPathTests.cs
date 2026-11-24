@@ -76,6 +76,7 @@ namespace OneText.Tests
             TextLayoutEngine.LeanEmit = on;
             TextLayoutEngine.StyledItemization = on;
             TextLayoutEngine.SimpleTextShortcut = on;
+            TextLayoutEngine.StyledLineFastPath = on;
         }
 
         private static readonly string[] Scripts =
@@ -329,10 +330,29 @@ namespace OneText.Tests
             TextLayoutEngine.StyledItemization = false;
             engine.Layout(markup.TextSpan, settings, result);
             Assert.Greater((int)cursor.GetValue(engine), 0, "the general loop walks the cursor");
+            // Through the general path, not the single-line one, which never
+            // fills the measuring buffer.
+            TextLayoutEngine.StyledLineFastPath = false;
             TextLayoutEngine.StyledItemization = true;
             engine.Layout(markup.TextSpan, settings, result);
             Assert.AreEqual(0, (int)cursor.GetValue(engine), "the styled loop does not");
             Assert.AreEqual(3, result.Runs.Count);
+
+            var measured = (List<ShapedGlyph>)typeof(TextLayoutEngine).GetField("_measured",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(engine);
+            Assert.Greater(measured.Count, 0, "the general path measures");
+            measured.Clear();
+            TextLayoutEngine.StyledLineFastPath = true;
+            engine.Layout(markup.TextSpan, settings, result);
+            Assert.AreEqual(0, measured.Count, "the styled line does not");
+            Assert.AreEqual(3, result.Runs.Count);
+
+            // A line it would clip goes the long way.
+            settings.Overflow = TextOverflow.Ellipsis;
+            settings.MaxWidth = 10f;
+            engine.Layout(markup.TextSpan, settings, result);
+            Assert.Greater(measured.Count, 0, "a clipped line goes the long way");
+            Assert.IsTrue(result.Truncated);
         }
 
         private static void Compare(TextLayoutEngine slow, TextLayoutEngine fast, string text,
@@ -361,6 +381,10 @@ namespace OneText.Tests
             Run(slow, text, settings, expected);
             TextLayoutEngine.SimpleTextShortcut = true;
             LayoutComparison.AssertEqual(expected, actual, context + " (SimpleTextShortcut alone)");
+            TextLayoutEngine.StyledLineFastPath = false;
+            Run(slow, text, settings, expected);
+            TextLayoutEngine.StyledLineFastPath = true;
+            LayoutComparison.AssertEqual(expected, actual, context + " (StyledLineFastPath alone)");
             compared++;
         }
 

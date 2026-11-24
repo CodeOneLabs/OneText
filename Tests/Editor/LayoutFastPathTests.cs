@@ -296,6 +296,7 @@ namespace OneText.Tests
             TextLayoutEngine.LeanEmit = on;
             TextLayoutEngine.StyledItemization = on;
             TextLayoutEngine.SimpleTextShortcut = on;
+            TextLayoutEngine.StyledLineFastPath = on;
         }
 
         [Test]
