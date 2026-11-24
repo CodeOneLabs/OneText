@@ -120,7 +120,8 @@ namespace OneText
         /// <summary>
         /// Answers a left-to-right run of <paramref name="text"/> if every
         /// character in it is inert in this font, appending exactly what
-        /// <c>hb_shape</c> would. Writes nothing and returns false otherwise.
+        /// <c>hb_shape</c> would. Otherwise returns false with
+        /// <paramref name="output"/> as it was.
         /// </summary>
         internal bool TryShape(ReadOnlySpan<char> text, int start, int length, List<ShapedGlyph> output)
         {
