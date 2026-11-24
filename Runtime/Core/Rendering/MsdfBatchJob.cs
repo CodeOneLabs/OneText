@@ -29,7 +29,8 @@ namespace OneText
     /// shadow, whose offset sample lands where the three channels disagree and
     /// where the median has no advantage to offer a blurred, displaced copy.
     /// </summary>
-    [BurstCompile(FloatMode = FloatMode.Fast)]
+    // Compiled before first use; see SdfBatchJob.
+    [BurstCompile(FloatMode = FloatMode.Fast, CompileSynchronously = true)]
     internal struct MsdfBatchJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float2> Points;

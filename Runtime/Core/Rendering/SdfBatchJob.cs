@@ -30,7 +30,13 @@ namespace OneText
     /// with a binary search over the tile offsets, which costs a handful of
     /// comparisons against the tens of segments it is about to evaluate.
     /// </summary>
-    [BurstCompile(FloatMode = FloatMode.Fast)]
+    // CompileSynchronously: until Burst has compiled a job, the editor runs it
+    // as managed code, whose arithmetic is not Burst's: the first tiles of a
+    // session came out a level off in a few texels, and which tiles depended
+    // on how long the compile took (anything that delayed the first bake, a
+    // Burst function pointer compiled ahead of it included, changed them).
+    // A player only ever runs the Burst code, so the editor now does too.
+    [BurstCompile(FloatMode = FloatMode.Fast, CompileSynchronously = true)]
     internal struct SdfBatchJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float2> Points;
@@ -193,7 +199,7 @@ namespace OneText
     /// candidates folds to what the texel job's empty group folds to.
     /// <c>BakePathTests</c> holds the two jobs to the byte.
     /// </summary>
-    [BurstCompile(FloatMode = FloatMode.Default, DisableSafetyChecks = true)]
+    [BurstCompile(FloatMode = FloatMode.Default, DisableSafetyChecks = true, CompileSynchronously = true)]
     internal unsafe struct SdfRowJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float2> Points;

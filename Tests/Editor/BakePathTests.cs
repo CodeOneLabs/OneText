@@ -550,5 +550,30 @@ namespace OneText.Tests
                 foreach (var c in cases) c.font.Dispose();
             }
         }
+
+        /// <summary>
+        /// Every job that writes a tile is compiled before it first runs. Until
+        /// Burst has compiled a job the editor runs it as managed code, whose
+        /// arithmetic differs from Burst's on a few texels, so without this the
+        /// first tiles of a session depended on how long the compile took, and
+        /// anything that moved that (a Burst function pointer compiled earlier,
+        /// as OutlineExtractor.NativeCallbacks does) changed a pixel or two of
+        /// the goldens. No test inside a warm editor can see that directly; it
+        /// shows in a fresh process (GoldenAB with Burst left asynchronous).
+        /// </summary>
+        [Test]
+        public void Tile_Jobs_Are_Compiled_Before_They_First_Run()
+        {
+            foreach (var job in new[]
+            {
+                typeof(SdfBatchJob), typeof(SdfRowJob), typeof(MsdfBatchJob),
+                typeof(MsdfMarkJob), typeof(MsdfFlattenJob), typeof(OverlapScanJob),
+            })
+            {
+                var attribute = (BurstCompileAttribute)Attribute.GetCustomAttribute(job, typeof(BurstCompileAttribute));
+                Assert.IsNotNull(attribute, job.Name);
+                Assert.IsTrue(attribute.CompileSynchronously, $"{job.Name} may run as managed code until Burst catches up");
+            }
+        }
     }
 }

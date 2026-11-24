@@ -47,7 +47,7 @@ namespace OneText
     /// Two passes, because a texel's verdict depends on neighbours that must
     /// still hold their original values while it is being decided.
     /// </summary>
-    [BurstCompile(FloatMode = FloatMode.Fast)]
+    [BurstCompile(FloatMode = FloatMode.Fast, CompileSynchronously = true)]
     internal struct MsdfMarkJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<byte> Field;
@@ -177,7 +177,7 @@ namespace OneText
     /// is never touched — it is the true distance every other rule is measured
     /// against, and the shader reads it for the shadow.
     /// </summary>
-    [BurstCompile(FloatMode = FloatMode.Fast)]
+    [BurstCompile(FloatMode = FloatMode.Fast, CompileSynchronously = true)]
     internal struct MsdfFlattenJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<byte> Marks;
