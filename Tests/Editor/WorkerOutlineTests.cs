@@ -174,7 +174,7 @@ namespace OneText.Tests
         /// Everything observable, and how many glyphs went to the workers.
         /// </summary>
         private static List<string> Script(bool deferBake, out long onWorkers, int frames = 8,
-            Action<int, FontData> midFrame = null)
+            Action<int, FontData> midFrame = null, bool labelProtocol = true)
         {
             using var latin = FontData.Load(Bytes(Fonts + "NotoSans.ttf"));
             using var arabic = FontData.Load(Bytes(Fonts + "NotoSansArabic.ttf"));
@@ -211,10 +211,18 @@ namespace OneText.Tests
                     GlyphClusters.Split(font, shaped, 0, shaped.Count, clusters, positioned,
                         1000f * font.UnitsPerEm / size, GlyphClusters.DefaultMergeGapUnits(font));
                     bool located = atlas.PrepareClusters(font, size, positioned, clusters, locations, deferBake);
-                    log.Add($"f{frame} l{l} prepare {located} {locations.Count} v{atlas.Version}");
-                    foreach (var cluster in clusters)
+                    // The label's protocol: the locations when it was handed
+                    // them, a lookup per cluster otherwise. Whether it was
+                    // handed them is the one thing allowed to differ.
+                    log.Add(labelProtocol
+                        ? $"f{frame} l{l} prepare v{atlas.Version}"
+                        : $"f{frame} l{l} prepare {located} {locations.Count} v{atlas.Version}");
+                    located &= labelProtocol && locations.Count == clusters.Count;
+                    for (int ci = 0; ci < clusters.Count; ci++)
                     {
-                        var at = atlas.GetOrAddCluster(font, size, positioned, cluster.Start, cluster.Count, cluster.Hash);
+                        var cluster = clusters[ci];
+                        var at = located ? locations[ci]
+                            : atlas.GetOrAddCluster(font, size, positioned, cluster.Start, cluster.Count, cluster.Hash);
                         log.Add($"c{cluster.Hash:x} {at.HasPixels} {at.UvRect} {at.Layer} {at.OriginUnits} {at.SizeUnits} v{atlas.Version}");
                     }
                     if (l == 3)
