@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **`<sprite name="star">` draws the sprite.** That is how TextMesh Pro writes
+  a named sprite, and the Onboarding scan has always passed it as a tag
+  OneText obeys. The parser did not: a space after the tag name starts an
+  attribute list, the list was handed whole to the sprite sheet, and no sprite
+  is called `name="star"`, so the tag printed in the middle of the sentence
+  with nothing in the report to say it would. Only `<sprite=star>` worked.
+  The `name=` attribute is now read — quoted either way or bare, in any case —
+  and what TMP allows after it (`tint=1`, `color=…`) is ignored rather than
+  turning the tag back into text. `<sprite index=…>` and `<sprite anim=…>`
+  still print and are still reported, and a name the sheet does not have
+  prints as typed, like every other tag that names something missing.
 - **`SetText(int)`, `SetText(float, int)` and the span and `char[]` overloads
   draw what they were given.** They write into the label's buffer and clear its
   string, and the mesh build asked the string whether there was anything to
