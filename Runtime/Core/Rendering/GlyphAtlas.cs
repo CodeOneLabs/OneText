@@ -1506,14 +1506,7 @@ namespace OneText
             return true;
         }
 
-        public static long ProbeAlloc, ProbeEvict, ProbeRelease, ProbeAllocCalls, ProbeShelvesScanned, ProbeSpansScanned;
         private bool TryAlloc(int w, int h, out int layer, out int x, out int y, out int shelfIndex)
-        {
-            long t0 = AtlasDiagnostics.Now; ProbeAllocCalls++;
-            try { return TryAllocCore(w, h, out layer, out x, out y, out shelfIndex); }
-            finally { AtlasDiagnostics.Add(ref ProbeAlloc, t0); }
-        }
-        private bool TryAllocCore(int w, int h, out int layer, out int x, out int y, out int shelfIndex)
         {
             int wanted = ShelfHeightFor(h);
 
@@ -1522,7 +1515,7 @@ namespace OneText
                 var state = _layers[li];
                 for (int si = 0; si < state.Shelves.Count; si++)
                 {
-                    var shelf = state.Shelves[si]; ProbeShelvesScanned++;
+                    var shelf = state.Shelves[si];
                     // An empty shelf can serve anything that fits in the rows it
                     // owns, and re-types itself to that bucket; a shelf in use
                     // keeps its bucket, or short tiles would strand the slack
@@ -1545,7 +1538,7 @@ namespace OneText
                     bool scan = !FastShelfScan || shelf.FreeBound >= w;
                     for (int fi = 0; scan && fi < shelf.Free.Count; fi++)
                     {
-                        var span = shelf.Free[fi]; ProbeSpansScanned++;
+                        var span = shelf.Free[fi];
                         if (span.Width < w)
                         {
                             if (span.Width > widest) widest = span.Width;
@@ -1613,13 +1606,9 @@ namespace OneText
 
             if (_fastEviction)
             {
-                long t0 = AtlasDiagnostics.Now;
                 var chosen = FastEvictionTarget(wanted);
-                AtlasDiagnostics.Add(ref ProbeEvict, t0);
                 if (chosen == null) return false;
-                long t1 = AtlasDiagnostics.Now;
                 Release(chosen);
-                AtlasDiagnostics.Add(ref ProbeRelease, t1);
                 _evictions++;
                 Version++;
                 return true;
