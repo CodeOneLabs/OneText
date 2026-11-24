@@ -424,6 +424,9 @@ namespace OneText
         public void SetVariations(params FontVariation[] variations)
         {
             if (!IsValid) return;
+            // Outlines a job may still be drawing through handles with the old
+            // axes, or glyphs placed with them and not yet drawn, finish first.
+            OutlinesChanging?.Invoke(this);
             RetireThreadHandles(variations);
 
             unsafe
@@ -667,8 +670,44 @@ namespace OneText
             return (lo, hi, hasInk);
         }
 
+        /// <summary>
+        /// Told before this font's outlines change (<see cref="SetVariations"/>)
+        /// or its native objects are freed (<see cref="Dispose"/>), while both
+        /// are still what they were. The rendering side sets it once: it owns
+        /// per-thread handles that jobs draw outlines through
+        /// (<see cref="CreateWorkerFont"/>) and has to finish those jobs, and
+        /// destroy the handles, first.
+        /// </summary>
+        internal static Action<FontData> OutlinesChanging;
+
+        /// <summary>
+        /// A new native font over this face with this font's axes, for one job
+        /// thread to draw outlines through. The caller owns it and destroys it
+        /// (<c>hb_font_destroy</c>), before this font is disposed. It holds a
+        /// reference to the face, never to anything managed. Main thread.
+        /// </summary>
+        internal IntPtr CreateWorkerFont()
+        {
+            if (!IsValid) throw new InvalidOperationException("Font is not loaded.");
+            var font = HarfBuzzApi.hb_font_create(Face);
+            FontVariation[] axes;
+            lock (_sync) axes = _appliedVariations;
+            if (axes.Length > 0)
+            {
+                unsafe
+                {
+                    var native = stackalloc HBVariation[axes.Length];
+                    for (int i = 0; i < axes.Length; i++)
+                        native[i] = new HBVariation { Tag = StringToTag(axes[i].Tag), Value = axes[i].Value };
+                    HarfBuzzApi.hb_font_set_variations(font, native, (uint)axes.Length);
+                }
+            }
+            return font;
+        }
+
         public void Dispose()
         {
+            if (Font != IntPtr.Zero) OutlinesChanging?.Invoke(this);
             ColorGlyphs.Forget(CacheId);
             DisposeThreadHandles();
             if (Font != IntPtr.Zero) { HarfBuzzApi.hb_font_destroy(Font); Font = IntPtr.Zero; }

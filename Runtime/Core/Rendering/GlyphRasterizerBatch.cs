@@ -32,6 +32,17 @@ namespace OneText
         /// </summary>
         internal FlatContours Flat;
         internal int FlatFirst, FlatCount;
+
+        /// <summary>
+        /// Instead of contours of any kind: glyphs
+        /// <see cref="LazyFirst"/> .. + <see cref="LazyCount"/> of a
+        /// <see cref="LazyGlyphs"/>, whose outlines the batch draws on the
+        /// workers (<see cref="GlyphAtlas.WorkerOutlines"/>). Sized from their
+        /// statistics; single-channel only, and only for glyphs known to have
+        /// no overlapping contours or not known either way.
+        /// </summary>
+        internal LazyGlyphs Lazy;
+        internal int LazyFirst, LazyCount;
     }
 
     /// <summary>
@@ -72,6 +83,23 @@ namespace OneText
                 System.Array.Resize(ref Groups, size);
                 System.Array.Resize(ref Bounds, size);
             }
+        }
+
+        /// <summary>Tests: every point, range, group and bound, as bits.</summary>
+        internal string DescribeForTests()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(PointCount).Append('/').Append(ContourCount).Append(':');
+            for (int c = 0; c < ContourCount; c++)
+            {
+                var b = Bounds[c];
+                sb.Append('[').Append(Ranges[c].x).Append(',').Append(Ranges[c].y).Append(" g").Append(Groups[c])
+                    .Append(' ').Append(math.asint(b.x)).Append(',').Append(math.asint(b.y)).Append(',')
+                    .Append(math.asint(b.z)).Append(',').Append(math.asint(b.w)).Append(']');
+            }
+            for (int i = 0; i < PointCount; i++)
+                sb.Append(math.asint(Points[i].x)).Append(',').Append(math.asint(Points[i].y)).Append(' ');
+            return sb.ToString();
         }
 
         /// <summary>
@@ -169,6 +197,9 @@ namespace OneText
             internal List<RasterizedGlyph> Results;
             internal bool Precise, Scanning, ScanFirst;
             internal int Texels, Groups, Flagged;
+
+            /// <summary>Glyphs the batch draws on the workers (<see cref="RasterizeRequest.Lazy"/>).</summary>
+            internal int Outlines;
             internal long BeginTicks;
 
             /// <summary>True once the workers are done with it (main thread).</summary>
@@ -181,6 +212,26 @@ namespace OneText
 
         /// <summary>True while a background batch is baking.</summary>
         internal static bool HasFlight => s_flights.Count > 0;
+
+        /// <summary>True when a batch in flight draws outlines on the workers.</summary>
+        internal static bool FlightsUseWorkerOutlines
+        {
+            get
+            {
+                for (int i = 0; i < s_flights.Count; i++)
+                    if (s_flights[i].Outlines > 0) return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Whether the last batch scanned found overlapping contours, so the
+        /// next one will scan before it bakes. A batch that draws its outlines
+        /// on the workers cannot (the outlines do not exist until it runs), so
+        /// the atlas keeps glyphs of unknown overlap on the main thread while
+        /// this holds.
+        /// </summary>
+        internal static bool ExpectingOverlaps => ResolveOverlaps && s_expectOverlaps;
 
         /// <summary>
         /// Has the owners of every batch in flight take them, oldest first:
@@ -301,7 +352,7 @@ namespace OneText
                 {
                     var known = requests[r].KnownOverlaps;
                     if (known == null || known.Count == 0 || results[r].IsEmpty) continue;
-                    s_resolvedOf[r] = ResolveInto(requests[r], known, precise);
+                    s_resolvedOf[r] = ResolveInto(r, requests[r], known, precise);
                 }
             }
             long packStart = AtlasDiagnostics.Now;
@@ -310,6 +361,12 @@ namespace OneText
 
             long jobStart = AtlasDiagnostics.Now;
             bool scanning = ResolveOverlaps && groupCount > 0;
+            // Outlines drawn on the workers come first; everything reading the
+            // packed contours waits for them.
+            int outlines = s_packedOutlines;
+            var drawn = outlines > 0
+                ? OutlineJobs.Schedule(s_outlines, outlines, s_points, s_ranges, s_groups, s_bounds, s_kinds, s_outlineFailed)
+                : default;
             var scan = new OverlapScanJob
             {
                 Points = s_points,
@@ -323,7 +380,11 @@ namespace OneText
             flight.Results = results;
             flight.Precise = precise;
             flight.Scanning = scanning;
-            flight.ScanFirst = scanning && s_expectOverlaps;
+            // Scanning first means resolving on this thread, from outlines a
+            // batch with worker outlines does not have yet; it scans beside
+            // the fields and re-bakes what the scan flags, as any batch can.
+            flight.ScanFirst = scanning && s_expectOverlaps && outlines == 0;
+            flight.Outlines = outlines;
             flight.Texels = totalTexels;
             flight.Groups = groupCount;
             flight.Flagged = 0;
@@ -351,14 +412,18 @@ namespace OneText
             {
                 // Nobody waits here to scan by hand, so the scan is a job too,
                 // beside the fields; both only read the packed contours.
-                var fields = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
-                flight.Handle = scanning ? JobHandle.CombineDependencies(fields, scan.Schedule(groupCount, 4)) : fields;
+                var fields = Dispatch(packedPoints, totalTexels, s_descs.Count, precise, drawn);
+                flight.Handle = scanning ? JobHandle.CombineDependencies(fields, scan.Schedule(groupCount, 4, drawn)) : fields;
             }
             else
             {
-                flight.Handle = Dispatch(packedPoints, totalTexels, s_descs.Count, precise);
+                flight.Handle = Dispatch(packedPoints, totalTexels, s_descs.Count, precise, drawn);
                 long scanStart = AtlasDiagnostics.Now;
-                if (scanning) scan.Run(groupCount);
+                if (scanning)
+                {
+                    drawn.Complete();
+                    scan.Run(groupCount);
+                }
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, scanStart);
             }
             if (background) JobHandle.ScheduleBatchedJobs();
@@ -391,6 +456,7 @@ namespace OneText
             long jobStart = endStart;
             flight.Handle.Complete();
             AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
+            if (flight.Outlines > 0 && AnyOutlineFailed(flight.Outlines)) RedoFromMainThread(flight, requests, results);
 
             int bytesPerTexel = precise ? 4 : 1;
             int totalTexels = flight.Texels;
@@ -433,6 +499,59 @@ namespace OneText
             if (flight != s_syncFlight) s_spareFlights.Push(flight);
         }
 
+        private static bool AnyOutlineFailed(int count)
+        {
+            for (int i = 0; i < count; i++)
+                if (s_outlineFailed[i] != 0) return true;
+            return false;
+        }
+
+        internal static bool ReportedOutlineMismatch;
+        private static readonly FlatContours s_redoFlat = new FlatContours();
+
+        /// <summary>
+        /// A glyph a worker drew did not come to the statistics its tile was
+        /// placed from. That is a bug (a statistic recorded under the wrong
+        /// key, or a font whose outlines changed without its generation), so
+        /// it is reported once; and the batch is drawn again on this thread,
+        /// the way it would have been without worker outlines, and baked again.
+        /// A tile whose size came out different is not written by the atlas
+        /// (it checks), exactly as with any request that changed under it.
+        /// </summary>
+        private static void RedoFromMainThread(Flight flight, IReadOnlyList<RasterizeRequest> requests,
+            List<RasterizedGlyph> results)
+        {
+            if (!ReportedOutlineMismatch)
+            {
+                ReportedOutlineMismatch = true;
+                Debug.LogError("OneText: a glyph drawn on a worker thread did not match the outline its tile " +
+                    "was placed for; the batch was redrawn on the main thread. Please report this.");
+            }
+            OutlineJobs.ForgetStats();
+            if (!(requests is List<RasterizeRequest> list)) return;
+            s_redoFlat.Clear();
+            for (int r = 0; r < list.Count; r++)
+            {
+                var request = list[r];
+                if (request.Lazy == null) continue;
+                var lazy = request.Lazy;
+                int first = s_redoFlat.ContourCount;
+                for (int g = request.LazyFirst; g < request.LazyFirst + request.LazyCount; g++)
+                {
+                    var offset = new Vector2(lazy.Offsets[g].x, lazy.Offsets[g].y);
+                    OutlineExtractor.AppendFlat(lazy.Fonts[g], lazy.Glyphs[g], lazy.PixelsPerUnit[g], offset,
+                        lazy.Groups[g], s_redoFlat);
+                }
+                request.Lazy = null;
+                request.Flat = s_redoFlat;
+                request.FlatFirst = first;
+                request.FlatCount = s_redoFlat.ContourCount - first;
+                list[r] = request;
+            }
+            if (BeginBatch(requests, results, flight.Precise, background: false, flight))
+                flight.Handle.Complete();
+        }
+
         /// <summary>
         /// The tile a request will bake into, without baking it: its size, its
         /// origin and its density, or <see cref="RasterizedGlyph.IsEmpty"/>
@@ -451,7 +570,23 @@ namespace OneText
             contours = 0;
             var min = new Vector2(float.MaxValue, float.MaxValue);
             var max = new Vector2(float.MinValue, float.MinValue);
-            if (request.Flat != null)
+            if (request.Lazy != null)
+            {
+                // Each glyph's kept contours' bounds, moved: the minima and
+                // maxima of those contours' own bounds, without the contours.
+                var lazy = request.Lazy;
+                for (int g = request.LazyFirst; g < request.LazyFirst + request.LazyCount; g++)
+                {
+                    var stats = lazy.Stats[g];
+                    if (stats.Contours == 0) continue;
+                    points += stats.Points;
+                    contours += stats.Contours;
+                    var b = lazy.Bounds[g];
+                    min = Vector2.Min(min, new Vector2(b.x, b.y));
+                    max = Vector2.Max(max, new Vector2(b.z, b.w));
+                }
+            }
+            else if (request.Flat != null)
             {
                 // The contours' own bounds, which are the same minima and
                 // maxima over the same points.
@@ -519,7 +654,7 @@ namespace OneText
             bool recordSpans, out int totalPoints)
         {
             int tiles = subset?.Count ?? requests.Count;
-            int totalContours = 0, totalTexels = 0;
+            int totalContours = 0, totalTexels = 0, totalOutlines = 0;
             totalPoints = 0;
             for (int k = 0; k < tiles; k++)
             {
@@ -530,6 +665,17 @@ namespace OneText
                     var contours = s_resolved[resolved].Contours;
                     foreach (var contour in contours) totalPoints += contour.Count;
                     totalContours += contours.Count;
+                }
+                else if (requests[r].Lazy != null)
+                {
+                    var lazy = requests[r].Lazy;
+                    for (int g = requests[r].LazyFirst; g < requests[r].LazyFirst + requests[r].LazyCount; g++)
+                    {
+                        if (lazy.Stats[g].Contours == 0) continue;
+                        totalPoints += lazy.Stats[g].Points;
+                        totalContours += lazy.Stats[g].Contours;
+                        totalOutlines++;
+                    }
                 }
                 else if (requests[r].Flat != null)
                 {
@@ -548,6 +694,12 @@ namespace OneText
                 totalTexels += s_descs[r].Width * s_descs[r].Height;
             }
             GrowGeometry(totalPoints, totalContours, tiles, totalTexels, precise);
+            s_packedOutlines = 0;
+            if (totalOutlines > 0)
+            {
+                Grow(ref s_outlines, totalOutlines);
+                Grow(ref s_outlineFailed, totalOutlines);
+            }
             if (recordSpans)
             {
                 Grow(ref s_groupSpans, totalContours);
@@ -564,7 +716,11 @@ namespace OneText
                 var resolved = s_resolvedOf[r] >= 0 ? s_resolved[s_resolvedOf[r]] : null;
                 bool spans = recordSpans && resolved == null && request.KnownOverlaps == null;
                 int tileStarts = ci;
-                if (resolved == null && request.Flat != null)
+                if (resolved == null && request.Lazy != null)
+                {
+                    PackLazy(request, spans, r, ref pi, ref ci, ref groupCount);
+                }
+                else if (resolved == null && request.Flat != null)
                 {
                     PackFlat(request, spans, r, ref pi, ref ci, ref groupCount);
                 }
@@ -586,6 +742,63 @@ namespace OneText
                 s_rowEnds[k] = rowEnd;
             }
             return groupCount;
+        }
+
+        /// <summary>
+        /// <see cref="PackFlat"/> for a request whose outlines the workers
+        /// draw: the same ranges of the buffers, one span per glyph, laid out
+        /// from the glyphs' statistics, and one <see cref="OutlineItem"/> per
+        /// glyph telling the job where its points and contours go. The job
+        /// writes the points, ranges, groups, bounds and kinds PackFlat would
+        /// have copied.
+        /// </summary>
+        private static void PackLazy(in RasterizeRequest request, bool spans, int r,
+            ref int pi, ref int ci, ref int groupCount)
+        {
+            var lazy = request.Lazy;
+            FontData lastFont = null;
+            System.IntPtr handles = System.IntPtr.Zero;
+            for (int g = request.LazyFirst; g < request.LazyFirst + request.LazyCount; g++)
+            {
+                var stats = lazy.Stats[g];
+                if (stats.Contours == 0) continue;
+                var font = lazy.Fonts[g];
+                if (font != lastFont)
+                {
+                    handles = OutlineJobs.HandlesFor(font);
+                    lastFont = font;
+                }
+                if (spans)
+                {
+                    s_groupSpans[groupCount++] = new int2(ci, stats.Contours);
+                    s_groupRequest.Add(r);
+                    s_groupIds.Add(lazy.Groups[g]);
+                }
+                s_outlines[s_packedOutlines++] = new OutlineItem
+                {
+                    Fonts = handles,
+                    Glyph = lazy.Glyphs[g],
+                    PixelsPerUnit = lazy.PixelsPerUnit[g],
+                    Flatness = lazy.Flatness[g],
+                    Offset = lazy.Offsets[g],
+                    Group = lazy.Groups[g],
+                    PointStart = pi,
+                    ContourStart = ci,
+                    Points = stats.Points,
+                    Contours = stats.Contours,
+                    RawBounds = stats.Bounds,
+                };
+                // A font whose axes moved since the glyph was placed would draw
+                // another outline; the job would notice, but cannot be asked to.
+                if (font.Generation != lazy.Generations[g])
+                {
+                    var stale = s_outlines[s_packedOutlines - 1];
+                    stale.Points = -1;
+                    s_outlines[s_packedOutlines - 1] = stale;
+                }
+                pi += stats.Points;
+                ci += stats.Contours;
+            }
         }
 
         /// <summary>Points of a flat request, and the index of its first.</summary>
@@ -739,7 +952,8 @@ namespace OneText
             System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture ==
             System.Runtime.InteropServices.Architecture.Arm64;
 
-        private static JobHandle Dispatch(int totalPoints, int totalTexels, int tileCount, bool precise)
+        private static JobHandle Dispatch(int totalPoints, int totalTexels, int tileCount, bool precise,
+            JobHandle dependsOn = default)
         {
             // Scheduled, not Run(), even for the two or three tiles a single
             // label contributes. Running small batches inline was tried and
@@ -766,7 +980,7 @@ namespace OneText
                     TileCount = tileCount,
                     SpreadPixels = SpreadPixels,
                     Output = s_output,
-                }.Schedule(s_rowEnds[tileCount - 1], 2);
+                }.Schedule(s_rowEnds[tileCount - 1], 2, dependsOn);
             }
 
             if (!precise)
@@ -784,7 +998,7 @@ namespace OneText
                     SpreadPixels = SpreadPixels,
                     Cull = Cull,
                     Output = s_output,
-                }.Schedule(totalTexels, 128);
+                }.Schedule(totalTexels, 128, dependsOn);
             }
 
             NativeArray<byte>.Copy(s_flagBytes, 0, s_flags, 0, totalPoints);
@@ -805,7 +1019,7 @@ namespace OneText
                 ErrorCorrectionTexels = MsdfErrorCorrectionTexels,
                 Output = s_output,
                 WinningGroup = s_winners,
-            }.Schedule(totalTexels, 128);
+            }.Schedule(totalTexels, 128, dependsOn);
 
             // The half that needs neighbours, and so cannot ride inside the
             // job above: a median that is right at every texel it is stored
@@ -869,7 +1083,7 @@ namespace OneText
             for (int k = 0; k < s_redoRequests.Count; k++)
             {
                 int r = s_redoRequests[k];
-                s_resolvedOf[r] = ResolveInto(requests[r], s_redoGroups[k], precise);
+                s_resolvedOf[r] = ResolveInto(r, requests[r], s_redoGroups[k], precise);
             }
             return s_redoRequests.Count;
         }
@@ -878,11 +1092,31 @@ namespace OneText
         /// Resolves the named groups of one request into the next free entry of
         /// <see cref="s_resolved"/> and returns its index.
         /// </summary>
-        private static int ResolveInto(in RasterizeRequest request, List<int> groups, bool precise)
+        private static int ResolveInto(int r, in RasterizeRequest request, List<int> groups, bool precise)
         {
             int k = s_resolvedUsed++;
             if (s_resolved.Count == k) s_resolved.Add(new ResolvedContours());
-            if (request.Flat != null)
+            if (request.Lazy != null)
+            {
+                // Drawn on the workers, so the contours exist only where the
+                // job put them: the request's range of the packed buffers,
+                // which is what a flat request's lists would have held.
+                var listed = request;
+                var tile = s_tiles[r];
+                listed.Contours = new List<List<Vector2>>(tile.ContourCount);
+                listed.Groups = new List<int>(tile.ContourCount);
+                for (int c = tile.ContourStart; c < tile.ContourStart + tile.ContourCount; c++)
+                {
+                    var range = s_ranges[c];
+                    var line = new List<Vector2>(range.y);
+                    for (int i = range.x; i < range.x + range.y; i++) line.Add(new Vector2(s_points[i].x, s_points[i].y));
+                    listed.Contours.Add(line);
+                    listed.Groups.Add(s_groups[c]);
+                }
+                listed.Lazy = null;
+                ContourOverlaps.Resolve(listed, groups, precise, s_resolved[k]);
+            }
+            else if (request.Flat != null)
             {
                 // The resolver reads lists. A handful of glyphs a frame, at
                 // most, come this way.
@@ -937,6 +1171,11 @@ namespace OneText
 
         private static NativeArray<float2> s_points;
         private static NativeArray<int2> s_ranges;
+
+        // The glyphs a batch draws on the workers, and each one's verdict.
+        private static NativeArray<OutlineItem> s_outlines;
+        private static NativeArray<int> s_outlineFailed;
+        private static int s_packedOutlines;
         private static NativeArray<int> s_groups;
         private static NativeArray<float4> s_bounds;
         private static NativeArray<byte> s_kinds;
@@ -988,6 +1227,8 @@ namespace OneText
             internal NativeArray<byte> Kinds, Overlapping, Output, Flags, Marks, Winners;
             internal NativeArray<SdfTileDesc> Tiles;
             internal NativeArray<float> Orientation;
+            internal NativeArray<OutlineItem> Outlines;
+            internal NativeArray<int> OutlineFailed;
             internal List<SdfTileDesc> Descs = new List<SdfTileDesc>();
             internal List<int> GroupRequest = new List<int>(), GroupIds = new List<int>(), ResolvedOf = new List<int>();
             internal List<ResolvedContours> Resolved = new List<ResolvedContours>();
@@ -1010,6 +1251,8 @@ namespace OneText
                 GlyphRasterizer.Release(ref Winners);
                 GlyphRasterizer.Release(ref Tiles);
                 GlyphRasterizer.Release(ref Orientation);
+                GlyphRasterizer.Release(ref Outlines);
+                GlyphRasterizer.Release(ref OutlineFailed);
             }
         }
 
@@ -1029,6 +1272,7 @@ namespace OneText
             s_tileEnds = set.TileEnds; s_rowEnds = set.RowEnds; s_bounds = set.Bounds; s_kinds = set.Kinds;
             s_overlapping = set.Overlapping; s_output = set.Output; s_flags = set.Flags; s_marks = set.Marks;
             s_winners = set.Winners; s_tiles = set.Tiles; s_orientation = set.Orientation;
+            s_outlines = set.Outlines; s_outlineFailed = set.OutlineFailed;
             s_descs = set.Descs; s_groupRequest = set.GroupRequest; s_groupIds = set.GroupIds;
             s_resolvedOf = set.ResolvedOf; s_resolved = set.Resolved; s_resolvedUsed = set.ResolvedUsed;
         }
@@ -1039,6 +1283,7 @@ namespace OneText
             set.TileEnds = s_tileEnds; set.RowEnds = s_rowEnds; set.Bounds = s_bounds; set.Kinds = s_kinds;
             set.Overlapping = s_overlapping; set.Output = s_output; set.Flags = s_flags; set.Marks = s_marks;
             set.Winners = s_winners; set.Tiles = s_tiles; set.Orientation = s_orientation;
+            set.Outlines = s_outlines; set.OutlineFailed = s_outlineFailed;
             set.Descs = s_descs; set.GroupRequest = s_groupRequest; set.GroupIds = s_groupIds;
             set.ResolvedOf = s_resolvedOf; set.Resolved = s_resolved; set.ResolvedUsed = s_resolvedUsed;
         }
@@ -1119,6 +1364,9 @@ namespace OneText
             Release(ref s_orientation);
             Release(ref s_marks);
             Release(ref s_winners);
+            Release(ref s_outlines);
+            Release(ref s_outlineFailed);
+            OutlineJobs.ReleaseAll();
             s_pixels = System.Array.Empty<byte>();
             s_flagBytes = System.Array.Empty<byte>();
             // The sync set holds copies of the arrays just disposed; a copy

@@ -299,15 +299,28 @@ namespace OneText
         /// with nothing written, when the native path is not available.
         /// </summary>
         internal static bool AppendFlat(FontData font, uint glyphId, float pixelsPerUnit, Vector2 offset,
-            int group, FlatContours into)
+            int group, FlatContours into) => AppendFlat(font, glyphId, pixelsPerUnit, offset, group, into, out _);
+
+        /// <summary>
+        /// The same, also handing back what the glyph came to before it was
+        /// moved: the bounds of its kept contours and how many points and
+        /// contours they are (<see cref="GlyphFlatStats"/>), which is all a
+        /// tile needs to be sized and placed without the outline.
+        /// </summary>
+        internal static bool AppendFlat(FontData font, uint glyphId, float pixelsPerUnit, Vector2 offset,
+            int group, FlatContours into, out GlyphFlatStats stats)
         {
+            stats = default;
             if (!NativeCallbacks || !NativeFlatten) return false;
             if (font == null || !font.IsValid) throw new ArgumentException("Invalid font.", nameof(font));
             int count = NativeOutline.Record(font, glyphId, out var ops);
             if (count < 0) return false;
-            NativeOutline.AppendFlat(ops, count, pixelsPerUnit, _flatnessPixels, offset, group, into);
+            NativeOutline.AppendFlat(ops, count, pixelsPerUnit, _flatnessPixels, offset, group, into, out stats);
             return true;
         }
+
+        /// <summary>The tolerance outlines are flattened at now (see <see cref="FlatnessPixels"/>).</summary>
+        internal static float CurrentFlatness => _flatnessPixels;
 
         private static IntPtr EnsureDrawFuncs()
         {
@@ -551,7 +564,7 @@ namespace OneText
         }
 
         internal static void AppendFlat(float[] ops, int count, float pixelsPerUnit, float flatness,
-            Vector2 offset, int group, FlatContours into)
+            Vector2 offset, int group, FlatContours into, out GlyphFlatStats stats)
         {
             t_points ??= new float2[1024];
             t_starts ??= new int[64];
@@ -568,6 +581,12 @@ namespace OneText
                 if (points < 0) { t_points = new float2[t_points.Length * 2]; continue; }
                 if (contours < 0) { t_starts = new int[t_starts.Length * 2]; continue; }
                 into.Reserve(points, contours);
+                fixed (float2* p = t_points)
+                fixed (int* st = t_starts)
+                {
+                    RawStats(p, points, st, contours, out var bounds, out int kept, out int keptContours);
+                    stats = new GlyphFlatStats { Bounds = bounds, Points = kept, Contours = keptContours };
+                }
                 fixed (float2* p = t_points)
                 fixed (int* st = t_starts)
                 fixed (float2* dst = into.Points)
@@ -591,8 +610,54 @@ namespace OneText
         /// its bounds taken the way the packer takes them (<c>Vector2.Min</c>
         /// keeps the later of equal values).
         /// </summary>
+        /// <summary>
+        /// What <see cref="Offset"/> keeps of a flattened glyph, before the
+        /// move: the points and contours of every contour of two or more
+        /// points, and their bounds taken with the same comparisons. Moving
+        /// is one rounded addition per coordinate, and rounding never changes
+        /// which of two values is smaller, so the moved bounds are these plus
+        /// the offset (<see cref="OffsetBounds"/>) — the contours' own bounds,
+        /// value for value, without the contours.
+        /// </summary>
         [BurstCompile(FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard)]
-        private static void Offset(float2* points, int pointCount, int* starts, int contourCount, float offsetX, float offsetY,
+        internal static void RawStats(float2* points, int pointCount, int* starts, int contourCount,
+            out float4 bounds, out int keptPoints, out int keptContours)
+        {
+            float lx = float.MaxValue, ly = float.MaxValue, hx = float.MinValue, hy = float.MinValue;
+            keptPoints = 0;
+            keptContours = 0;
+            for (int k = 0; k < contourCount; k++)
+            {
+                int start = starts[k];
+                int end = k + 1 < contourCount ? starts[k + 1] : pointCount;
+                if (end - start < 2) continue;
+                for (int i = start; i < end; i++)
+                {
+                    float x = points[i].x, y = points[i].y;
+                    lx = lx < x ? lx : x;
+                    ly = ly < y ? ly : y;
+                    hx = hx > x ? hx : x;
+                    hy = hy > y ? hy : y;
+                }
+                keptPoints += end - start;
+                keptContours++;
+            }
+            bounds = new float4(lx, ly, hx, hy);
+        }
+
+        /// <summary>Bounds from <see cref="RawStats"/> moved as <see cref="Offset"/> moves points: one float addition each.</summary>
+        [BurstCompile(FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard)]
+        internal static void OffsetBounds(in float4 raw, float offsetX, float offsetY, out float4 moved)
+        {
+            float lx = raw.x + offsetX;
+            float ly = raw.y + offsetY;
+            float hx = raw.z + offsetX;
+            float hy = raw.w + offsetY;
+            moved = new float4(lx, ly, hx, hy);
+        }
+
+        [BurstCompile(FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard)]
+        internal static void Offset(float2* points, int pointCount, int* starts, int contourCount, float offsetX, float offsetY,
             int group, float2* dst, int dstPoints, int2* ranges, int* groups, float4* bounds, int dstContours,
             out int pointsAdded, out int contoursAdded)
         {
@@ -645,7 +710,7 @@ namespace OneText
         /// buffer was too small (nothing usable was written then).
         /// </summary>
         [BurstCompile(FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard)]
-        private static void Flatten(float* ops, int count, float pixelsPerUnit, float flatness,
+        internal static void Flatten(float* ops, int count, float pixelsPerUnit, float flatness,
             float2* points, int capacity, int* starts, int startCapacity, out int pointCount, out int contourCount)
         {
             int n = 0, contours = 0, contourStart = -1;
@@ -778,7 +843,7 @@ namespace OneText
         [BurstDiscard]
         private static void ClearIfManaged(ref bool burst) => burst = false;
 
-        private static float* Take(State* s, int floats)
+        internal static float* Take(State* s, int floats)
         {
             if (s->Count + floats > s->Capacity)
             {

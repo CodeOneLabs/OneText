@@ -49,6 +49,9 @@ namespace OneText
         /// </summary>
         public static long Heap => Enabled ? System.GC.GetTotalMemory(false) : 0L;
         public static long OutlineTicks, OutlineCount;
+
+        /// <summary>Glyphs of placed misses whose outlines a job drew (GlyphAtlas.WorkerOutlines).</summary>
+        public static long WorkerOutlineCount;
         public static long RasterizeTicks, RasterizeCount, RasterizedPixels, DispatchCount;
 
         /// <summary>
@@ -93,6 +96,13 @@ namespace OneText
         /// </summary>
         public static long PackTicks, ResolveTicks;
 
+        /// <summary>
+        /// Placing deferred misses (slot search, eviction, entry, LRU), and the
+        /// part of the flush that finishes their bakes: what the main thread
+        /// still waits for once every label is built.
+        /// </summary>
+        public static long PlaceTicks, FlushBakeTicks;
+
         public static long Now => Enabled ? Stopwatch.GetTimestamp() : 0L;
 
         public static void Add(ref long accumulator, long startedAt)
@@ -111,7 +121,7 @@ namespace OneText
             EmitShapeTicks = EmitShapeCount = 0;
             BreakTicks = SegmentTicks = ItemizeTicks = WrapTicks = AlignTicks = 0;
             LayoutBytes = MeshBytes = 0;
-            OutlineTicks = OutlineCount = 0;
+            OutlineTicks = OutlineCount = WorkerOutlineCount = 0;
             RasterizeTicks = RasterizeCount = RasterizedPixels = DispatchCount = 0;
             OverlapRebakes = 0;
             JobWaitTicks = 0;
@@ -119,6 +129,7 @@ namespace OneText
             CopyTicks = 0;
             EvictTicks = EvictCount = CompactTicks = CompactCount = 0;
             PackTicks = ResolveTicks = 0;
+            PlaceTicks = FlushBakeTicks = 0;
         }
 
         public static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;

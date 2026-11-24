@@ -567,7 +567,7 @@ namespace OneText.Tests
             foreach (var job in new[]
             {
                 typeof(SdfBatchJob), typeof(SdfRowJob), typeof(MsdfBatchJob),
-                typeof(MsdfMarkJob), typeof(MsdfFlattenJob), typeof(OverlapScanJob),
+                typeof(MsdfMarkJob), typeof(MsdfFlattenJob), typeof(OverlapScanJob), typeof(OutlineJob),
             })
             {
                 var attribute = (BurstCompileAttribute)Attribute.GetCustomAttribute(job, typeof(BurstCompileAttribute));
