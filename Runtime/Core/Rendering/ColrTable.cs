@@ -45,6 +45,28 @@ namespace OneText
         // the graph, so it is kept.
         internal readonly Dictionary<uint, bool> FollowsText = new Dictionary<uint, bool>();
 
+        // Glyphs whose graph had to be abandoned, and the smallest scale it
+        // happened at: zero when the graph itself is at fault (cyclic, too
+        // deep, cut short) and no size will draw it. Without this the caller,
+        // which is told only "not in colour", would walk the same graph to
+        // the same limit every time the label is rebuilt.
+        private readonly Dictionary<uint, float> _abandonedAt = new Dictionary<uint, float>();
+
+        /// <summary>True when drawing this glyph at this scale is already known to fail.</summary>
+        public bool IsAbandoned(uint glyphId, float pixelsPerUnit) =>
+            _abandonedAt.TryGetValue(glyphId, out float at) && pixelsPerUnit >= at;
+
+        /// <summary>
+        /// Remembers a glyph that was abandoned. <paramref name="pixelsPerUnit"/>
+        /// is the scale it ran out of room at, or zero for a graph that is
+        /// broken at any size.
+        /// </summary>
+        public void Abandon(uint glyphId, float pixelsPerUnit)
+        {
+            if (!_abandonedAt.TryGetValue(glyphId, out float at) || pixelsPerUnit < at)
+                _abandonedAt[glyphId] = pixelsPerUnit;
+        }
+
         private ColrTable(byte* data, int length)
         {
             _data = data;
@@ -53,24 +75,36 @@ namespace OneText
             // version, then the three version 0 fields, then:
             //   14 baseGlyphListOffset  18 layerListOffset  22 clipListOffset
             uint baseGlyphs = U32(14), layers = U32(18), clips = U32(22);
+            // A count is what the file says, not what the file holds. Each is
+            // cut to the records that fit, so a search never probes past the
+            // end and the same glyph gets the same answer whatever was asked
+            // for before it.
             if (baseGlyphs != 0)
             {
                 _baseGlyphs = baseGlyphs;
-                _baseGlyphCount = U32(baseGlyphs);
+                _baseGlyphCount = Fitting(U32(baseGlyphs), baseGlyphs + 4L, 6);
             }
             if (layers != 0)
             {
                 _layers = layers;
-                _layerCount = U32(layers);
+                _layerCount = Fitting(U32(layers), layers + 4L, 4);
             }
             // Format 1 is the only clip list there is.
             if (clips != 0 && U8(clips) == 1)
             {
                 _clips = clips;
-                _clipCount = U32(clips + 1);
+                _clipCount = Fitting(U32(clips + 1), clips + 5L, 7);
             }
             if (Truncated) _baseGlyphCount = 0;
             Truncated = false;
+        }
+
+        /// <summary>How many of <paramref name="count"/> records of this size lie inside the table.</summary>
+        private uint Fitting(uint count, long firstRecord, int recordSize)
+        {
+            long room = _length - firstRecord;
+            if (room <= 0) return 0;
+            return (uint)Math.Min(count, room / recordSize);
         }
 
         /// <summary>True when the table has any version 1 glyph at all.</summary>
@@ -148,6 +182,18 @@ namespace OneText
         /// binary search relies on; a font that breaks the rule loses glyphs
         /// rather than gaining wrong ones.
         /// </summary>
+        public bool TryFindRoot(uint glyphId, out uint paint)
+        {
+            // Asked from outside a walk, where nobody is watching the flag: a
+            // read that ran off the end must not be left standing to fail
+            // every lookup after it.
+            Truncated = false;
+            bool found = TryFindPaint(glyphId, out paint);
+            Truncated = false;
+            return found;
+        }
+
+        /// <summary>The same lookup from inside a walk, which abandons the glyph on a short read.</summary>
         public bool TryFindPaint(uint glyphId, out uint paint)
         {
             paint = 0;

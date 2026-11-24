@@ -29,9 +29,11 @@ namespace OneText
     /// asks for and what the browsers that draw these fonts do.
     ///
     /// A font is untrusted input. The graph may be cyclic, enormous or cut
-    /// short, so the walk has a depth limit and a node budget, and a glyph
-    /// that exceeds either — or reads past the end of the table — is
-    /// abandoned whole rather than drawn in part.
+    /// short, so the walk has a depth limit, a node budget, a work budget and
+    /// a ceiling on the scratch memory it may hold at once, and a glyph that
+    /// exceeds any of them — or reads past the end of the table — is
+    /// abandoned whole rather than drawn in part. The table remembers it, so
+    /// the limit is run into once and not on every rebuild of the label.
     /// </summary>
     internal sealed class ColrPaintRenderer
     {
@@ -43,6 +45,15 @@ namespace OneText
         // is texels times nodes: thousands of nodes at a UI size, hundreds at
         // the largest tile, and in either case far more than a real glyph has.
         private const long MaxTexelWork = 1L << 29;
+        // A composite draws its two sides on planes of their own, and composites
+        // nest, so the planes alive at once grow with depth: sixty-four levels
+        // of a full-size tile would be gigabytes. This is floats, 128 MB of
+        // them: three composites deep at the largest tile, every level there
+        // is at a UI size.
+        private const long MaxScratchFloats = 1L << 25;
+        // What the pools may keep between glyphs. One large glyph should not
+        // leave its scratch allocated for the life of the thread.
+        private const long KeptScratchFloats = 1L << 22;
         private const uint ForegroundColor = 0xFFFF;
 
         private enum Pass { Probe, Measure, Render }
@@ -124,6 +135,9 @@ namespace OneText
         private int _budget;
         private long _work;
         private bool _abandoned;
+        // Abandoned for running out of work or scratch, which a smaller tile
+        // might not; otherwise the graph is at fault at any size.
+        private bool _outgrown;
 
         // Probe
         private bool _followsText;
@@ -147,20 +161,28 @@ namespace OneText
         private struct Stop
         {
             public float Offset;
+            public int Order;   // where the font put it, for stops that share an offset
             public Color Color; // straight, text colour and alpha already resolved
         }
 
         private readonly List<Stop> _stops = new List<Stop>(8);
         private int _extend;
 
-        private static readonly Comparison<Stop> s_byOffset = (a, b) => a.Offset.CompareTo(b.Offset);
+        // Two stops at one offset are how a font writes a hard edge, and which
+        // comes first is which side of the edge it colours. List.Sort does not
+        // keep equal elements in order, so the order is part of the key.
+        private static readonly Comparison<Stop> s_byOffset = (a, b) =>
+        {
+            int byOffset = a.Offset.CompareTo(b.Offset);
+            return byOffset != 0 ? byOffset : a.Order.CompareTo(b.Order);
+        };
 
         // ------------------------------------------------------------ questions
 
         /// <summary>Whether any fill in this glyph's graph takes the text colour.</summary>
-        public bool FollowsText(ColrTable colr, uint paint)
+        public bool FollowsText(ColrTable colr, uint paint, List<Color32> palette)
         {
-            Begin(colr, null, null, default, Pass.Probe);
+            Begin(colr, null, palette, default, Pass.Probe);
             Walk(paint, Affine.Identity, null, null, 0);
             return End() && _followsText;
         }
@@ -174,7 +196,7 @@ namespace OneText
             float pixelsPerUnit, Color32 textColor, List<Color32> palette, out ColorGlyph result)
         {
             result = default;
-            if (pixelsPerUnit <= 0f) return false;
+            if (pixelsPerUnit <= 0f || colr.IsAbandoned(glyphId, pixelsPerUnit)) return false;
 
             // The font's clip box is the picture's size when it gives one.
             // Without one the graph is walked once for the outlines it clips
@@ -186,7 +208,13 @@ namespace OneText
                 _min = new Vector2(float.MaxValue, float.MaxValue);
                 _max = new Vector2(float.MinValue, float.MinValue);
                 Walk(paint, Affine.Identity, null, null, 0);
-                if (!End() || _min.x >= _max.x || _min.y >= _max.y) return false;
+                if (!End())
+                {
+                    // Nothing is drawn while measuring, so it was the graph.
+                    colr.Abandon(glyphId, 0f);
+                    return false;
+                }
+                if (_min.x >= _max.x || _min.y >= _max.y) return false;
                 min = _min;
                 max = _max;
             }
@@ -217,6 +245,7 @@ namespace OneText
             if (clip != null) ReturnMask();
 
             bool drawn = End();
+            if (!drawn) colr.Abandon(glyphId, _outgrown ? pixelsPerUnit : 0f);
             Color32[] pixels = null;
             if (drawn)
             {
@@ -235,6 +264,7 @@ namespace OneText
                 drawn = any;
             }
             ReturnPlane();
+            TrimScratch();
             if (!drawn) return false;
 
             result = new ColorGlyph
@@ -262,6 +292,7 @@ namespace OneText
             _work = MaxTexelWork;
             _texels = 0;
             _abandoned = false;
+            _outgrown = false;
             _followsText = false;
             _planesInUse = 0;
             _masksInUse = 0;
@@ -283,11 +314,12 @@ namespace OneText
         private void Walk(uint paint, in Affine transform, float[] clip, float[] target, int depth)
         {
             if (_abandoned) return;
-            if (depth > MaxDepth || --_budget < 0 || (_work -= _texels) < 0)
+            if (depth > MaxDepth || --_budget < 0)
             {
                 _abandoned = true;
                 return;
             }
+            if (!Spend(_texels)) return;
 
             var colr = _colr;
             uint format = colr.U8(paint);
@@ -310,7 +342,7 @@ namespace OneText
                 {
                     uint index = colr.U16(paint + 1);
                     float alpha = colr.F2Dot14(paint + 3);
-                    if (index == ForegroundColor) _followsText = true;
+                    if (IsTextColor(index)) _followsText = true;
                     if (_pass == Pass.Render) FillSolid(target, clip, Resolve(index, alpha));
                     break;
                 }
@@ -343,8 +375,11 @@ namespace OneText
                     }
                     else
                     {
+                        if (!Room(0, 1)) break;
                         var mask = RentMask();
-                        if (Flatten(glyph, transform, _pixelsPerUnit))
+                        // Filling costs a row's worth of work per edge, which a
+                        // glyph with tens of thousands of points makes real.
+                        if (Flatten(glyph, transform, _pixelsPerUnit) && Spend((long)_height * PointCount()))
                         {
                             ColorGlyphs.FillOutline(_outline, _pixelsPerUnit, _origin, _width, _height, mask);
                             if (clip != null)
@@ -365,6 +400,7 @@ namespace OneText
                     // whatever transform it is being reused under.
                     if (_pass == Pass.Render && colr.TryClipBox(glyph, out var lo, out var hi))
                     {
+                        if (!Room(0, 1)) break;
                         var mask = RentMask();
                         BoxMask(lo, hi, transform, mask);
                         if (clip != null)
@@ -466,6 +502,9 @@ namespace OneText
                     // Each side is drawn alone, on nothing, so the mode sees
                     // the two pictures and not whatever was already under
                     // them; the pair then goes onto the canvas as one.
+                    // Two planes cleared, blended and laid down, on top of
+                    // whatever the two sides cost to draw.
+                    if (!Room(2, 0) || !Spend(_texels * 3L)) break;
                     var under = RentPlane();
                     var over = RentPlane();
                     if (backdrop != 0) Walk(paint + backdrop, transform, clip, under, depth + 1);
@@ -496,6 +535,33 @@ namespace OneText
         {
             if (child == 0 || _colr.Truncated) return;
             Walk(paint + child, transform.Then(local), clip, target, depth + 1);
+        }
+
+        /// <summary>Takes work from the budget. False, and the glyph abandoned, when there is none left.</summary>
+        private bool Spend(long work)
+        {
+            if ((_work -= work) >= 0) return true;
+            _abandoned = _outgrown = true;
+            return false;
+        }
+
+        /// <summary>
+        /// Whether this many more planes and masks may be alive at once. False,
+        /// and the glyph abandoned, when they would pass the ceiling.
+        /// </summary>
+        private bool Room(int planes, int masks)
+        {
+            long live = (_planesInUse + planes) * 4L * _texels + (_masksInUse + masks) * (long)_texels;
+            if (live <= MaxScratchFloats) return true;
+            _abandoned = _outgrown = true;
+            return false;
+        }
+
+        private int PointCount()
+        {
+            int points = 0;
+            foreach (var contour in _outline.Contours) points += contour.Count;
+            return points;
         }
 
         // -------------------------------------------------------------- outline
@@ -548,15 +614,20 @@ namespace OneText
 
         private Color Resolve(uint paletteIndex, float alpha)
         {
-            Color color = paletteIndex != ForegroundColor && _palette != null &&
-                          paletteIndex < (uint)_palette.Count
-                ? (Color)_palette[(int)paletteIndex]
-                // The sentinel, or an index the palette does not have: a broken
-                // font is not a reason to draw nothing.
-                : _textColor;
+            // The sentinel, or an index the palette does not have: a broken
+            // font is not a reason to draw nothing.
+            Color color = IsTextColor(paletteIndex) ? _textColor : (Color)_palette[(int)paletteIndex];
             color.a *= Mathf.Clamp01(alpha);
             return color;
         }
+
+        /// <summary>
+        /// Whether a palette index is drawn in the text colour. The probe and
+        /// the fill both ask here: a tile is shared between labels of different
+        /// colours exactly when the probe says no, so the two must not differ.
+        /// </summary>
+        private bool IsTextColor(uint paletteIndex) =>
+            paletteIndex == ForegroundColor || _palette == null || paletteIndex >= (uint)_palette.Count;
 
         private void FillSolid(float[] target, float[] clip, Color color)
         {
@@ -593,11 +664,12 @@ namespace OneText
             {
                 uint stop = line + 3 + i * size;
                 uint index = colr.U16(stop + 2);
-                if (index == ForegroundColor) _followsText = true;
+                if (IsTextColor(index)) _followsText = true;
                 if (_pass != Pass.Render) continue;
                 _stops.Add(new Stop
                 {
                     Offset = colr.F2Dot14(stop),
+                    Order = (int)i,
                     Color = Resolve(index, colr.F2Dot14(stop + 4)),
                 });
             }
@@ -643,8 +715,16 @@ namespace OneText
             }
             t = first + u;
 
-            int next = 1;
-            while (next < last && _stops[next].Offset < t) next++;
+            // The first stop at or past t, from the second on. A search and not
+            // a scan: this runs per texel, and a line may have 256 stops.
+            int low = 1, high = last;
+            while (low < high)
+            {
+                int mid = (low + high) >> 1;
+                if (_stops[mid].Offset < t) low = mid + 1;
+                else high = mid;
+            }
+            int next = low;
             var from = _stops[next - 1];
             var to = _stops[next];
             float width = to.Offset - from.Offset;
@@ -803,5 +883,16 @@ namespace OneText
         }
 
         private void ReturnMask() => _masksInUse--;
+
+        /// <summary>Lets go of the pools when one glyph has left them large.</summary>
+        private void TrimScratch()
+        {
+            long kept = 0;
+            foreach (var plane in _planes) kept += plane.Length;
+            foreach (var mask in _masks) kept += mask.Length;
+            if (kept <= KeptScratchFloats) return;
+            _planes.Clear();
+            _masks.Clear();
+        }
     }
 }

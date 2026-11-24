@@ -106,7 +106,7 @@ namespace OneText
         /// do not, and keying every tile by colour would cost a miss per label
         /// colour for nothing.
         /// </summary>
-        public static unsafe bool UsesTextColor(FontData font, uint glyphId)
+        public static bool UsesTextColor(FontData font, uint glyphId)
         {
             var support = SupportedBy(font);
 
@@ -117,16 +117,27 @@ namespace OneText
             {
                 var colr = ColrTable.For(font);
                 if (colr.FollowsText.TryGetValue(glyphId, out bool follows)) return follows;
-                if (colr.TryFindPaint(glyphId, out uint paint))
+                if (colr.TryFindRoot(glyphId, out uint paint))
                 {
-                    follows = (t_painter ??= new ColrPaintRenderer()).FollowsText(colr, paint);
+                    // The palette goes with it: an index the palette does not
+                    // have is drawn in the text colour too.
+                    follows = (t_painter ??= new ColrPaintRenderer())
+                        .FollowsText(colr, paint, ReadPalette(font));
+                    // And if the graph is abandoned, the layers are what gets
+                    // drawn. Asking both costs a tile per label colour for the
+                    // rare glyph they disagree on, and never a wrong colour.
+                    if (!follows && (support & Support.Layers) != 0)
+                        follows = LayersUseTextColor(font, glyphId);
                     colr.FollowsText[glyphId] = follows;
                     return follows;
                 }
             }
 
-            if ((support & Support.Layers) == 0) return false;
+            return (support & Support.Layers) != 0 && LayersUseTextColor(font, glyphId);
+        }
 
+        private static unsafe bool LayersUseTextColor(FontData font, uint glyphId)
+        {
             uint count = 0;
             uint total = HarfBuzzApi.hb_ot_color_glyph_get_layers(font.Face, glyphId, 0, ref count, null);
             if (total == 0 || total > MaxLayers) return false;
@@ -184,7 +195,7 @@ namespace OneText
         {
             result = default;
             var colr = ColrTable.For(font);
-            if (colr == null || !colr.TryFindPaint(glyphId, out uint paint)) return false;
+            if (colr == null || !colr.TryFindRoot(glyphId, out uint paint)) return false;
 
             var painter = t_painter ??= new ColrPaintRenderer();
             return painter.TryRender(colr, font, glyphId, paint, pixelsPerUnit, textColor,

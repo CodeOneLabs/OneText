@@ -18,9 +18,13 @@
   The table is read by this package rather than through HarfBuzz. HarfBuzz
   has a paint API, and the Linux binary shipped here does not export it; a
   reader that works from the font's bytes is the same on all six platforms
-  and needed no native rebuilt. Every read is bounds-checked and the walk has
-  a depth limit, a node budget and a work budget, so a truncated, cyclic or
-  hostile table costs a glyph and not a frame.
+  and needed no native rebuilt. Every read is bounds-checked, and the walk has
+  a depth limit, a node budget, a work budget and a ceiling on the scratch
+  memory it may hold at once (128 MB, which is three nested composites at the
+  largest tile). A truncated, cyclic or hostile graph that meets one of them
+  is abandoned whole, and the glyph draws from its version 0 layers if it has
+  them and its outline if not. The failure is remembered, so the limit is met
+  once and not on every rebuild of the label.
 
   Checked two ways. `ColrV1Tests` asserts the colour at named points of an
   authored face (`Tests/Fonts~/ColrV1.ttf`, written by fontTools, so the

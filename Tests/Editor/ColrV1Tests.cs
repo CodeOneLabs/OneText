@@ -36,6 +36,11 @@ namespace OneText.Tests
         // A hundred pixels to the em: the 800-unit square is 80 texels.
         private const float Ppem = 100f;
 
+        // The glyphs a font should not contain or a renderer should not trust.
+        private const int BadPaletteIndex = 0xE100;
+        private const int HardEdge = 0xE101;
+        private const int NestedComposites = 0xE102;
+
         private static byte[] FontBytes(string path) => File.ReadAllBytes(Path.GetFullPath(path));
         private static FontData LoadFont(string path) => FontData.Load(FontBytes(path));
 
@@ -398,6 +403,115 @@ namespace OneText.Tests
         }
 
         /// <summary>Where one table sits in a font file: the directory record and the data.</summary>
+        [Test]
+        public void AbandonedGlyph_IsRemembered_SoTheLimitIsMetOnce()
+        {
+            // The caller is told only "not in colour" and draws the outline
+            // instead, and asks again the next time the label is rebuilt. A
+            // graph that runs to a limit must not run to it every time.
+            using var font = LoadFont(FontPath);
+            uint glyph = GlyphOf(font, 'w');
+            var colr = ColrTable.For(font);
+            Assert.IsFalse(colr.IsAbandoned(glyph, Ppem / font.UnitsPerEm));
+
+            Assert.IsFalse(ColorGlyphs.TryDecode(font, glyph, Ppem / font.UnitsPerEm, White, out _));
+            Assert.IsTrue(colr.IsAbandoned(glyph, Ppem / font.UnitsPerEm), "the failure was not kept");
+            // A cycle is a cycle at any size.
+            Assert.IsTrue(colr.IsAbandoned(glyph, 0.001f));
+            Assert.IsFalse(colr.IsAbandoned(GlyphOf(font, 'a'), Ppem / font.UnitsPerEm));
+        }
+
+        [Test]
+        public void NestedComposites_DrawAtAUiSize_AndAreAbandonedWhereTheirPlanesWouldNotFit()
+        {
+            // Each composite holds two planes while its backdrop is drawn, so
+            // six of them nested are thirteen planes at once. At a UI size that
+            // is nothing; at the largest tile it is hundreds of megabytes, and
+            // sixty-four levels would be gigabytes.
+            using var font = LoadFont(FontPath);
+            uint glyph = GlyphOf(font, NestedComposites);
+
+            AssertColor(Red, At(Decode(font, NestedComposites), 500, 400), "red over blue, six deep");
+
+            float large = 1200f / font.UnitsPerEm;
+            Assert.IsFalse(ColorGlyphs.TryDecode(font, glyph, large, White, out _),
+                "six nested composites were drawn on a 962-texel tile");
+            var colr = ColrTable.For(font);
+            Assert.IsTrue(colr.IsAbandoned(glyph, large));
+            // It was the size and not the graph, so the small one still draws.
+            Assert.IsFalse(colr.IsAbandoned(glyph, Ppem / font.UnitsPerEm));
+            AssertColor(Red, At(Decode(font, NestedComposites), 500, 400), "after the large one failed");
+        }
+
+        [Test]
+        public void PaletteIndexThePaletteDoesNotHave_IsTheTextColour_AndIsReportedAsOne()
+        {
+            // The tile cache shares a tile between labels of different colours
+            // unless UsesTextColor says the glyph follows the text. So what is
+            // drawn in the text colour and what is reported must be the same
+            // set, including the index a broken font invents.
+            using var font = LoadFont(FontPath);
+            Assert.IsTrue(ColorGlyphs.UsesTextColor(font, GlyphOf(font, BadPaletteIndex)));
+            AssertColor(Green, At(Decode(font, BadPaletteIndex, Green), 500, 400), "under green text");
+            AssertColor(Blue, At(Decode(font, BadPaletteIndex, Blue), 500, 400), "under blue text");
+        }
+
+        [Test]
+        public void HardEdge_KeepsItsSides_WhenTheLineHasManyStops()
+        {
+            // Two stops at one offset, red then blue, among seventeen others.
+            // Swapped, the red side would fade to blue before the edge and the
+            // blue side would start red after it.
+            using var font = LoadFont(FontPath);
+            var glyph = Decode(font, HardEdge);
+            // The line runs from x=100 to x=900, so the edge is at x=500.
+            AssertColor(Red, At(glyph, 460, 400), "just before the edge");
+            AssertColor(Red, At(glyph, 490, 400), "at the edge, on the red side");
+            AssertColor(Blue, At(glyph, 510, 400), "at the edge, on the blue side");
+            AssertColor(Blue, At(glyph, 540, 400), "just after the edge");
+        }
+
+        [Test]
+        public void AShortRead_DoesNotFailTheLookupsThatComeAfterIt()
+        {
+            using var font = LoadFont(FontPath);
+            var colr = ColrTable.For(font);
+            colr.U8(uint.MaxValue);
+            Assert.IsTrue(colr.Truncated, "the read was not past the end");
+
+            Assert.IsFalse(ColorGlyphs.UsesTextColor(font, GlyphOf(font, 'a')));
+            AssertColor(Red, At(Decode(font, 'a'), 500, 400), "a glyph looked up after a short read");
+        }
+
+        [Test]
+        public void OverstatedGlyphCount_GivesEachGlyphTheSameAnswer_WhateverWasAskedFirst()
+        {
+            // numBaseGlyphPaintRecords says there are far more records than the
+            // table holds. What such a font draws is its own problem; that it
+            // draws the same thing in any order is ours.
+            var bytes = FontBytes(FontPath);
+            var (_, table, _) = FindTable(bytes, "COLR");
+            int list = table + ((bytes[table + 14] << 24) | (bytes[table + 15] << 16) |
+                                (bytes[table + 16] << 8) | bytes[table + 17]);
+            bytes[list] = 0x7F; bytes[list + 1] = 0xFF; bytes[list + 2] = 0xFF; bytes[list + 3] = 0xFF;
+
+            var codepoints = new List<int>(EveryColourCodepoint());
+            var forward = new Dictionary<int, bool>();
+            var backward = new Dictionary<int, bool>();
+            using (var font = FontData.Load((byte[])bytes.Clone()))
+                foreach (int codepoint in codepoints)
+                    forward[codepoint] = ColorGlyphs.TryDecode(font, font.NominalGlyph(codepoint),
+                        32f / font.UnitsPerEm, White, out _);
+            using (var font = FontData.Load((byte[])bytes.Clone()))
+                for (int i = codepoints.Count - 1; i >= 0; i--)
+                    backward[codepoints[i]] = ColorGlyphs.TryDecode(font, font.NominalGlyph(codepoints[i]),
+                        32f / font.UnitsPerEm, White, out _);
+
+            foreach (int codepoint in codepoints)
+                Assert.AreEqual(forward[codepoint], backward[codepoint],
+                    $"U+{codepoint:X4} drew in one order and not in the other");
+        }
+
         private static (int Record, int Offset, int Length) FindTable(byte[] font, string tag)
         {
             int tables = (font[4] << 8) | font[5];
@@ -421,6 +535,9 @@ namespace OneText.Tests
             for (char c = 'a'; c <= 'z'; c++)
                 if (c != 'y') yield return c;
             for (int mode = 0; mode < 28; mode++) yield return 0xE000 + mode;
+            yield return BadPaletteIndex;
+            yield return HardEdge;
+            yield return NestedComposites;
         }
 
         [Test]

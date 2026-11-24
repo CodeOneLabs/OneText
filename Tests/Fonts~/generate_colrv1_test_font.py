@@ -34,6 +34,11 @@ Colour glyphs, by character:
   U+E000 + n: PaintComposite with CompositeMode n, for every mode, over two
   gradient-filled rectangles that overlap in part.
 
+The ones a font should not contain, or a renderer should not trust:
+  U+E100  a solid whose palette index the palette does not have
+  U+E101  a hard edge: nineteen stops, two of them at the same offset
+  U+E102  six composites, each the backdrop of the one above
+
 Requires fonttools.  Run from this directory:
     python3 generate_colrv1_test_font.py
 """
@@ -57,6 +62,9 @@ SHAPES = {
 }
 
 LETTERS = "abcdefghijklmnopqrstuvwxz"
+EXTRAS = {0xE100: "badindex", 0xE101: "edge", 0xE102: "deep"}
+NO_SUCH_COLOUR = 200
+NESTED_COMPOSITES = 6
 MODES = list(CompositeMode)
 
 RED, BLUE, GREEN, YELLOW, CYAN = 0, 1, 2, 3, 4
@@ -184,15 +192,36 @@ def paints():
             "Format": F.PaintComposite, "CompositeMode": mode,
             "SourcePaint": source, "BackdropPaint": backdrop,
         }
+
+    table["badindex"] = glyph("sq", solid(NO_SUCH_COLOUR))
+
+    # Red up to the middle, blue from it. The two stops at 0.5 are the edge,
+    # and there are enough stops around them that a sort which does not keep
+    # equal offsets in order has every chance to swap the pair.
+    reds = [(i * 0.05, RED, 1.0) for i in range(9)]
+    blues = [(0.6 + i * 0.05, BLUE, 1.0) for i in range(8)]
+    table["edge"] = glyph("sq", linear(
+        reds + [(0.5, RED, 1.0), (0.5, BLUE, 1.0)] + blues, (100, 0), (900, 0), (100, 800)))
+
+    # Blue at the bottom, and a red square laid over it six times. Each level
+    # holds two planes while the one below it is drawn.
+    deep = glyph("sq", solid(BLUE))
+    for _ in range(NESTED_COMPOSITES):
+        deep = {
+            "Format": F.PaintComposite, "CompositeMode": "src_over",
+            "SourcePaint": glyph("sq", solid(RED)), "BackdropPaint": deep,
+        }
+    table["deep"] = deep
     return table
 
 
 def main():
     mode_names = [f"mode{mode.value:02d}" for mode in MODES]
-    order = [".notdef", "space"] + list(SHAPES) + list(LETTERS) + mode_names
+    order = [".notdef", "space"] + list(SHAPES) + list(LETTERS) + mode_names + list(EXTRAS.values())
     cmap = {0x20: "space"}
     cmap.update({ord(c): c for c in LETTERS})
     cmap.update({0xE000 + mode.value: f"mode{mode.value:02d}" for mode in MODES})
+    cmap.update(EXTRAS)
 
     outlines = {}
     for name in order:
