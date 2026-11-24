@@ -297,6 +297,8 @@ namespace OneText.Tests
             TextLayoutEngine.StyledItemization = on;
             TextLayoutEngine.SimpleTextShortcut = on;
             TextLayoutEngine.StyledLineFastPath = on;
+            TextLayoutEngine.CachedBoldQuery = on;
+            TextStyle.FlagsFirstEquals = on;
         }
 
         [Test]

@@ -62,7 +62,11 @@ namespace OneText.Tests
         }
 
         [TearDown]
-        public void RestoreSwitches() => SetShortcuts(true);
+        public void RestoreSwitches()
+        {
+            SetShortcuts(true);
+            RichTextParser.RefStack = true;
+        }
 
         private static void SetShortcuts(bool on)
         {
@@ -77,6 +81,8 @@ namespace OneText.Tests
             TextLayoutEngine.StyledItemization = on;
             TextLayoutEngine.SimpleTextShortcut = on;
             TextLayoutEngine.StyledLineFastPath = on;
+            TextLayoutEngine.CachedBoldQuery = on;
+            TextStyle.FlagsFirstEquals = on;
         }
 
         private static readonly string[] Scripts =
@@ -353,6 +359,95 @@ namespace OneText.Tests
             engine.Layout(markup.TextSpan, settings, result);
             Assert.Greater(measured.Count, 0, "a clipped line goes the long way");
             Assert.IsTrue(result.Truncated);
+        }
+
+        // ------------------------------------------------------------- parser
+
+        private static readonly string[] s_parserExtras =
+        {
+            "<B>x</B><COLOR=#F00>y</Color>", "<color=red><b>a</color>b</b>", "<b>unclosed <i>twice",
+            "</> </b> <//> <>", "<link=a><b>x</link>y</b>", "<link=\"q\">quoted</link>",
+            "<wave amp=2 freq=1.5>w</wave><shake=3>s</shake>", "<wave>effect <bounce>nested</wave> rest</bounce>",
+            "<outline=black w=0.6>o</outline><shadow x=0.4>s</shadow><glow=cyan>g</glow>",
+            "<align=center>c</align><align=right>r", "<size=+4>rel</size>", "학생<josa=이/가> 왔다",
+            "<wait=0.5>later<wait=soon>", "1 < 2 and 3 > 2 <", "<b", "<color=#ff8800",
+            "<b><i><u><s><color=#123><mark><size=90%><cspace=0.1><mspace=1><alpha=#40>deep</b>tail",
+            "<link=x><outline><ruby=r><wave>a</ruby></outline></link></wave>",
+        };
+
+        /// <summary>
+        /// The parser with its stack read by reference and written in place,
+        /// against the same parser copying entries in and out, and the style
+        /// comparison in either order: the same text, spans, links,
+        /// alignments, effects, decorations, waits and rubies.
+        /// </summary>
+        [Test]
+        public void Parser_Stack_By_Reference_Parses_Everything_The_Same()
+        {
+            var sources = new List<string>(Corpus());
+            sources.AddRange(s_parserExtras);
+            foreach (string source in sources)
+            {
+                var slow = new RichTextResult();
+                var fast = new RichTextResult();
+                RichTextParser.RefStack = false;
+                TextStyle.FlagsFirstEquals = false;
+                RichTextParser.Parse(source, slow, StyleIndex, FontIndex);
+                RichTextParser.RefStack = true;
+                TextStyle.FlagsFirstEquals = true;
+                RichTextParser.Parse(source, fast, StyleIndex, FontIndex);
+
+                Assert.AreEqual(slow.Text, fast.Text, source + ": text");
+                Assert.AreEqual(slow.HasMarkup, fast.HasMarkup, source + ": has markup");
+                Assert.AreEqual(slow.Spans.Count, fast.Spans.Count, source + ": span count");
+                for (int i = 0; i < slow.Spans.Count; i++)
+                {
+                    Assert.AreEqual(slow.Spans[i].Start, fast.Spans[i].Start, source + ": span start");
+                    Assert.AreEqual(slow.Spans[i].Length, fast.Spans[i].Length, source + ": span length");
+                    TextStyle.FlagsFirstEquals = false;
+                    Assert.IsTrue(slow.Spans[i].Style.Equals(fast.Spans[i].Style), source + ": span style");
+                    TextStyle.FlagsFirstEquals = true;
+                }
+                CollectionAssert.AreEqual(slow.Links, fast.Links, source + ": links");
+                CollectionAssert.AreEqual(slow.Alignments, fast.Alignments, source + ": alignments");
+                CollectionAssert.AreEqual(slow.Effects, fast.Effects, source + ": effects");
+                CollectionAssert.AreEqual(slow.Decorations, fast.Decorations, source + ": decorations");
+                CollectionAssert.AreEqual(slow.Waits, fast.Waits, source + ": waits");
+                CollectionAssert.AreEqual(slow.Rubies, fast.Rubies, source + ": rubies");
+            }
+        }
+
+        [Test]
+        public void Style_Equality_Does_Not_Depend_On_The_Order_It_Asks_In()
+        {
+            // Every pair from a set that differs in one field at a time, NaN
+            // and signed zeros included, both orders.
+            var styles = new List<TextStyle> { TextStyle.Default };
+            var d = TextStyle.Default;
+            void With(System.Func<TextStyle, TextStyle> change) => styles.Add(change(d));
+            With(t => { t.SizeAbsolute = 12f; return t; });
+            With(t => { t.SizeScale = 1.5f; return t; });
+            With(t => { t.SizeScale = float.NaN; return t; });
+            With(t => { t.SizeAbsolute = -0f; return t; });
+            With(t => { t.Color = new UnityEngine.Color32(1, 2, 3, 4); return t; });
+            With(t => { t.MarkColor = new UnityEngine.Color32(1, 2, 3, 4); return t; });
+            With(t => { t.BaselineShiftEm = 0.3f; return t; });
+            With(t => { t.LetterSpacingEm = 0.1f; return t; });
+            With(t => { t.MonoAdvanceEm = 0.6f; return t; });
+            With(t => { t.AlphaOverride = 9; return t; });
+            With(t => { t.NamedStyle = 2; return t; });
+            With(t => { t.FontOverride = 1; return t; });
+            With(t => { t.Flags |= TextStyle.Flag.Bold; return t; });
+            With(t => { t.Sprite = 4; return t; });
+            int count = styles.Count;
+            for (int i = 0; i < count; i++)
+            for (int j = 0; j < count; j++)
+            {
+                TextStyle.FlagsFirstEquals = false;
+                bool expected = styles[i].Equals(styles[j]);
+                TextStyle.FlagsFirstEquals = true;
+                Assert.AreEqual(expected, styles[i].Equals(styles[j]), $"{styles[i]} vs {styles[j]}");
+            }
         }
 
         private static void Compare(TextLayoutEngine slow, TextLayoutEngine fast, string text,

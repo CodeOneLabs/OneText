@@ -271,7 +271,54 @@ namespace OneText
         /// today, and a field that quietly stops being safe when it is not is
         /// worse than one that was never shared.
         /// </summary>
-        [ThreadStatic] private static List<Open> s_stack;
+        [ThreadStatic] private static OpenStack s_stack;
+
+        /// <summary>
+        /// The open-tag stack: a list of <see cref="Open"/> that hands its
+        /// entries out by reference.
+        ///
+        /// An entry is a hundred and thirty bytes (a whole style to restore,
+        /// and the bookkeeping of every tag that needs any), and a
+        /// <see cref="List{T}"/> indexer copies all of it to answer one
+        /// question about one field. Closing a tag asked the top entry its
+        /// name, copied it to keep, copied it again per question and once
+        /// more for the style; opening one built it on the stack and copied it
+        /// in. Removal clears what it removes, as the list's does, so a link
+        /// id or a ruby string is not kept alive by a slot nobody reads.
+        /// </summary>
+        private sealed class OpenStack
+        {
+            private Open[] _items = new Open[8];
+
+            public int Count { get; private set; }
+
+            public ref Open this[int index] => ref _items[index];
+
+            public void Add(in Open open) => Push() = open;
+
+            /// <summary>A cleared slot on top of the stack, to be written in place.</summary>
+            public ref Open Push()
+            {
+                if (Count == _items.Length) Array.Resize(ref _items, _items.Length * 2);
+                return ref _items[Count++];
+            }
+
+            public void RemoveRange(int index, int count)
+            {
+                Array.Clear(_items, index, count);
+                Count = index;
+            }
+
+            public void Clear() => RemoveRange(0, Count);
+        }
+
+        /// <summary>
+        /// Whether the common open tags are written into their stack slot in
+        /// place and closing reads entries by reference, instead of building
+        /// and copying whole entries. Same results either way; a switch so
+        /// the two can be measured and held against each other.
+        /// </summary>
+        public static bool RefStack = true;
 
         /// <summary>
         /// The result being written to. A field rather than a parameter because
@@ -332,7 +379,7 @@ namespace OneText
                 return;
             }
 
-            var stack = s_stack ??= new List<Open>();
+            var stack = s_stack ??= new OpenStack();
             stack.Clear();
             s_result = result;
             var style = TextStyle.Default;
@@ -686,7 +733,7 @@ namespace OneText
         /// only tags that still allocate.
         /// </summary>
         private static bool ApplyOpen(string name, ReadOnlySpan<char> source, int argStart, int argLength,
-            bool hasArgument, List<Open> stack,
+            bool hasArgument, OpenStack stack,
             RichTextResult result, int position, TextStyle current,
             Func<string, int> styleNames, Func<string, int> fontNames, Func<string, int> spriteNames,
             ref TextStyle style, ref int sprite, ref string josa)
@@ -924,7 +971,7 @@ namespace OneText
                 }
             }
 
-            stack.Add(new Open { Name = name, Previous = previous });
+            Push(stack, name, previous);
             return true;
         }
 
@@ -942,7 +989,7 @@ namespace OneText
         /// the general way.
         /// </summary>
         private static bool TryApplyCommonOpen(string name, ReadOnlySpan<char> source, int argStart,
-            int argLength, bool hasArgument, List<Open> stack, TextStyle current, ref TextStyle style,
+            int argLength, bool hasArgument, OpenStack stack, TextStyle current, ref TextStyle style,
             out bool consumed)
         {
             TextStyle.Flag flag;
@@ -960,7 +1007,7 @@ namespace OneText
                 }
                 style.Color = color;
                 style.Flags |= TextStyle.Flag.HasColor;
-                stack.Add(new Open { Name = name, Previous = current });
+                Push(stack, name, current);
                 consumed = true;
                 return true;
             }
@@ -976,12 +1023,25 @@ namespace OneText
                 return true;
             }
             style.Flags |= flag;
-            stack.Add(new Open { Name = name, Previous = current });
+            Push(stack, name, current);
             consumed = true;
             return true;
         }
 
-        private static bool ApplyClose(string name, List<Open> stack, RichTextResult result,
+        /// <summary>An entry that restores <paramref name="previous"/> and carries nothing else.</summary>
+        private static void Push(OpenStack stack, string name, in TextStyle previous)
+        {
+            if (!RefStack)
+            {
+                stack.Add(new Open { Name = name, Previous = previous });
+                return;
+            }
+            ref var open = ref stack.Push();
+            open.Name = name;
+            open.Previous = previous;
+        }
+
+        private static bool ApplyClose(string name, OpenStack stack, RichTextResult result,
             int position, ref TextStyle style)
         {
             if (stack.Count == 0) return false;
@@ -994,6 +1054,30 @@ namespace OneText
                 // dropping the text would be the worse answer.
                 while (index >= 0 && stack[index].Name != name) index--;
                 if (index < 0) return false;
+            }
+
+            if (FastPath && RefStack)
+            {
+                // The walk below, reading each entry where it lies instead
+                // of copying it out to look at it.
+                for (int i = stack.Count - 1; i >= index; i--)
+                {
+                    ref var entry = ref stack[i];
+                    string entryName = entry.Name;
+                    if (entryName == "link")
+                        result.Links.Add(new TextLink(entry.LinkId, entry.LinkStart, position - entry.LinkStart));
+                    if (entryName == "align")
+                        result.Alignments.Add((position, entry.HadAlignment
+                            ? entry.PreviousAlignment
+                            : DefaultAlignmentMarker));
+                    if (entryName == "ruby") CloseRuby(result, entry, position);
+                    if (IsDecoration(entryName)) CloseDecoration(result, entry.DecorationIndex, position);
+                    if (BuiltInEffects.Has(entryName))
+                        result.Effects.Add((entryName, entry.EffectParameters, entry.EffectStart, position));
+                }
+                style = stack[index].Previous;
+                stack.RemoveRange(index, stack.Count - index);
+                return true;
             }
 
             var open = stack[index];

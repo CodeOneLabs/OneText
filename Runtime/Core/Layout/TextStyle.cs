@@ -151,7 +151,38 @@ namespace OneText
             return color;
         }
 
-        public bool Equals(TextStyle other) =>
+        public bool Equals(TextStyle other)
+        {
+            if (FlagsFirstEquals)
+            {
+                // The same twelve comparisons, the ones most likely to differ
+                // first: two adjacent styles nearly always differ in a flag
+                // (a <b>, an <i>, a colour's HasColor) and the order below
+                // asked eleven other questions before that one. A conjunction
+                // of side-effect-free tests has one answer in any order.
+                return Flags == other.Flags &&
+                       ColorEquals(Color, other.Color) &&
+                       SizeScale.Equals(other.SizeScale) &&
+                       SizeAbsolute.Equals(other.SizeAbsolute) &&
+                       NamedStyle == other.NamedStyle &&
+                       FontOverride == other.FontOverride &&
+                       Sprite == other.Sprite &&
+                       AlphaOverride == other.AlphaOverride &&
+                       ColorEquals(MarkColor, other.MarkColor) &&
+                       BaselineShiftEm.Equals(other.BaselineShiftEm) &&
+                       LetterSpacingEm.Equals(other.LetterSpacingEm) &&
+                       MonoAdvanceEm.Equals(other.MonoAdvanceEm);
+            }
+            return EqualsInDeclarationOrder(other);
+        }
+
+        /// <summary>
+        /// Whether <see cref="Equals(TextStyle)"/> compares the flags first.
+        /// Same answer either way; a switch so the order can be measured.
+        /// </summary>
+        public static bool FlagsFirstEquals = true;
+
+        private bool EqualsInDeclarationOrder(in TextStyle other) =>
             SizeAbsolute.Equals(other.SizeAbsolute) &&
             SizeScale.Equals(other.SizeScale) &&
             ColorEquals(Color, other.Color) &&

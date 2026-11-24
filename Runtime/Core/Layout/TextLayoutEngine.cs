@@ -158,6 +158,7 @@ namespace OneText
         {
             result.Clear();
             _spanCursor = 0;
+            _boldFont = null;
             _rubies.Clear();
             _edgeGive = settings.PunctuationCompression;
             var primary = settings.Fonts?.Primary;
@@ -799,7 +800,7 @@ namespace OneText
                     FontSize = item.FontSize,
                     Style = item.Style,
                     BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
-                    SyntheticBold = NeedsSyntheticBold(settings, item),
+                    SyntheticBold = SyntheticBoldFor(settings, item),
                     Rotated = item.Rotated,
                 };
             }
@@ -1812,6 +1813,39 @@ namespace OneText
             settings.Fonts != null && !settings.Fonts.HasBold(item.Font);
 
         /// <summary>
+        /// <see cref="NeedsSyntheticBold"/>, remembering the stack's answer
+        /// for the last face asked within this layout.
+        ///
+        /// <see cref="FontStack.HasBold"/> finds the face's family by walking
+        /// every entry's faces and then looks the bold up, and a bold label
+        /// asks it once per run about the same one or two faces. The answer
+        /// can only change when the stack does, and a stack is not changed in
+        /// the middle of a layout, so the memory is dropped at the start of
+        /// each one.
+        /// </summary>
+        private bool SyntheticBoldFor(in TextLayoutSettings settings, in Item item)
+        {
+            if (!CachedBoldQuery) return NeedsSyntheticBold(settings, item);
+            if (!item.Style.Bold || item.Style.FontOverride >= 0 || item.Style.IsSprite ||
+                settings.Fonts == null) return false;
+            if (!ReferenceEquals(item.Font, _boldFont))
+            {
+                _boldFont = item.Font;
+                _boldFontHasBold = settings.Fonts.HasBold(item.Font);
+            }
+            return !_boldFontHasBold;
+        }
+
+        /// <summary>
+        /// Whether <see cref="SyntheticBoldFor"/> remembers the stack's answer
+        /// within a layout. Same answer either way.
+        /// </summary>
+        public static bool CachedBoldQuery = true;
+
+        private FontData _boldFont;
+        private bool _boldFontHasBold;
+
+        /// <summary>
         /// Reads a variation selector following this character.
         ///
         /// U+FE0E and U+FE0F are how Unicode lets a codepoint that has both a
@@ -2588,7 +2622,7 @@ namespace OneText
                     FontSize = item.FontSize,
                     Style = item.Style,
                     BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
-                SyntheticBold = NeedsSyntheticBold(settings, item),
+                SyntheticBold = SyntheticBoldFor(settings, item),
                     Rotated = item.Rotated,
                 };
             }
@@ -2677,7 +2711,7 @@ namespace OneText
                 FontSize = item.FontSize,
                 Style = item.Style,
                 BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
-                SyntheticBold = NeedsSyntheticBold(settings, item),
+                SyntheticBold = SyntheticBoldFor(settings, item),
                 Rotated = item.Rotated,
             };
         }
