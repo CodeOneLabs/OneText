@@ -56,6 +56,13 @@ namespace OneText
         internal IntPtr Face { get; private set; }
         internal IntPtr Font { get; private set; }
 
+        // The file the face was opened from, as HarfBuzz was handed it, for
+        // the tables this package reads itself (see TryGetTable). Borrowed by
+        // variants along with the face.
+        private IntPtr _fileBytes;
+        private uint _fileLength;
+        private uint _faceIndex;
+
         /// <summary>Design units per em (typically 1000 or 2048).</summary>
         public uint UnitsPerEm { get; private set; }
 
@@ -212,6 +219,9 @@ namespace OneText
 
         private void Open(IntPtr bytes, uint length, uint faceIndex)
         {
+            _fileBytes = bytes;
+            _fileLength = length;
+            _faceIndex = faceIndex;
             Blob = HarfBuzzApi.hb_blob_create(bytes, length,
                 HarfBuzzApi.HB_MEMORY_MODE_READONLY, IntPtr.Zero, IntPtr.Zero);
             Face = HarfBuzzApi.hb_face_create(Blob, faceIndex);
@@ -285,11 +295,64 @@ namespace OneText
                 Font = HarfBuzzApi.hb_font_create(Face),
                 UnitsPerEm = UnitsPerEm,
                 _ownsFace = false,
+                _fileBytes = _fileBytes,
+                _fileLength = _fileLength,
+                _faceIndex = _faceIndex,
             };
             variant.ReadMetrics();
             if (variations is { Length: > 0 }) variant.SetVariations(variations);
             return variant;
         }
+
+        /// <summary>
+        /// One table of this face, read in place from the font file.
+        ///
+        /// HarfBuzz would hand the same bytes over through
+        /// <c>hb_face_reference_table</c>, and that entry point is not in
+        /// every binary this package ships: the Linux build exports a short
+        /// list and stops before it. The table directory is twelve bytes and
+        /// sixteen per table, so it is walked here instead, on every platform
+        /// alike. The pointer is good for as long as this font is.
+        /// </summary>
+        internal unsafe bool TryGetTable(uint tag, out IntPtr data, out int length)
+        {
+            data = IntPtr.Zero;
+            length = 0;
+            byte* file = (byte*)_fileBytes;
+            long size = _fileLength;
+            if (file == null || size < 12) return false;
+
+            long directory = 0;
+            if (BigEndian32(file) == 0x74746366u) // 'ttcf': a collection
+            {
+                // The low sixteen bits of a HarfBuzz face index name the face;
+                // the rest names an instance of it.
+                uint face = _faceIndex & 0xFFFFu;
+                uint faces = BigEndian32(file + 8);
+                if (face >= faces || 12 + 4L * (face + 1) > size) return false;
+                directory = BigEndian32(file + 12 + 4 * face);
+            }
+            if (directory + 12 > size) return false;
+
+            int tables = (file[directory + 4] << 8) | file[directory + 5];
+            for (int i = 0; i < tables; i++)
+            {
+                long record = directory + 12 + 16L * i;
+                if (record + 16 > size) return false;
+                if (BigEndian32(file + record) != tag) continue;
+
+                long offset = BigEndian32(file + record + 8);
+                long bytes = BigEndian32(file + record + 12);
+                if (bytes <= 0 || offset + bytes > size || bytes > int.MaxValue) return false;
+                data = (IntPtr)(file + offset);
+                length = (int)bytes;
+                return true;
+            }
+            return false;
+        }
+
+        private static unsafe uint BigEndian32(byte* p) =>
+            ((uint)p[0] << 24) | ((uint)p[1] << 16) | ((uint)p[2] << 8) | p[3];
 
         private void ReadMetrics()
         {
@@ -571,6 +634,8 @@ namespace OneText
             }
             Face = IntPtr.Zero;
             Blob = IntPtr.Zero;
+            _fileBytes = IntPtr.Zero;
+            _fileLength = 0;
             GC.SuppressFinalize(this);
         }
 

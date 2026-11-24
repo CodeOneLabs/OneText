@@ -53,7 +53,7 @@ namespace OneText
     /// platform fact rather than a decision, and it is recorded in
     /// <c>Docs/NATIVES.md</c>.</para>
     ///
-    /// <para><b>Colour.</b> A system face that carries CBDT, sbix or COLRv0
+    /// <para><b>Colour.</b> A system face that carries CBDT, sbix, COLRv0 or COLRv1
     /// goes through the same colour path as a bundled one; nothing here knows
     /// the difference. HarfBuzz hands over the PNG of an sbix strike the way it
     /// does a CBDT one, so Apple Color Emoji draws in colour on macOS.</para>

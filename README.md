@@ -35,7 +35,8 @@ One package. Every feature. Nothing sold separately.
 - **Shaping & bidi** — HarfBuzz GSUB/GPOS and full UAX #9. Arabic, Devanagari,
   Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking.
 - **Rich text & emoji** — named styles, inline sprites, colour emoji including
-  ZWJ sequences, flags and skin tones.
+  ZWJ sequences, flags and skin tones, from bitmap, layered (COLRv0) and
+  paint-graph (COLRv1) fonts alike.
 - **Text animation** — typewriter by grapheme, cluster or syllable,
   per-punctuation pauses, `<wait=>`, skip, per-unit callbacks, an effects API.
 - **Asian typography** — kinsoku, punctuation compression, CJK–Latin spacing,
@@ -164,7 +165,7 @@ features:
 | | |
 |---|---|
 | **Now** | Public remote and CI's first green run, the playable browser demo, the platform and IME matrix verified on real hardware, OpenUPM, a TMP migration guide in prose |
-| **Next** | COLRv1, tate-chū-yoko, vertical editing, Thai proven against real data |
+| **Next** | Tate-chū-yoko, vertical editing, Thai proven against real data, COLRv1 colour variations |
 | **Later** | UI Toolkit frontend, ECS/DOTS, accessibility |
 | **1.0** | A trust claim, not a feature list: every platform verified on real hardware, CI green as a standing condition, external projects shipping on the package |
 
