@@ -512,13 +512,26 @@ namespace OneText.Tests
                     "AaBbQq&@%#WwMm8$ fi"));
                 cases.Add(("cff", FontData.Load(Bytes(Fonts + "CffShapes.otf")), "ABCDEFabcdef0123"));
                 if (File.Exists("/System/Library/Fonts/AppleSDGothicNeo.ttc"))
+                {
+                    var random = new System.Random(5);
+                    var syllables = new StringBuilder("한글 글리프 아틀라스 굽기 똠방각하 뷁 漢字 ");
+                    for (int i = 0; i < 160; i++) syllables.Append((char)(0xAC00 + random.Next(11172)));
                     cases.Add(("hangul", FontData.Load(File.ReadAllBytes("/System/Library/Fonts/AppleSDGothicNeo.ttc")),
-                        "한글 글리프 아틀라스 굽기 똠방각하 뷁 漢字"));
+                        syllables.ToString()));
+                }
+                if (File.Exists("/System/Library/Fonts/Hiragino Sans GB.ttc"))
+                {
+                    var random = new System.Random(6);
+                    var han = new StringBuilder();
+                    for (int i = 0; i < 120; i++) han.Append((char)(0x4E00 + random.Next(6000)));
+                    cases.Add(("han (CFF)", FontData.Load(File.ReadAllBytes("/System/Library/Fonts/Hiragino Sans GB.ttc")),
+                        han.ToString()));
+                }
 
                 long texels = 0;
                 foreach (var (name, font, text) in cases)
                 {
-                    var requests = ClusterRequests(font, text, new[] { 12f, 24f, 40f, 96f, 200f });
+                    var requests = ClusterRequests(font, text, new[] { 12f, 18f, 24f, 33f, 40f, 96f, 200f });
                     GlyphRasterizer.RowJob = false;
                     var texel = Bake(requests);
                     GlyphRasterizer.RowJob = true;
@@ -530,7 +543,7 @@ namespace OneText.Tests
                         CollectionAssert.AreEqual(texel[i], row[i], $"{name} request {i}");
                     }
                 }
-                Assert.Greater(texels, 1_000_000, "too few texels compared to mean anything");
+                Assert.Greater(texels, 10_000_000, "too few texels compared to mean anything");
             }
             finally
             {

@@ -443,6 +443,10 @@ namespace OneText
             public int LiveTiles;
             public readonly List<Span> Free = new List<Span>();
 
+            // No free span is wider than this (an upper bound, tightened to
+            // the exact widest whenever a scan finds nothing that fits).
+            public int FreeBound;
+
             // The tiles on this shelf, oldest first (FastEviction).
             public Entry Head, Tail;
 
@@ -1203,6 +1207,17 @@ namespace OneText
         /// </summary>
         public static bool FastEviction = true;
 
+        /// <summary>
+        /// Off has every allocation look at every free span of every shelf of
+        /// the wanted height. Under sustained pressure the shelves fill with
+        /// slivers too narrow for anything, and a frame of two hundred new
+        /// glyphs spent 1.4 ms walking ~360,000 of them. On keeps an upper
+        /// bound on each shelf's widest free span and skips the walk when the
+        /// tile is wider; the bound is exact again after any walk that finds
+        /// nothing. The same span is chosen either way.
+        /// </summary>
+        public static bool FastShelfScan = true;
+
         private readonly bool _fastEviction;
         private readonly Dictionary<int, Bucket> _buckets = new Dictionary<int, Bucket>();
 
@@ -1491,7 +1506,14 @@ namespace OneText
             return true;
         }
 
+        public static long ProbeAlloc, ProbeEvict, ProbeRelease, ProbeAllocCalls, ProbeShelvesScanned, ProbeSpansScanned;
         private bool TryAlloc(int w, int h, out int layer, out int x, out int y, out int shelfIndex)
+        {
+            long t0 = AtlasDiagnostics.Now; ProbeAllocCalls++;
+            try { return TryAllocCore(w, h, out layer, out x, out y, out shelfIndex); }
+            finally { AtlasDiagnostics.Add(ref ProbeAlloc, t0); }
+        }
+        private bool TryAllocCore(int w, int h, out int layer, out int x, out int y, out int shelfIndex)
         {
             int wanted = ShelfHeightFor(h);
 
@@ -1500,7 +1522,7 @@ namespace OneText
                 var state = _layers[li];
                 for (int si = 0; si < state.Shelves.Count; si++)
                 {
-                    var shelf = state.Shelves[si];
+                    var shelf = state.Shelves[si]; ProbeShelvesScanned++;
                     // An empty shelf can serve anything that fits in the rows it
                     // owns, and re-types itself to that bucket; a shelf in use
                     // keeps its bucket, or short tiles would strand the slack
@@ -1515,10 +1537,20 @@ namespace OneText
                         continue;
                     }
 
-                    for (int fi = 0; fi < shelf.Free.Count; fi++)
+                    // A fragmented shelf can hold hundreds of slivers; when
+                    // none of them can be wide enough there is no reason to
+                    // look at them (FastShelfScan). The first that fits is
+                    // still the first in the list.
+                    int widest = 0;
+                    bool scan = !FastShelfScan || shelf.FreeBound >= w;
+                    for (int fi = 0; scan && fi < shelf.Free.Count; fi++)
                     {
-                        var span = shelf.Free[fi];
-                        if (span.Width < w) continue;
+                        var span = shelf.Free[fi]; ProbeSpansScanned++;
+                        if (span.Width < w)
+                        {
+                            if (span.Width > widest) widest = span.Width;
+                            continue;
+                        }
                         x = span.X;
                         y = shelf.Y;
                         layer = li;
@@ -1528,6 +1560,7 @@ namespace OneText
                         shelf.LiveTiles++;
                         return true;
                     }
+                    if (scan) shelf.FreeBound = widest;
 
                     if (shelf.X + w <= _textureSize)
                     {
@@ -1580,9 +1613,13 @@ namespace OneText
 
             if (_fastEviction)
             {
+                long t0 = AtlasDiagnostics.Now;
                 var chosen = FastEvictionTarget(wanted);
+                AtlasDiagnostics.Add(ref ProbeEvict, t0);
                 if (chosen == null) return false;
+                long t1 = AtlasDiagnostics.Now;
                 Release(chosen);
+                AtlasDiagnostics.Add(ref ProbeRelease, t1);
                 _evictions++;
                 Version++;
                 return true;
@@ -1705,11 +1742,13 @@ namespace OneText
                     }
                 }
                 shelf.Free.Add(span);
+                if (span.Width > shelf.FreeBound) shelf.FreeBound = span.Width;
             }
 
             if (!shelf.IsEmpty) return;
 
             shelf.Free.Clear();
+            shelf.FreeBound = 0;
             shelf.X = 0;
             shelf.Height = shelf.Capacity; // free to serve any bucket again
             // An empty shelf at the top of the layer gives its rows back. Only

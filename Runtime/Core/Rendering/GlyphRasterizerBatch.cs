@@ -666,6 +666,16 @@ namespace OneText
         /// </summary>
         public static bool RowJob = true;
 
+        /// <summary>
+        /// The row job reproduces the texel job's compiled arithmetic as ARM64
+        /// executes it (its fused operations included), and has been held to
+        /// it there. Elsewhere the texel job's own code generation differs and
+        /// has not been measured, so it keeps baking.
+        /// </summary>
+        private static readonly bool s_rowJobMatches =
+            System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture ==
+            System.Runtime.InteropServices.Architecture.Arm64;
+
         private static JobHandle Dispatch(int totalPoints, int totalTexels, int tileCount, bool precise)
         {
             // Scheduled, not Run(), even for the two or three tiles a single
@@ -679,7 +689,7 @@ namespace OneText
             // nearly all of that time is the work, spread across cores. Taking
             // the scheduler away does not remove a cost, it removes the
             // parallelism that was paying for it.
-            if (!precise && RowJob && Cull)
+            if (!precise && RowJob && Cull && s_rowJobMatches)
             {
                 return new SdfRowJob
                 {
