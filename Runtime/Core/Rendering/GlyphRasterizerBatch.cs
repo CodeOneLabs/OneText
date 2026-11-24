@@ -200,6 +200,17 @@ namespace OneText
 
             /// <summary>Glyphs the batch draws on the workers (<see cref="RasterizeRequest.Lazy"/>).</summary>
             internal int Outlines;
+
+            // OverlapsOnWorkers: the overlaps the scan found, resolved by
+            // ResolveJob before the batch ends, and what they came to.
+            internal bool ResolvedOnWorker;
+            internal int WorkerFlagged, WorkerResolvedCount;
+            internal readonly List<int> WorkerRequests = new List<int>();
+            internal readonly List<List<int>> WorkerGroups = new List<List<int>>();
+            internal readonly List<ResolvedContours> WorkerResolved = new List<ResolvedContours>();
+            internal System.Runtime.InteropServices.GCHandle Self;
+
+            internal Flight() => Self = System.Runtime.InteropServices.GCHandle.Alloc(this);
             internal long BeginTicks;
 
             /// <summary>True once the workers are done with it (main thread).</summary>
@@ -413,7 +424,31 @@ namespace OneText
                 // Nobody waits here to scan by hand, so the scan is a job too,
                 // beside the fields; both only read the packed contours.
                 var fields = Dispatch(packedPoints, totalTexels, s_descs.Count, precise, drawn);
-                flight.Handle = scanning ? JobHandle.CombineDependencies(fields, scan.Schedule(groupCount, 4, drawn)) : fields;
+                flight.ResolvedOnWorker = false;
+                if (!scanning)
+                {
+                    flight.Handle = fields;
+                }
+                else
+                {
+                    var scanned = scan.Schedule(groupCount, 4, drawn);
+                    if (OverlapsOnWorkers && !precise)
+                    {
+                        // And what it finds is resolved there too, behind it.
+                        flight.ResolvedOnWorker = true;
+                        scanned = new ResolveJob
+                        {
+                            Points = s_points,
+                            Ranges = s_ranges,
+                            Groups = s_groups,
+                            Tiles = s_tiles,
+                            Overlapping = s_overlapping,
+                            GroupCount = groupCount,
+                            Flight = System.Runtime.InteropServices.GCHandle.ToIntPtr(flight.Self),
+                        }.Schedule(scanned);
+                    }
+                    flight.Handle = JobHandle.CombineDependencies(fields, scanned);
+                }
             }
             else
             {
@@ -444,18 +479,19 @@ namespace OneText
             int index = s_flights.IndexOf(flight);
             if (index < 0) return;
             s_flights.RemoveAt(index);
+            Use(flight.Set);
+
+            long endStart = AtlasDiagnostics.Now;
+            long jobStart = endStart;
+            // First: a job behind the fields (ResolveJob) reads the flight.
+            flight.Handle.Complete();
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
             var requests = flight.Requests;
             var results = flight.Results;
             bool precise = flight.Precise;
             flight.Requests = null;
             flight.Results = null;
             flight.Owner = null;
-            Use(flight.Set);
-
-            long endStart = AtlasDiagnostics.Now;
-            long jobStart = endStart;
-            flight.Handle.Complete();
-            AtlasDiagnostics.Add(ref AtlasDiagnostics.JobWaitTicks, jobStart);
             if (flight.Outlines > 0 && AnyOutlineFailed(flight.Outlines)) RedoFromMainThread(flight, requests, results);
 
             int bytesPerTexel = precise ? 4 : 1;
@@ -472,7 +508,9 @@ namespace OneText
             if (flight.Scanning && !flight.ScanFirst)
             {
                 long resolveStart = AtlasDiagnostics.Now;
-                int redo = ResolveFlagged(requests, flight.Groups, precise, out flagged);
+                int redo = flight.ResolvedOnWorker
+                    ? TakeWorkerResolutions(flight, out flagged)
+                    : ResolveFlagged(requests, flight.Groups, precise, out flagged);
                 if (redo > 0) Rebake(requests, precise);
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.ResolveTicks, resolveStart);
             }
@@ -1054,6 +1092,98 @@ namespace OneText
         }
 
         /// <summary>
+        /// Off resolves the overlaps a background batch's scan found on the
+        /// main thread when the batch is collected: ~85 us of managed geometry
+        /// per glyph, in the frame's wait for its tiles. On, a job behind the
+        /// scan resolves them on a worker (<see cref="ResolveJob"/>, managed
+        /// code like the main thread's, so the same arithmetic), and the
+        /// collection only re-bakes them. Same pieces, same tiles.
+        /// </summary>
+        public static bool OverlapsOnWorkers = true;
+
+        /// <summary>
+        /// <see cref="ResolveFlagged"/> on a worker, for a batch in flight:
+        /// reads only the batch's own buffers and requests, and writes only
+        /// into the flight's own lists.
+        /// </summary>
+        internal static void ResolveOnWorker(Flight flight, in ResolveJob job)
+        {
+            var set = flight.Set;
+            var requests = flight.Requests;
+            flight.WorkerFlagged = 0;
+            flight.WorkerRequests.Clear();
+            int used = 0;
+            for (int g = 0; g < job.GroupCount; g++)
+            {
+                if (job.Overlapping[g] == 0) continue;
+                flight.WorkerFlagged++;
+                int r = set.GroupRequest[g];
+                if (used == 0 || flight.WorkerRequests[used - 1] != r)
+                {
+                    flight.WorkerRequests.Add(r);
+                    if (flight.WorkerGroups.Count == used) flight.WorkerGroups.Add(new List<int>());
+                    flight.WorkerGroups[used].Clear();
+                    used++;
+                }
+                flight.WorkerGroups[used - 1].Add(set.GroupIds[g]);
+            }
+            for (int k = 0; k < used; k++)
+            {
+                if (flight.WorkerResolved.Count == k) flight.WorkerResolved.Add(new ResolvedContours());
+                int r = flight.WorkerRequests[k];
+                var request = requests[r];
+                if (request.Lazy != null || request.Flat != null)
+                {
+                    // The contours where the batch packed them, which are the
+                    // flat buffer's (or the job's) points, as lists.
+                    var listed = request;
+                    var tile = job.Tiles[r];
+                    listed.Contours = new List<List<Vector2>>(tile.ContourCount);
+                    listed.Groups = new List<int>(tile.ContourCount);
+                    for (int c = tile.ContourStart; c < tile.ContourStart + tile.ContourCount; c++)
+                    {
+                        var range = job.Ranges[c];
+                        var line = new List<Vector2>(range.y);
+                        for (int i = range.x; i < range.x + range.y; i++)
+                            line.Add(new Vector2(job.Points[i].x, job.Points[i].y));
+                        listed.Contours.Add(line);
+                        listed.Groups.Add(job.Groups[c]);
+                    }
+                    listed.Lazy = null;
+                    listed.Flat = null;
+                    ContourOverlaps.Resolve(listed, flight.WorkerGroups[k], false, flight.WorkerResolved[k]);
+                }
+                else
+                {
+                    ContourOverlaps.Resolve(request, flight.WorkerGroups[k], false, flight.WorkerResolved[k]);
+                }
+            }
+            flight.WorkerResolvedCount = used;
+        }
+
+        /// <summary>
+        /// What <see cref="ResolveOnWorker"/> resolved, moved into this batch's
+        /// resolution table as <see cref="ResolveFlagged"/> would have filled it.
+        /// </summary>
+        private static int TakeWorkerResolutions(Flight flight, out int flagged)
+        {
+            flagged = flight.WorkerFlagged;
+            s_redoRequests.Clear();
+            for (int j = 0; j < flight.WorkerResolvedCount; j++)
+            {
+                int r = flight.WorkerRequests[j];
+                int k = s_resolvedUsed++;
+                if (s_resolved.Count == k) s_resolved.Add(new ResolvedContours());
+                (s_resolved[k], flight.WorkerResolved[j]) = (flight.WorkerResolved[j], s_resolved[k]);
+                s_resolvedOf[r] = k;
+                s_redoRequests.Add(r);
+                if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OverlapRebakes++;
+            }
+            flight.WorkerResolvedCount = 0;
+            return s_redoRequests.Count;
+        }
+
+        /// <summary>
         /// Resolves the overlaps of every request the scan flagged a glyph of,
         /// into <see cref="s_resolved"/>, and points <see cref="s_resolvedOf"/>
         /// at the result. Returns how many requests that was;
@@ -1397,6 +1527,33 @@ namespace OneText
             ReleaseBuffers();
             Application.quitting -= ReleaseBuffers;
             Application.quitting += ReleaseBuffers;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the overlaps a batch's scan found, on a worker, behind the
+    /// scan (<see cref="GlyphRasterizer.OverlapsOnWorkers"/>). Managed on
+    /// purpose, never Burst: <see cref="ContourOverlaps.Resolve"/> is managed
+    /// code, and running the same code here is what makes the pieces the main
+    /// thread's to the bit. It reads the batch's packed buffers (declared here,
+    /// so the safety system knows) and, through the flight, the batch's own
+    /// requests and lists, none of which anything else touches until the batch
+    /// is collected.
+    /// </summary>
+    internal struct ResolveJob : IJob
+    {
+        [ReadOnly] public NativeArray<float2> Points;
+        [ReadOnly] public NativeArray<int2> Ranges;
+        [ReadOnly] public NativeArray<int> Groups;
+        [ReadOnly] public NativeArray<SdfTileDesc> Tiles;
+        [ReadOnly] public NativeArray<byte> Overlapping;
+        public int GroupCount;
+        [Unity.Collections.LowLevel.Unsafe.NativeDisableUnsafePtrRestriction] public System.IntPtr Flight;
+
+        public void Execute()
+        {
+            var flight = (GlyphRasterizer.Flight)System.Runtime.InteropServices.GCHandle.FromIntPtr(Flight).Target;
+            GlyphRasterizer.ResolveOnWorker(flight, this);
         }
     }
 }
