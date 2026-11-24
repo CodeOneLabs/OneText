@@ -24,7 +24,7 @@ namespace OneText.Tests
         private static byte[] Bytes(string path) => File.ReadAllBytes(Path.GetFullPath(path));
 
         private (bool, bool) _burst;
-        private bool _native, _flatten, _flat, _deferred, _fastEviction, _rawCopy, _rowJob, _background;
+        private bool _native, _flatten, _flat, _deferred, _fastEviction, _indexedLru, _rawCopy, _rowJob, _background;
         private int _backgroundTexels;
 
         [SetUp]
@@ -38,6 +38,7 @@ namespace OneText.Tests
             _flat = GlyphAtlas.FlatContours;
             _deferred = GlyphAtlas.DeferredBake;
             _fastEviction = GlyphAtlas.FastEviction;
+            _indexedLru = GlyphAtlas.IndexedLru;
             _rawCopy = GlyphAtlas.RawTileCopy;
             _rowJob = GlyphRasterizer.RowJob;
             _background = GlyphAtlas.BackgroundBake;
@@ -54,6 +55,7 @@ namespace OneText.Tests
             GlyphAtlas.FlatContours = _flat;
             GlyphAtlas.DeferredBake = _deferred;
             GlyphAtlas.FastEviction = _fastEviction;
+            GlyphAtlas.IndexedLru = _indexedLru;
             GlyphAtlas.RawTileCopy = _rawCopy;
             GlyphRasterizer.RowJob = _rowJob;
             GlyphAtlas.BackgroundBake = _background;
@@ -378,6 +380,26 @@ namespace OneText.Tests
             var heads = Script(deferBake, false, frames: 8);
             AssertPressure(walk);
             CollectionAssert.AreEqual(walk, heads);
+        }
+
+        /// <summary>
+        /// Integer links instead of LinkedList nodes and entry references: the same
+        /// orders, so the same evictions, placements and texels, with and without
+        /// FastEviction's per-height and per-shelf lists.
+        /// </summary>
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void Indexed_Lru_Evicts_What_The_Linked_Lists_Evicted(bool deferBake, bool fastEviction)
+        {
+            GlyphAtlas.FastEviction = fastEviction;
+            GlyphAtlas.IndexedLru = false;
+            var linked = Script(deferBake, false, frames: 8);
+            GlyphAtlas.IndexedLru = true;
+            var indexed = Script(deferBake, false, frames: 8);
+            AssertPressure(linked);
+            CollectionAssert.AreEqual(linked, indexed);
         }
 
         [Test]

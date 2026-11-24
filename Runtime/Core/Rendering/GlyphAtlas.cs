@@ -424,12 +424,18 @@ namespace OneText
             public Entry BucketPrev, BucketNext, ShelfPrev, ShelfNext;
             public Bucket InBucket;
             public Shelf OnShelf;
+
+            // With IndexedLru: the same three lists as slots in _byId, so that
+            // moving a tile writes integers and not references (see IndexedLru).
+            public int Id = -1;
+            public int LruPrev = -1, LruNext = -1, BPrev = -1, BNext = -1, SPrev = -1, SNext = -1;
         }
 
         /// <summary>The tiles of one shelf height, oldest first (FastEviction).</summary>
         private sealed class Bucket
         {
             public Entry Head, Tail;
+            public int HeadId = -1, TailId = -1; // IndexedLru
         }
 
         private struct Span
@@ -449,6 +455,7 @@ namespace OneText
 
             // The tiles on this shelf, oldest first (FastEviction).
             public Entry Head, Tail;
+            public int HeadId = -1, TailId = -1; // IndexedLru
 
             public bool IsEmpty => LiveTiles == 0;
         }
@@ -462,6 +469,88 @@ namespace OneText
         private readonly Dictionary<Key, Entry> _entries;
         // Oldest first: eviction walks from the head, a hit moves to the tail.
         private readonly LinkedList<Entry> _lru = new LinkedList<Entry>();
+
+        /// <summary>
+        /// Keep the LRU order (and FastEviction's per-height and per-shelf
+        /// orders) as integer links into one array of entries instead of
+        /// LinkedList nodes and entry references.
+        ///
+        /// The order, and so every eviction, is the same; what changes is what
+        /// a touch writes. Every hit moves its tile to the newest end of three
+        /// lists, about twenty reference stores, and under IL2CPP with the
+        /// incremental collector (Unity's default) each reference store is a
+        /// write barrier with an atomic in it: on a phone that was 9-12 % of
+        /// a warm frame's main thread. Integers are not barriered. Mono in the
+        /// editor has no barrier and barely notices. Read when an atlas is
+        /// constructed.
+        /// </summary>
+        public static bool IndexedLru = true;
+
+        private readonly bool _indexedLru;
+        private Entry[] _byId = new Entry[256];
+        private int[] _freeIds = new int[256];
+        private int _freeCount, _idHigh;
+        private int _lruHead = -1, _lruTail = -1, _lruCount;
+
+        private int LruCount => _indexedLru ? _lruCount : _lru.Count;
+
+        private Entry LruFirst() => _indexedLru ? (_lruHead >= 0 ? _byId[_lruHead] : null) : _lru.First?.Value;
+
+        private Entry LruNextOf(Entry entry) => _indexedLru
+            ? (entry.LruNext >= 0 ? _byId[entry.LruNext] : null)
+            : entry.Node?.Next?.Value;
+
+        private void LruAdd(Entry entry)
+        {
+            if (!_indexedLru)
+            {
+                entry.Node = _lru.AddLast(entry);
+                return;
+            }
+            int id;
+            if (_freeCount > 0) id = _freeIds[--_freeCount];
+            else
+            {
+                id = _idHigh++;
+                if (id == _byId.Length) Array.Resize(ref _byId, _byId.Length * 2);
+            }
+            _byId[id] = entry;
+            entry.Id = id;
+            entry.LruPrev = _lruTail;
+            entry.LruNext = -1;
+            if (_lruTail >= 0) _byId[_lruTail].LruNext = id; else _lruHead = id;
+            _lruTail = id;
+            _lruCount++;
+        }
+
+        /// <summary>Takes the entry out of the LRU order (and, indexed, gives its slot back).</summary>
+        private void LruRemove(Entry entry)
+        {
+            if (!_indexedLru)
+            {
+                if (entry.Node != null) _lru.Remove(entry.Node);
+                entry.Node = null;
+                return;
+            }
+            int id = entry.Id;
+            if (id < 0) return;
+            if (entry.LruPrev >= 0) _byId[entry.LruPrev].LruNext = entry.LruNext; else _lruHead = entry.LruNext;
+            if (entry.LruNext >= 0) _byId[entry.LruNext].LruPrev = entry.LruPrev; else _lruTail = entry.LruPrev;
+            entry.LruPrev = entry.LruNext = -1;
+            _byId[id] = null;
+            if (_freeCount == _freeIds.Length) Array.Resize(ref _freeIds, _freeIds.Length * 2);
+            _freeIds[_freeCount++] = id;
+            entry.Id = -1;
+            _lruCount--;
+        }
+
+        private void LruClear()
+        {
+            _lru.Clear();
+            if (_idHigh > 0) Array.Clear(_byId, 0, _idHigh);
+            _idHigh = _freeCount = _lruCount = 0;
+            _lruHead = _lruTail = -1;
+        }
         private readonly LayerState[] _layers;
         private long _useStamp;
         private long _flushStamp;
@@ -558,6 +647,7 @@ namespace OneText
                 : new HashSet<Key>();
             _recent = _fastKeys && RecentHits ? new Entry[RecentSlots] : null;
             _fastEviction = FastEviction;
+            _indexedLru = IndexedLru;
             _textureSize = settings.TextureSize;
             _layerCount = settings.LayerCount;
             _layers = new LayerState[_layerCount];
@@ -603,7 +693,7 @@ namespace OneText
             foreach (var layer in _layers) shelves += layer.Shelves.Count;
             return new GlyphAtlasStats
             {
-                TileCount = _lru.Count,
+                TileCount = LruCount,
                 UsedPixels = _usedPixels,
                 CapacityPixels = (long)_textureSize * _textureSize * _layerCount,
                 MemoryBytes = (long)_textureSize * _textureSize * _layerCount * _bytesPerTexel,
@@ -1330,6 +1420,21 @@ namespace OneText
         private void Touch(Entry entry)
         {
             entry.LastUse = ++_useStamp;
+            if (_indexedLru)
+            {
+                int id = entry.Id;
+                if (id < 0 || id == _lruTail) return;
+                // Out of the middle (it is not the tail, so it has a next) ...
+                if (entry.LruPrev >= 0) _byId[entry.LruPrev].LruNext = entry.LruNext; else _lruHead = entry.LruNext;
+                _byId[entry.LruNext].LruPrev = entry.LruPrev;
+                // ... and onto the newest end.
+                entry.LruPrev = _lruTail;
+                entry.LruNext = -1;
+                _byId[_lruTail].LruNext = id;
+                _lruTail = id;
+                if (_fastEviction) Relink(entry);
+                return;
+            }
             if (entry.Node == null) return;
             // Already the newest: unlinking and relinking it at the tail puts
             // it exactly where it is.
@@ -1386,6 +1491,16 @@ namespace OneText
         private void Link(Entry entry, Shelf shelf)
         {
             var bucket = BucketFor(ShelfHeightFor(entry.Height), create: true);
+            if (_indexedLru)
+            {
+                entry.InBucket = bucket;
+                entry.BPrev = bucket.TailId;
+                entry.BNext = -1;
+                if (bucket.TailId >= 0) _byId[bucket.TailId].BNext = entry.Id; else bucket.HeadId = entry.Id;
+                bucket.TailId = entry.Id;
+                LinkShelf(entry, shelf);
+                return;
+            }
             entry.InBucket = bucket;
             entry.BucketPrev = bucket.Tail;
             entry.BucketNext = null;
@@ -1394,8 +1509,17 @@ namespace OneText
             LinkShelf(entry, shelf);
         }
 
-        private static void LinkShelf(Entry entry, Shelf shelf)
+        private void LinkShelf(Entry entry, Shelf shelf)
         {
+            if (_indexedLru)
+            {
+                entry.OnShelf = shelf;
+                entry.SPrev = shelf.TailId;
+                entry.SNext = -1;
+                if (shelf.TailId >= 0) _byId[shelf.TailId].SNext = entry.Id; else shelf.HeadId = entry.Id;
+                shelf.TailId = entry.Id;
+                return;
+            }
             entry.OnShelf = shelf;
             entry.ShelfPrev = shelf.Tail;
             entry.ShelfNext = null;
@@ -1403,9 +1527,21 @@ namespace OneText
             shelf.Tail = entry;
         }
 
-        private static void Unlink(Entry entry)
+        private void Unlink(Entry entry)
         {
             var bucket = entry.InBucket;
+            if (_indexedLru)
+            {
+                if (bucket != null)
+                {
+                    if (entry.BPrev >= 0) _byId[entry.BPrev].BNext = entry.BNext; else bucket.HeadId = entry.BNext;
+                    if (entry.BNext >= 0) _byId[entry.BNext].BPrev = entry.BPrev; else bucket.TailId = entry.BPrev;
+                    entry.InBucket = null;
+                    entry.BPrev = entry.BNext = -1;
+                }
+                UnlinkShelf(entry);
+                return;
+            }
             if (bucket != null)
             {
                 if (entry.BucketPrev != null) entry.BucketPrev.BucketNext = entry.BucketNext; else bucket.Head = entry.BucketNext;
@@ -1416,10 +1552,18 @@ namespace OneText
             UnlinkShelf(entry);
         }
 
-        private static void UnlinkShelf(Entry entry)
+        private void UnlinkShelf(Entry entry)
         {
             var shelf = entry.OnShelf;
             if (shelf == null) return;
+            if (_indexedLru)
+            {
+                if (entry.SPrev >= 0) _byId[entry.SPrev].SNext = entry.SNext; else shelf.HeadId = entry.SNext;
+                if (entry.SNext >= 0) _byId[entry.SNext].SPrev = entry.SPrev; else shelf.TailId = entry.SPrev;
+                entry.OnShelf = null;
+                entry.SPrev = entry.SNext = -1;
+                return;
+            }
             if (entry.ShelfPrev != null) entry.ShelfPrev.ShelfNext = entry.ShelfNext; else shelf.Head = entry.ShelfNext;
             if (entry.ShelfNext != null) entry.ShelfNext.ShelfPrev = entry.ShelfPrev; else shelf.Tail = entry.ShelfPrev;
             entry.OnShelf = null;
@@ -1427,8 +1571,33 @@ namespace OneText
         }
 
         /// <summary>A touched tile is the newest of its height and of its shelf too.</summary>
-        private static void Relink(Entry entry)
+        private void Relink(Entry entry)
         {
+            if (_indexedLru)
+            {
+                int id = entry.Id;
+                var b = entry.InBucket;
+                if (b != null && b.TailId != id)
+                {
+                    if (entry.BPrev >= 0) _byId[entry.BPrev].BNext = entry.BNext; else b.HeadId = entry.BNext;
+                    _byId[entry.BNext].BPrev = entry.BPrev;
+                    entry.BPrev = b.TailId;
+                    entry.BNext = -1;
+                    _byId[b.TailId].BNext = id;
+                    b.TailId = id;
+                }
+                var sh = entry.OnShelf;
+                if (sh != null && sh.TailId != id)
+                {
+                    if (entry.SPrev >= 0) _byId[entry.SPrev].SNext = entry.SNext; else sh.HeadId = entry.SNext;
+                    _byId[entry.SNext].SPrev = entry.SPrev;
+                    entry.SPrev = sh.TailId;
+                    entry.SNext = -1;
+                    _byId[sh.TailId].SNext = id;
+                    sh.TailId = id;
+                }
+                return;
+            }
             var bucket = entry.InBucket;
             if (bucket != null && bucket.Tail != entry)
             {
@@ -1456,10 +1625,12 @@ namespace OneText
         {
             var bucket = BucketFor(wanted, create: false);
             Entry recentFallback = null;
-            if (bucket?.Head != null)
+            Entry bucketHead = bucket == null ? null
+                : _indexedLru ? (bucket.HeadId >= 0 ? _byId[bucket.HeadId] : null) : bucket.Head;
+            if (bucketHead != null)
             {
-                if (bucket.Head.LastUse <= _flushStamp) return bucket.Head;
-                recentFallback = bucket.Head;
+                if (bucketHead.LastUse <= _flushStamp) return bucketHead;
+                recentFallback = bucketHead;
             }
 
             Shelf coldest = null;
@@ -1470,13 +1641,15 @@ namespace OneText
                 for (int si = 0; si < shelves.Count; si++)
                 {
                     var shelf = shelves[si];
-                    if (shelf.Tail == null || shelf.Height == wanted) continue;
-                    if (shelf.Tail.LastUse >= coldestUse) continue;
-                    coldestUse = shelf.Tail.LastUse;
+                    var tail = _indexedLru ? (shelf.TailId >= 0 ? _byId[shelf.TailId] : null) : shelf.Tail;
+                    if (tail == null || shelf.Height == wanted) continue;
+                    if (tail.LastUse >= coldestUse) continue;
+                    coldestUse = tail.LastUse;
                     coldest = shelf;
                 }
             }
-            return coldest != null ? coldest.Head : recentFallback;
+            if (coldest == null) return recentFallback;
+            return _indexedLru ? _byId[coldest.HeadId] : coldest.Head;
         }
 
         /// <summary>
@@ -1558,7 +1731,7 @@ namespace OneText
                 MarkTileDirty(layer, x, y, raster.Width, raster.Height);
                 entry.Location = LocationOf(layer, x, y, raster);
             }
-            entry.Node = _lru.AddLast(entry);
+            LruAdd(entry);
             entry.LastUse = ++_useStamp;
             if (_fastEviction) Link(entry, _layers[layer].Shelves[shelfIndex]);
             RetireReplaced(key);
@@ -1996,7 +2169,7 @@ namespace OneText
             }
 
             Entry target = null, recentFallback = null;
-            foreach (var entry in _lru)
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
             {
                 if (!entry.HasSlot) continue;
                 if (_layers[entry.Layer].Shelves[entry.ShelfIndex].Height != wanted) continue;
@@ -2027,7 +2200,7 @@ namespace OneText
             long coldestUse = long.MaxValue;
             var newest = new Dictionary<(int, int), long>();
 
-            foreach (var entry in _lru)
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
             {
                 if (!entry.HasSlot) continue;
                 var key = (entry.Layer, entry.ShelfIndex);
@@ -2043,7 +2216,7 @@ namespace OneText
             }
             if (coldest.layer < 0) return null;
 
-            foreach (var entry in _lru)
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
                 if (entry.HasSlot && entry.Layer == coldest.layer && entry.ShelfIndex == coldest.shelf)
                     return entry;
             return null;
@@ -2055,9 +2228,10 @@ namespace OneText
             if (entry.HasSlot) NoteShelf(entry.Layer, entry.ShelfIndex, _layers[entry.Layer].Shelves[entry.ShelfIndex]);
             entry.Live = false;
             _entries.Remove(entry.Key);
-            if (entry.Node != null) _lru.Remove(entry.Node);
-            entry.Node = null;
+            // Unlinked from the per-height and per-shelf lists before the LRU
+            // gives the entry's slot back: indexed, those lists name it by slot.
             if (_fastEviction) Unlink(entry);
+            LruRemove(entry);
             if (!entry.HasSlot) return;
 
             FreeSpan(_layers[entry.Layer], entry.ShelfIndex, entry.X, entry.Width);
@@ -2144,12 +2318,12 @@ namespace OneText
         {
             // It reads every live tile's texels, and a placed tile has none yet.
             CompletePendingBakes();
-            if (!IsUsable || _lru.Count == 0) return;
+            if (!IsUsable || LruCount == 0) return;
             long compactStart = AtlasDiagnostics.Now;
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.CompactCount++;
 
-            var live = new List<Entry>(_lru.Count);
-            foreach (var entry in _lru)
+            var live = new List<Entry>(LruCount);
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
                 if (entry.HasSlot) live.Add(entry);
             if (live.Count == 0) return;
 
@@ -2207,9 +2381,8 @@ namespace OneText
                     // is still better than a corrupt entry.
                     entry.Live = false;
                     _entries.Remove(entry.Key);
-                    if (entry.Node != null) _lru.Remove(entry.Node);
-                    entry.Node = null;
                     if (_fastEviction) Unlink(entry);
+                    LruRemove(entry);
                     entry.HasSlot = false;
                     continue;
                 }
@@ -2240,12 +2413,13 @@ namespace OneText
             {
                 // The shelves are new objects; their lists are rebuilt in the
                 // global order. Heights did not change, so neither did buckets.
-                foreach (var entry in _lru)
+                for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
                 {
                     entry.OnShelf = null;
                     entry.ShelfPrev = entry.ShelfNext = null;
+                    entry.SPrev = entry.SNext = -1;
                 }
-                foreach (var entry in _lru)
+                for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
                     if (entry.HasSlot) LinkShelf(entry, _layers[entry.Layer].Shelves[entry.ShelfIndex]);
             }
 
@@ -2683,7 +2857,7 @@ namespace OneText
             foreach (var entry in _entries.Values) entry.Live = false;
             if (_recent != null) Array.Clear(_recent, 0, _recent.Length);
             _entries.Clear();
-            _lru.Clear();
+            LruClear();
             _buckets.Clear();
         }
     }
