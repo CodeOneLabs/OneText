@@ -42,6 +42,25 @@
 
 ### Fixed
 
+- **Reading a label's preferred size no longer lays it out every time.**
+  `preferredWidth` and `preferredHeight` ran a full layout (shaping, line
+  breaking, bidi) on every read, and uGUI reads them several times per label
+  per layout pass: each axis, once per layout group above the label, and again
+  through `LayoutUtility`. A pass over a parent walks every label below it, so
+  one row animating its height in a list re-shaped every label in the list,
+  every frame. The measured size is now cached under the same `LayoutKey` the
+  render cache uses, built from the box it is measured in and the size it is
+  laid out at, so it moves exactly when the drawn layout would.
+  `ForceMeshUpdate(false, forceTextReparsing: true)` drops it too.
+- **A style edit made while a label is disabled reaches it when it is
+  enabled.** A disabled label is off the style registry, so an edit in that
+  time (a theme change over pooled labels) never bumped its layout generation,
+  and letter spacing and the font stack are not part of the layout key: the
+  label came back drawn, and measured, with the old spacing. A label now notes
+  the registry's edit count when it is disabled and rebuilds on enable only if
+  that count has moved, so a label coming back with nothing changed does not
+  lay out again.
+
 - **`<sprite name="star">` draws the sprite.** That is how TextMesh Pro writes
   a named sprite, and the Onboarding scan has always passed it as a tag
   OneText obeys. The parser did not: a space after the tag name starts an

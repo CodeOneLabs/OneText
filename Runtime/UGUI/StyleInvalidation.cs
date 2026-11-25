@@ -22,6 +22,33 @@ namespace OneText.UGUI
     {
         private static readonly List<IStyleUser> s_users = new List<IStyleUser>();
         private static bool s_subscribed;
+        private static int s_version;
+
+        /// <summary>
+        /// Moves on every style edit this class hears, whoever it reaches. A
+        /// user only hears edits while it is registered, and a label
+        /// unregisters on disable, so it stamps this then and compares on
+        /// enable: an edit it missed while off would otherwise leave its cached
+        /// layout and measured size on the old values, because letter spacing
+        /// and the font stack are not part of the layout key. Never reset, so
+        /// a stamp from an earlier play session cannot match by accident.
+        /// Reading it subscribes (main thread only), so the count is running
+        /// from the first label that is ever enabled or disabled.
+        /// </summary>
+        internal static int Version
+        {
+            get
+            {
+                EnsureSubscribed();
+                return s_version;
+            }
+        }
+
+        /// <summary>
+        /// <see cref="Version"/> without subscribing, for a field initializer,
+        /// which Unity may run off the main thread while deserializing.
+        /// </summary>
+        internal static int VersionUnsubscribed => s_version;
 
         /// <summary>Implemented by anything that draws through a style asset.</summary>
         public interface IStyleUser
@@ -88,6 +115,7 @@ namespace OneText.UGUI
                 };
                 return;
             }
+            s_version++;
             for (int i = s_users.Count - 1; i >= 0; i--)
             {
                 var user = s_users[i];
@@ -103,6 +131,7 @@ namespace OneText.UGUI
 
         private static void OnChanged(OneTextStyle style)
         {
+            s_version++;
             for (int i = s_users.Count - 1; i >= 0; i--)
             {
                 var user = s_users[i];
