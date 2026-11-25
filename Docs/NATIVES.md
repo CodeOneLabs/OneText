@@ -354,7 +354,8 @@ written. `HB_TINY` expands to `HB_LEAN` + `HB_MINI`, and `HB_LEAN` defines
 `HB_NO_DRAW`, `HB_NO_COLOR`, `HB_NO_VAR`, `HB_NO_BITMAP` and `HB_NO_METRICS`,
 every one of which is something `HarfBuzzApi.cs` calls. `hb_font_draw_glyph` is
 how the engine gets glyphs at all; `hb_ot_color_*` is COLRv0, CPAL and CBDT
-PNGs; `hb_ot_var_*` and `hb_font_set_variations` are variable fonts;
+PNGs (COLRv1 is read from the table in C#, `ColrTable.cs`, because the paint
+API is not exported by every binary here); `hb_ot_var_*` and `hb_font_set_variations` are variable fonts;
 `hb_font_get_h_extents` is line metrics. A `HB_TINY` build would compile and
 then fail to link against half the P/Invoke surface.
 

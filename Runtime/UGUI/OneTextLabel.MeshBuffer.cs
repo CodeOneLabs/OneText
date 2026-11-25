@@ -808,6 +808,7 @@ namespace OneText.UGUI
                     quad.RunIndex = runIndex;
                     quad.Baseline = baseline;
                     quad.Style = run.Style;
+                    quad.OwnsColor = run.Style.HasColor;
                     quad.Decoration = decoration;
                     quad.IsColor = false;
                     quad.IsPrecise = precise;

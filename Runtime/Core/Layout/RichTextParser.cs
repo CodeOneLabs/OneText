@@ -716,6 +716,44 @@ namespace OneText
             return true;
         }
 
+        /// <summary>
+        /// The value of a leading <c>name=</c> attribute: quoted with either
+        /// quote, or bare and ending at the next space. Whatever follows it
+        /// (<c>tint=1</c>, <c>color=…</c>) is TextMesh Pro's and is not read;
+        /// a sprite drawn without its tint is closer to what was meant than a
+        /// tag printed in the middle of a sentence.
+        /// </summary>
+        private static bool TryNameAttribute(ReadOnlySpan<char> list, out int start, out int length)
+        {
+            start = length = 0;
+            if (list.Length < 6 ||
+                (list[0] | 0x20) != 'n' || (list[1] | 0x20) != 'a' ||
+                (list[2] | 0x20) != 'm' || (list[3] | 0x20) != 'e') return false;
+
+            int i = 4;
+            while (i < list.Length && list[i] == ' ') i++;
+            if (i >= list.Length || list[i] != '=') return false;
+            i++;
+            while (i < list.Length && list[i] == ' ') i++;
+            if (i >= list.Length) return false;
+
+            if (list[i] == '"' || list[i] == '\'')
+            {
+                char quote = list[i++];
+                start = i;
+                while (i < list.Length && list[i] != quote) i++;
+                // A quote that never closes is a typo, and a typo stays visible.
+                if (i >= list.Length) return false;
+            }
+            else
+            {
+                start = i;
+                while (i < list.Length && list[i] != ' ') i++;
+            }
+            length = i - start;
+            return length > 0;
+        }
+
         /// <summary>The range with leading and trailing whitespace taken off.</summary>
         private static void Trim(ReadOnlySpan<char> s, int start, int length,
             out int trimmedStart, out int trimmedLength)
@@ -948,7 +986,21 @@ namespace OneText
                     {
                         // A name, then, which is what survives someone
                         // reordering the sheet, and is why IndexOf exists.
-                        index = spriteNames?.Invoke(new string(source.Slice(argStart, argLength))) ?? -1;
+                        //
+                        // It has two spellings. <sprite=star> is this parser's
+                        // own; <sprite name="star"> is TextMesh Pro's, and
+                        // arrives here as an attribute list. The attribute is
+                        // tried first, and the whole argument after it, so a
+                        // sheet that really does hold a sprite called
+                        // "name=star" can still be asked for it.
+                        index = -1;
+                        if (spriteNames != null)
+                        {
+                            if (TryNameAttribute(arg, out int nameStart, out int nameLength))
+                                index = spriteNames(new string(arg.Slice(nameStart, nameLength)));
+                            if (index < 0)
+                                index = spriteNames(new string(arg));
+                        }
                     }
                     if (index < 0) return false;
                     sprite = index;

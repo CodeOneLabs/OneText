@@ -5,6 +5,7 @@ flowchart TD
   decode["ColorGlyphs.TryDecode(font, glyphId, pixelsPerUnit, textColor)"]
   png["CBDT/CBLC: hb_ot_color_glyph_reference_png, Texture2D.LoadImage, GetPixels32"]
   colr["COLRv0: hb_ot_color_glyph_get_layers + CPAL palette; per layer OutlineExtractor.Extract, scanline coverage (2x2, nonzero), Composite source-over"]
+  paint["COLRv1: ColrTable.TryFindPaint, then ColrPaintRenderer.TryRender walks the paint graph: clip masks from outlines, solid and gradient fills, transforms, ColrBlend for PaintComposite"]
   fail["false: glyph takes the ordinary SDF path (GlyphAtlas.GetOrAdd)"]
   add["ColorGlyphAtlas.GetOrAdd(key, ColorGlyph): shelf pack, LRU evict, write RGBA32"]
   loc["ColorLocation: UvRect inset half a texel, Layer"]
@@ -14,8 +15,10 @@ flowchart TD
   cached -- yes --> loc
   cached -- no --> decode
   decode --> png
+  decode --> paint
   decode --> colr
   decode -- no colour --> fail
   png --> add
+  paint --> add
   colr --> add
   add --> loc --> quad

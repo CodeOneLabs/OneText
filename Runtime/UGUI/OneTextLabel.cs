@@ -2455,7 +2455,7 @@ namespace OneText.UGUI
                     if (!vertical)
                     {
                         EmitBand(run, frame, runIndex,
-                            font.Descender, font.Ascender, style.MarkColor);
+                            font.Descender, font.Ascender, style.MarkColor, ownsColor: true);
                         continue;
                     }
                     // Down a column the wash is the column, one em across and
@@ -2468,15 +2468,18 @@ namespace OneText.UGUI
                     float centre = run.Rotated
                         ? (font.Ascender + font.Descender) * 0.5f
                         : 0f;
+                    // The wash's colour is the tag's own, like <color>'s: the
+                    // label fades it and does not tint it.
                     EmitBand(run, frame, runIndex,
-                        centre - halfEm, centre + halfEm, style.MarkColor);
+                        centre - halfEm, centre + halfEm, style.MarkColor, ownsColor: true);
                     continue;
                 }
 
-                // The tag's colour, not the label's: the label's is multiplied
-                // in at emit for a bar exactly as it is for a letter, so a
-                // fading label fades its own underline.
+                // The tag's colour, not the label's: the label's joins at emit
+                // for a bar exactly as it does for a letter, so a fading label
+                // fades its own underline and a red <color> underlines in red.
                 var color = style.ResolveColor();
+                bool ownsColor = style.HasColor;
                 if (style.Underline)
                 {
                     // Beside the em box, on the left of the column: the side a
@@ -2489,20 +2492,20 @@ namespace OneText.UGUI
                     // unexpected side.
                     float thickness = font.UnderlineThickness;
                     if (upright)
-                        EmitBand(run, frame, runIndex, -halfEm - thickness, -halfEm, color);
+                        EmitBand(run, frame, runIndex, -halfEm - thickness, -halfEm, color, ownsColor);
                     else
                         EmitBand(run, frame, runIndex,
-                            font.UnderlineOffset - thickness, font.UnderlineOffset, color);
+                            font.UnderlineOffset - thickness, font.UnderlineOffset, color, ownsColor);
                 }
                 if (style.Strikethrough)
                 {
                     float thickness = font.StrikeoutThickness;
                     if (upright)
                         EmitBand(run, frame, runIndex,
-                            thickness * -0.5f, thickness * 0.5f, color);
+                            thickness * -0.5f, thickness * 0.5f, color, ownsColor);
                     else
                         EmitBand(run, frame, runIndex,
-                            font.StrikeoutOffset - thickness, font.StrikeoutOffset, color);
+                            font.StrikeoutOffset - thickness, font.StrikeoutOffset, color, ownsColor);
                 }
             }
         }
@@ -2520,7 +2523,7 @@ namespace OneText.UGUI
         /// none of which one rectangle could do.
         /// </summary>
         private void EmitBand(in TextRun run, in RunFrame frame, int runIndex,
-            float acrossMin, float acrossMax, Color32 color)
+            float acrossMin, float acrossMax, Color32 color, bool ownsColor)
         {
             float thickness = acrossMax - acrossMin;
             if (thickness <= 0f || color.a == 0) return;
@@ -2566,6 +2569,7 @@ namespace OneText.UGUI
                     RunIndex = runIndex,
                     Baseline = frame.Baseline,
                     Style = run.Style,
+                    OwnsColor = ownsColor,
                     IsSolid = true,
                 });
             }
@@ -2714,6 +2718,7 @@ namespace OneText.UGUI
                 RunIndex = runIndex,
                 Baseline = frame.Baseline,
                 Style = run.Style,
+                OwnsColor = run.Style.HasColor,
                 IsColor = true,
             });
         }
@@ -2795,6 +2800,7 @@ namespace OneText.UGUI
                 RunIndex = runIndex,
                 Baseline = frame.Baseline,
                 Style = run.Style,
+                OwnsColor = run.Style.HasColor,
                 IsColor = isColor,
                 // A colour tile is a picture in the colour atlas whatever the
                 // label asked for; only the SDF fallback follows the option.
@@ -2939,7 +2945,7 @@ namespace OneText.UGUI
                     byte alpha = tinted ? Multiply(quad.Color, labelColor).a : quad.Color.a;
                     quad.Color = new Color32(255, 255, 255, alpha);
                 }
-                else if (tinted) quad.Color = Multiply(quad.Color, labelColor);
+                else if (tinted) quad.Color = Tint(quad.Color, labelColor, quad.OwnsColor);
                 if (quad.Color.a == 0) continue;
 
                 _drawn.Add(quad);
@@ -3624,8 +3630,8 @@ namespace OneText.UGUI
                     float runDensity = DensityFor(runSize);
                     int runPpem = GlyphAtlas.QuantizePixelsPerEm(runDensity);
                     float scale = runSize / font.UnitsPerEm;
-                    // Only the tag's colour is baked. The label's own colour is
-                    // multiplied in at emit time, so tinting or fading a label
+                    // Only the tag's colour is baked. The label's own colour joins
+                    // at emit time (see Tint), so tinting or fading a label
                     // never invalidates these quads, and never re-bakes a colour
                     // tile, which would otherwise put one tile per fade step into
                     // the atlas.
@@ -3720,6 +3726,7 @@ namespace OneText.UGUI
                             RunIndex = runIndex,
                             Baseline = frame.Baseline,
                             Style = run.Style,
+                            OwnsColor = run.Style.HasColor,
                             Decoration = ResolveDecoration(cluster.TextStart, run.Style,
                                 run.SyntheticBold),
                             IsPrecise = _precise,
@@ -3834,10 +3841,19 @@ namespace OneText.UGUI
 #endif
 
         /// <summary>
-        /// The label's colour tinted by a <c>&lt;color&gt;</c> tag. Multiplying
-        /// rather than replacing is what makes fading a label out still fade
-        /// its coloured words: the tag says "red", not "opaque red".
+        /// A tile's colour once the label's has joined it. Untagged text is
+        /// white until here, so the label's colour is what it becomes. A tile
+        /// whose colour markup chose keeps that rgb and takes only the label's
+        /// alpha: <c>&lt;color=blue&gt;</c> in a red label is blue, as it is in
+        /// TMP, and fading the label still fades it, because the tag says
+        /// "blue", not "opaque blue". Multiplying the rgb too made the tag a
+        /// filter over the label's colour, and blue through red is black.
         /// </summary>
+        internal static Color32 Tint(Color32 tile, Color32 label, bool ownsColor) =>
+            ownsColor
+                ? new Color32(tile.r, tile.g, tile.b, (byte)(tile.a * label.a / 255))
+                : Multiply(tile, label);
+
         private static Color32 Multiply(Color32 a, Color32 b) => new Color32(
             (byte)(a.r * b.r / 255), (byte)(a.g * b.g / 255),
             (byte)(a.b * b.b / 255), (byte)(a.a * b.a / 255));

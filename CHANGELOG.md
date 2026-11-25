@@ -2,8 +2,57 @@
 
 ## [Unreleased]
 
+### Added
+
+- **COLR version 1: colour glyphs drawn from a paint graph.** A version 0
+  glyph is a stack of outlines in flat colours; a version 1 glyph is a small
+  program — solid and gradient fills (linear, radial, sweep, with pad, repeat
+  and reflect), outlines to clip them to, affine transforms, other colour
+  glyphs reused whole, and two pictures combined by any of twenty-eight
+  compositing and blend modes. It is what the newer emoji and icon fonts are
+  built in, and until now such a glyph fell through to its monochrome outline.
+  It is baked into the same colour atlas tile as every other colour glyph, so
+  nothing downstream changes: one material, one draw call, and a layer or a
+  colour stop that asks for the text colour follows the label.
+
+  The table is read by this package rather than through HarfBuzz. HarfBuzz
+  has a paint API, and the Linux binary shipped here does not export it; a
+  reader that works from the font's bytes is the same on all six platforms
+  and needed no native rebuilt. Every read is bounds-checked, and the walk has
+  a depth limit, a node budget, a work budget and a ceiling on the scratch
+  memory it may hold at once (128 MB, which is three nested composites at the
+  largest tile). A truncated, cyclic or hostile graph that meets one of them
+  is abandoned whole, and the glyph draws from its version 0 layers if it has
+  them and its outline if not. The failure is remembered, so the limit is met
+  once and not on every rebuild of the label.
+
+  Checked two ways. `ColrV1Tests` asserts the colour at named points of an
+  authored face (`Tests/Fonts~/ColrV1.ttf`, written by fontTools, so the
+  reader is not agreeing with its own encoder), and each of five deliberate
+  mistakes in the renderer fails it. And the same fifty glyphs were drawn by
+  Chrome: over 988,269 inked texels at 200 px, one differs by more than 32
+  levels in 255, and the largest difference anywhere else is 7, on an
+  antialiased slanted edge.
+
+  Two limits. Colour variations are not applied: the variable paint formats
+  draw at their default values, so a variable colour font shows its default
+  instance's colours and gradient geometry whatever its axes are set to (its
+  outlines still vary). And it has been run on the authored face only — no
+  shipping COLRv1 emoji font has been through it yet.
+
 ### Fixed
 
+- **`<sprite name="star">` draws the sprite.** That is how TextMesh Pro writes
+  a named sprite, and the Onboarding scan has always passed it as a tag
+  OneText obeys. The parser did not: a space after the tag name starts an
+  attribute list, the list was handed whole to the sprite sheet, and no sprite
+  is called `name="star"`, so the tag printed in the middle of the sentence
+  with nothing in the report to say it would. Only `<sprite=star>` worked.
+  The `name=` attribute is now read — quoted either way or bare, in any case —
+  and what TMP allows after it (`tint=1`, `color=…`) is ignored rather than
+  turning the tag back into text. `<sprite index=…>` and `<sprite anim=…>`
+  still print and are still reported, and a name the sheet does not have
+  prints as typed, like every other tag that names something missing.
 - **`SetText(int)`, `SetText(float, int)` and the span and `char[]` overloads
   draw what they were given.** They write into the label's buffer and clear its
   string, and the mesh build asked the string whether there was anything to
@@ -12,6 +61,15 @@
   go away; a score or timer that is only ever written was the case that failed.
   The mesh build now asks the buffer, like the rest of the pipeline.
   ([#11](https://github.com/CodeOneLabs/OneText/issues/11))
+- **A `<color>` tag names the colour, whatever the label's own is.** The
+  label's colour was multiplied into the tag's, rgb and all, so
+  `<color=blue>` in a red label drew black, and any tag over a coloured label
+  came out darker than asked. The tag now keeps its rgb, as it does in TMP,
+  and takes only the label's alpha, so fading a label still fades its coloured
+  words. The same goes for a `<mark>` wash and for the underline or
+  strikethrough of a tagged run, in `OneTextLabel` and `OneTextMesh` alike.
+  Untagged text, and every label left white, draws as before. A quad modifier
+  that wants its colour kept the same way sets the new `TextQuad.OwnsColor`.
 - **An unmatched FSI takes its direction from its own paragraph.** The scan for
   the matching PDI ran to the end of a scratch buffer sized for the longest
   paragraph seen so far, so an FSI with no PDI could read classes left by an
