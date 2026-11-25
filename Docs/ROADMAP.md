@@ -85,8 +85,9 @@ item is one the roadmap has already promised somewhere.
    at least one device per OS.
 4. **OpenUPM listing and the TMP migration guide.** Both promised with M7.
    The guide is written: [MIGRATING-FROM-TMP.md](MIGRATING-FROM-TMP.md). The
-   OpenUPM listing is still to do; until then the install is by git URL. This
-   is the front door for adoption; the demo is the window display.
+   package is listed on OpenUPM as `com.onetext.core` (registered with
+   v0.5.0); the git URL still installs it too. This is the front door for
+   adoption; the demo is the window display.
 
 ## M17: The known gaps
 

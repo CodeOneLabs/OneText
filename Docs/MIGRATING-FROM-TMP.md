@@ -4,7 +4,7 @@ This guide is for a project that draws its text with TextMesh Pro, or with
 Unity's older `UnityEngine.UI.Text` and `TextMesh`, and wants to draw it with
 OneText. It says what the tooling does, how to read what it reports, what
 each component, member and tag turns into, and what has no counterpart. It
-describes OneText 0.4.2.
+describes OneText 0.5.0.
 
 ## Two routes
 
@@ -328,7 +328,7 @@ end of the text, and a tag that is unknown or malformed is printed as typed.
 | `<font=name>` | a font asset in the label's named fonts, by asset name |
 | `<style=name>` | a `OneTextStyle` in the label's named styles, by asset name |
 | `<link=id>` | an id, raised through the label's `LinkClicked` event |
-| `<sprite=3>`, `<sprite=name>`, `<sprite name="name">` | an index or a sprite name in the label's `OneTextSpriteSheet`. The `name=` form is TMP's own spelling. It is read from the release after 0.4.2; in 0.4.2 and earlier it prints literally, and `<sprite=name>` is the form to write there. |
+| `<sprite=3>`, `<sprite=name>`, `<sprite name="name">` | an index or a sprite name in the label's `OneTextSpriteSheet`. The `name=` form is TMP's own spelling. It is read from 0.5.0 on; in 0.4.2 and earlier it prints literally, and `<sprite=name>` is the form to write there. |
 | `<outline>` `<shadow>` `<glow>` | optional colour and parameters, e.g. `<outline=black w=0.6>` |
 | `<ruby=reading>` | the annotation text |
 | `<josa=…>` | a Korean particle, in either of its two forms; the right one is written for the text before it |
