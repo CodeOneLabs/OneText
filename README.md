@@ -67,7 +67,7 @@ label.SetText(score);   // int, float and span overloads allocate nothing
 
 One package. Every feature. Nothing sold separately.
 
-| | |
+| Feature | What you get |
 |---|---|
 | **Shaping & bidi** | HarfBuzz GSUB/GPOS and full UAX #9. Arabic, Devanagari, Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking. |
 | **Rich text & emoji** | Named styles, inline sprites, colour emoji including ZWJ sequences, flags and skin tones, from bitmap, layered (COLRv0) and paint-graph (COLRv1) fonts alike. |
@@ -197,7 +197,7 @@ Reasoning behind the ordering in [Docs/ROADMAP.md](Docs/ROADMAP.md).
 
 ## Requirements
 
-| | |
+| | Requirement |
 |---|---|
 | **Unity** | 2022.3 LTS or newer |
 | **Platforms** | Windows, macOS, Linux, Android, iOS, Web |
