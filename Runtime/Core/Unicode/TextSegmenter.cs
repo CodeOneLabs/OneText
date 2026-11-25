@@ -34,12 +34,62 @@ namespace OneText.Unicode
             boundaries.Add(0);                 // GB1
             if (n == 0) return;
 
+            if (StandaloneShortcut && AllStandalone(text))
+            {
+                // Every rule that joins two code points needs one of them to
+                // be something these are not, so GB999 answers every pair.
+                for (int i = 1; i <= n; i++) boundaries.Add(i);
+                return;
+            }
+
             Decode(text, out var cps, out var offsets);
             int m = cps.Count;
             for (int k = 1; k < m; k++)
                 if (GraphemeBreaks(cps, k)) boundaries.Add(offsets[k]);
             boundaries.Add(n);                 // GB2
         }
+
+        /// <summary>
+        /// Whether <see cref="GraphemeBoundaries(ReadOnlySpan{char}, List{int})"/>
+        /// recognises text in which every character is its own cluster
+        /// without decoding it and running the rules. Same answer either way;
+        /// the switch exists to measure that and to prove it.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool StandaloneShortcut = true;
+
+        private static bool AllStandalone(ReadOnlySpan<char> text)
+        {
+            for (int i = 0; i < text.Length; i++)
+                if (!IsStandalone(text[i])) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// True for the UTF-16 units that are a whole grapheme cluster
+        /// whatever stands either side of them: printable ASCII, CJK
+        /// punctuation, kana, the Han blocks and the precomposed Hangul
+        /// syllables.
+        ///
+        /// What that takes, rule by rule: a Grapheme_Cluster_Break of Other,
+        /// LV or LVT (so GB3-GB5 and GB9-GB9b, which need a control, a mark,
+        /// a ZWJ, a spacing mark or a prepend, cannot fire; and GB6-GB8 join a
+        /// syllable only to a following jamo, which is not in the set either);
+        /// no InCB Linker or Extend (GB9c needs a linker between two
+        /// consonants); no regional indicators and no ZWJ (GB11-GB13); and
+        /// never a surrogate. A test checks every code point accepted here
+        /// against the data on all of those, so the ranges cannot drift from it.
+        /// Notably absent: U+302A-U+302F and U+3099-U+309A, which are marks.
+        /// </summary>
+        internal static bool IsStandalone(char c) =>
+            (c >= ' ' && c < '\u007F') ||
+            (c >= '\u3000' && c <= '\u3029') ||
+            (c >= '\u3041' && c <= '\u3096') ||
+            (c >= '\u309B' && c <= '\u30FF') ||
+            (c >= '\u3400' && c <= '\u4DBF') ||
+            (c >= '\u4E00' && c <= '\u9FFF') ||
+            (c >= '\uAC00' && c <= '\uD7A3') ||
+            (c >= '\uFF01' && c <= '\uFF5E');
 
         /// <summary>
         /// Fills <paramref name="boundaries"/> with every UTF-16 offset at which

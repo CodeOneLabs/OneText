@@ -25,7 +25,7 @@ namespace OneText
             !string.IsNullOrEmpty(text) && text.IndexOf('\\') >= 0;
 
         /// <inheritdoc cref="MightHaveEscapes(string)"/>
-        public static bool MightHaveEscapes(ReadOnlySpan<char> text) => text.IndexOf('\\') >= 0;
+        public static bool MightHaveEscapes(ReadOnlySpan<char> text) => SpanScan.IndexOf(text, '\\') >= 0;
 
         /// <summary>
         /// The unescaped string. Returns the instance it was given when there

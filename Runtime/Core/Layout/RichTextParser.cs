@@ -208,7 +208,7 @@ namespace OneText
 
         /// <inheritdoc cref="MightHaveMarkup(string)"/>
         public static bool MightHaveMarkup(ReadOnlySpan<char> text) =>
-            text.IndexOf('<') >= 0;
+            SpanScan.IndexOf(text, '<') >= 0;
 
         /// <summary>Placeholder character standing in for an inline sprite.</summary>
         public const char SpritePlaceholder = '￼'; // OBJECT REPLACEMENT CHARACTER
@@ -271,7 +271,55 @@ namespace OneText
         /// today, and a field that quietly stops being safe when it is not is
         /// worse than one that was never shared.
         /// </summary>
-        [ThreadStatic] private static List<Open> s_stack;
+        [ThreadStatic] private static OpenStack s_stack;
+
+        /// <summary>
+        /// The open-tag stack: a list of <see cref="Open"/> that hands its
+        /// entries out by reference.
+        ///
+        /// An entry is a hundred and thirty bytes (a whole style to restore,
+        /// and the bookkeeping of every tag that needs any), and a
+        /// <see cref="List{T}"/> indexer copies all of it to answer one
+        /// question about one field. Closing a tag asked the top entry its
+        /// name, copied it to keep, copied it again per question and once
+        /// more for the style; opening one built it on the stack and copied it
+        /// in. Removal clears what it removes, as the list's does, so a link
+        /// id or a ruby string is not kept alive by a slot nobody reads.
+        /// </summary>
+        private sealed class OpenStack
+        {
+            private Open[] _items = new Open[8];
+
+            public int Count { get; private set; }
+
+            public ref Open this[int index] => ref _items[index];
+
+            public void Add(in Open open) => Push() = open;
+
+            /// <summary>A cleared slot on top of the stack, to be written in place.</summary>
+            public ref Open Push()
+            {
+                if (Count == _items.Length) Array.Resize(ref _items, _items.Length * 2);
+                return ref _items[Count++];
+            }
+
+            public void RemoveRange(int index, int count)
+            {
+                Array.Clear(_items, index, count);
+                Count = index;
+            }
+
+            public void Clear() => RemoveRange(0, Count);
+        }
+
+        /// <summary>
+        /// Whether the common open tags are written into their stack slot in
+        /// place and closing reads entries by reference, instead of building
+        /// and copying whole entries. Same results either way; a switch so
+        /// the two can be measured and held against each other.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool RefStack = true;
 
         /// <summary>
         /// The result being written to. A field rather than a parameter because
@@ -332,7 +380,7 @@ namespace OneText
                 return;
             }
 
-            var stack = s_stack ??= new List<Open>();
+            var stack = s_stack ??= new OpenStack();
             stack.Clear();
             s_result = result;
             var style = TextStyle.Default;
@@ -399,7 +447,8 @@ namespace OneText
                 bool consumed;
                 if (closing)
                     consumed = ApplyClose(name, stack, result, s_result.Length, ref next);
-                else
+                else if (!FastPath || !TryApplyCommonOpen(name, source, argStart, argLength, hasArgument,
+                             stack, style, ref next, out consumed))
                     consumed = ApplyOpen(name, source, argStart, argLength, hasArgument, stack,
                         result, s_result.Length, style,
                         styleNames, fontNames, spriteNames, ref next, ref sprite, ref josa);
@@ -518,9 +567,25 @@ namespace OneText
         private static string CanonicalName(ReadOnlySpan<char> s, int start, int length)
         {
             var span = s.Slice(start, length);
-            foreach (string candidate in KnownNames)
-                if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
-                    return candidate;
+            if (FastPath && IsAscii(span))
+            {
+                // Every known name is lower-case ASCII, and for an ASCII name
+                // OrdinalIgnoreCase is exactly "the same length and the same
+                // letters once folded" — which a length test rejects for most
+                // of the table before a character is looked at. A name with
+                // anything outside ASCII in it takes the general compare below,
+                // because that one folds 'ſ' to 's' and 'ı' to 'i' and this
+                // one must not quietly disagree with it.
+                foreach (string candidate in KnownNames)
+                    if (candidate.Length == span.Length && AsciiEqualsLower(span, candidate))
+                        return candidate;
+            }
+            else
+            {
+                foreach (string candidate in KnownNames)
+                    if (span.Equals(candidate.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                        return candidate;
+            }
 
             // Effects are registered rather than listed, so a project can add
             // one from user code and have markup find it.
@@ -528,6 +593,36 @@ namespace OneText
             if (effect != null) return effect;
 
             return new string(span).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// The parser's cheaper paths: tag names matched by length and folded
+        /// ASCII instead of a general case-insensitive compare per table
+        /// entry, and the open-tag stack read once per entry rather than once
+        /// per question asked of it. Same results either way
+        /// (<c>RichTextFastPathTests</c> holds the two against each other);
+        /// the switch exists so they can be.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FastPath = true;
+
+        private static bool IsAscii(ReadOnlySpan<char> span)
+        {
+            for (int i = 0; i < span.Length; i++)
+                if (span[i] > 0x7F) return false;
+            return true;
+        }
+
+        /// <summary><paramref name="span"/> (ASCII) equals <paramref name="lower"/> (lower-case ASCII), ignoring case.</summary>
+        private static bool AsciiEqualsLower(ReadOnlySpan<char> span, string lower)
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                char c = span[i];
+                if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                if (c != lower[i]) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -562,7 +657,13 @@ namespace OneText
             while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '-' || s[i] == '_')) i++;
             if (i == nameStart && !(closing && i < s.Length && s[i] == '>')) return false;
 
-            name = i == nameStart ? string.Empty : CanonicalName(s, nameStart, i - nameStart);
+            int nameLength = i - nameStart;
+            // Named only once the tag turns out to be well formed: an unknown
+            // name is a fresh lower-cased string, and "x<y" in a sentence is
+            // not a tag that should cost one. Nothing reads the name of a tag
+            // that failed.
+            bool nameLater = FastPath;
+            if (!nameLater) name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
 
             // `<wave amp=2 freq=1.5>`: a space after the name introduces an
             // attribute list, which runs to the '>' and is handed to the tag to
@@ -576,6 +677,8 @@ namespace OneText
                 Trim(s, listStart, i - listStart, out argStart, out argLength);
                 hasArgument = true;
                 after = i + 1;
+                if (nameLater && argLength > 0)
+                    name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
                 return argLength > 0;
             }
 
@@ -609,7 +712,46 @@ namespace OneText
 
             if (i >= s.Length || s[i] != '>') return false;
             after = i + 1;
+            if (nameLater) name = nameLength == 0 ? string.Empty : CanonicalName(s, nameStart, nameLength);
             return true;
+        }
+
+        /// <summary>
+        /// The value of a leading <c>name=</c> attribute: quoted with either
+        /// quote, or bare and ending at the next space. Whatever follows it
+        /// (<c>tint=1</c>, <c>color=…</c>) is TextMesh Pro's and is not read;
+        /// a sprite drawn without its tint is closer to what was meant than a
+        /// tag printed in the middle of a sentence.
+        /// </summary>
+        private static bool TryNameAttribute(ReadOnlySpan<char> list, out int start, out int length)
+        {
+            start = length = 0;
+            if (list.Length < 6 ||
+                (list[0] | 0x20) != 'n' || (list[1] | 0x20) != 'a' ||
+                (list[2] | 0x20) != 'm' || (list[3] | 0x20) != 'e') return false;
+
+            int i = 4;
+            while (i < list.Length && list[i] == ' ') i++;
+            if (i >= list.Length || list[i] != '=') return false;
+            i++;
+            while (i < list.Length && list[i] == ' ') i++;
+            if (i >= list.Length) return false;
+
+            if (list[i] == '"' || list[i] == '\'')
+            {
+                char quote = list[i++];
+                start = i;
+                while (i < list.Length && list[i] != quote) i++;
+                // A quote that never closes is a typo, and a typo stays visible.
+                if (i >= list.Length) return false;
+            }
+            else
+            {
+                start = i;
+                while (i < list.Length && list[i] != ' ') i++;
+            }
+            length = i - start;
+            return length > 0;
         }
 
         /// <summary>The range with leading and trailing whitespace taken off.</summary>
@@ -631,7 +773,7 @@ namespace OneText
         /// only tags that still allocate.
         /// </summary>
         private static bool ApplyOpen(string name, ReadOnlySpan<char> source, int argStart, int argLength,
-            bool hasArgument, List<Open> stack,
+            bool hasArgument, OpenStack stack,
             RichTextResult result, int position, TextStyle current,
             Func<string, int> styleNames, Func<string, int> fontNames, Func<string, int> spriteNames,
             ref TextStyle style, ref int sprite, ref string josa)
@@ -844,7 +986,21 @@ namespace OneText
                     {
                         // A name, then, which is what survives someone
                         // reordering the sheet, and is why IndexOf exists.
-                        index = spriteNames?.Invoke(new string(source.Slice(argStart, argLength))) ?? -1;
+                        //
+                        // It has two spellings. <sprite=star> is this parser's
+                        // own; <sprite name="star"> is TextMesh Pro's, and
+                        // arrives here as an attribute list. The attribute is
+                        // tried first, and the whole argument after it, so a
+                        // sheet that really does hold a sprite called
+                        // "name=star" can still be asked for it.
+                        index = -1;
+                        if (spriteNames != null)
+                        {
+                            if (TryNameAttribute(arg, out int nameStart, out int nameLength))
+                                index = spriteNames(new string(arg.Slice(nameStart, nameLength)));
+                            if (index < 0)
+                                index = spriteNames(new string(arg));
+                        }
                     }
                     if (index < 0) return false;
                     sprite = index;
@@ -869,11 +1025,77 @@ namespace OneText
                 }
             }
 
-            stack.Add(new Open { Name = name, Previous = previous });
+            Push(stack, name, previous);
             return true;
         }
 
-        private static bool ApplyClose(string name, List<Open> stack, RichTextResult result,
+        /// <summary>
+        /// The tags almost every string uses — the four flags, nobr and colour
+        /// — opened without entering <see cref="ApplyOpen"/>, whose every case
+        /// shares one frame: twenty-odd locals and five Open initialisers to
+        /// set up and clear for a <c>&lt;b&gt;</c>. Exactly the same effects as
+        /// the matching cases there. False means "not one of these", and the
+        /// caller asks ApplyOpen.
+        ///
+        /// Compared by reference because the name is the canonical instance
+        /// from <see cref="KnownNames"/>; anything that is merely equal to one
+        /// of them (it cannot be, but the general path is the arbiter) goes
+        /// the general way.
+        /// </summary>
+        private static bool TryApplyCommonOpen(string name, ReadOnlySpan<char> source, int argStart,
+            int argLength, bool hasArgument, OpenStack stack, TextStyle current, ref TextStyle style,
+            out bool consumed)
+        {
+            TextStyle.Flag flag;
+            if (ReferenceEquals(name, "b")) flag = TextStyle.Flag.Bold;
+            else if (ReferenceEquals(name, "i")) flag = TextStyle.Flag.Italic;
+            else if (ReferenceEquals(name, "u")) flag = TextStyle.Flag.Underline;
+            else if (ReferenceEquals(name, "s")) flag = TextStyle.Flag.Strikethrough;
+            else if (ReferenceEquals(name, "nobr")) flag = TextStyle.Flag.NoBreak;
+            else if (ReferenceEquals(name, "color"))
+            {
+                if (!TryParseColor(hasArgument ? source.Slice(argStart, argLength) : default, out var color))
+                {
+                    consumed = false;
+                    return true;
+                }
+                style.Color = color;
+                style.Flags |= TextStyle.Flag.HasColor;
+                Push(stack, name, current);
+                consumed = true;
+                return true;
+            }
+            else
+            {
+                consumed = false;
+                return false;
+            }
+
+            if (hasArgument)
+            {
+                consumed = false;
+                return true;
+            }
+            style.Flags |= flag;
+            Push(stack, name, current);
+            consumed = true;
+            return true;
+        }
+
+        /// <summary>An entry that restores <paramref name="previous"/> and carries nothing else.</summary>
+        private static void Push(OpenStack stack, string name, in TextStyle previous)
+        {
+            if (!RefStack)
+            {
+                stack.Add(new Open { Name = name, Previous = previous });
+                return;
+            }
+            ref var open = ref stack.Push();
+            open.Name = name;
+            open.Previous = previous;
+        }
+
+        private static bool ApplyClose(string name, OpenStack stack, RichTextResult result,
             int position, ref TextStyle style)
         {
             if (stack.Count == 0) return false;
@@ -888,6 +1110,30 @@ namespace OneText
                 if (index < 0) return false;
             }
 
+            if (FastPath && RefStack)
+            {
+                // The walk below, reading each entry where it lies instead
+                // of copying it out to look at it.
+                for (int i = stack.Count - 1; i >= index; i--)
+                {
+                    ref var entry = ref stack[i];
+                    string entryName = entry.Name;
+                    if (entryName == "link")
+                        result.Links.Add(new TextLink(entry.LinkId, entry.LinkStart, position - entry.LinkStart));
+                    if (entryName == "align")
+                        result.Alignments.Add((position, entry.HadAlignment
+                            ? entry.PreviousAlignment
+                            : DefaultAlignmentMarker));
+                    if (entryName == "ruby") CloseRuby(result, entry, position);
+                    if (IsDecoration(entryName)) CloseDecoration(result, entry.DecorationIndex, position);
+                    if (BuiltInEffects.Has(entryName))
+                        result.Effects.Add((entryName, entry.EffectParameters, entry.EffectStart, position));
+                }
+                style = stack[index].Previous;
+                stack.RemoveRange(index, stack.Count - index);
+                return true;
+            }
+
             var open = stack[index];
 
             // Everything above the match is being closed too, implicitly. Their
@@ -895,6 +1141,32 @@ namespace OneText
             // emitted here never gets another chance (it is off the stack
             // before the end-of-input flush), and a link that silently vanishes
             // is the failure this parser exists to avoid.
+            if (FastPath)
+            {
+                // The same questions, asked of one copy of each entry: the
+                // list indexer copies the whole Open (a TextStyle and four
+                // references) every time it is read, and the loop below reads
+                // it seven times per entry to look at one string.
+                for (int i = stack.Count - 1; i >= index; i--)
+                {
+                    var entry = i == index ? open : stack[i];
+                    string entryName = entry.Name;
+                    if (entryName == "link")
+                        result.Links.Add(new TextLink(entry.LinkId, entry.LinkStart, position - entry.LinkStart));
+                    if (entryName == "align")
+                        result.Alignments.Add((position, entry.HadAlignment
+                            ? entry.PreviousAlignment
+                            : DefaultAlignmentMarker));
+                    if (entryName == "ruby") CloseRuby(result, entry, position);
+                    if (IsDecoration(entryName)) CloseDecoration(result, entry.DecorationIndex, position);
+                    if (BuiltInEffects.Has(entryName))
+                        result.Effects.Add((entryName, entry.EffectParameters, entry.EffectStart, position));
+                }
+                style = open.Previous;
+                stack.RemoveRange(index, stack.Count - index);
+                return true;
+            }
+
             for (int i = stack.Count - 1; i >= index; i--)
             {
                 if (stack[i].Name == "link")

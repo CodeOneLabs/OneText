@@ -219,7 +219,8 @@ namespace OneText.Editor
         /// What to call this tag in a finding, or null when OneText handles it.
         ///
         /// <c>sprite</c> is the awkward one: <c>&lt;sprite=3&gt;</c> and
-        /// <c>&lt;sprite name="x"&gt;</c> both work, and
+        /// <c>&lt;sprite name="x"&gt;</c> both work (the parser reads the
+        /// <c>name=</c> attribute and nothing after it), and
         /// <c>&lt;sprite index=3&gt;</c> and <c>&lt;sprite anim=…&gt;</c> both
         /// parse as an attribute list OneText does not read, so they print.
         /// </summary>

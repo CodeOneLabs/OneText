@@ -154,7 +154,7 @@ namespace OneText
     /// <see cref="Version"/>, because meshes bake UVs and have to be rebuilt
     /// when a tile they reference moves or disappears.
     /// </summary>
-    public sealed class GlyphAtlas : IDisposable
+    public sealed class GlyphAtlas : IDisposable, GlyphRasterizer.IBatchOwner
     {
         // Dense enough that magnification stays under ~1.2x: junction
         // details are ~1-2px features and blur visibly beyond that.
@@ -317,6 +317,45 @@ namespace OneText
                 _precise = precise;
             }
 
+            /// <summary>
+            /// The same key for another id: everything but the id is a property
+            /// of the run, and a run's clusters were each re-reading the font's
+            /// identity, its generation and two global generations to build it.
+            /// </summary>
+            public Key WithId(long id) => new Key(this, id);
+
+            private Key(in Key template, long id)
+            {
+                _font = template._font;
+                _id = id;
+                _ppem = template._ppem;
+                _generation = template._generation;
+                _outline = template._outline;
+                _raster = template._raster;
+                _precise = template._precise;
+            }
+
+            /// <summary>
+            /// A hash that costs a few multiplies rather than a seven-round
+            /// HashCode.Combine. The id is a 64-bit FNV hash for a cluster and a
+            /// small integer for a glyph; the rest are a font id and a handful
+            /// of numbers that are the same for nearly every tile in the atlas.
+            /// The hash only places a key in a bucket: equality is still
+            /// <see cref="Equals(Key)"/>, every field of it.
+            /// </summary>
+            public int CheapHash()
+            {
+                unchecked
+                {
+                    ulong h = (ulong)_id * 0x9E3779B97F4A7C15UL;
+                    h ^= (ulong)(uint)_font * 0xC2B2AE3D27D4EB4FUL;
+                    h ^= (ulong)(uint)_ppem * 0x165667B19E3779F9UL;
+                    h ^= (ulong)(uint)(_generation ^ (_outline << 10) ^ (_raster << 20) ^ (_precise ? 1 << 30 : 0))
+                        * 0x27D4EB2F165667C5UL;
+                    return (int)(h >> 32) ^ (int)h;
+                }
+            }
+
             /// <summary>The <see cref="FontData.CacheId"/> the tile was baked from.</summary>
             public int FontId => _font;
 
@@ -328,6 +367,39 @@ namespace OneText
                 HashCode.Combine(_font, _id, _ppem, _generation, _outline, _raster, _precise);
         }
 
+        /// <summary>
+        /// Off keeps the dictionary on <see cref="Key.GetHashCode"/>, keys built
+        /// field by field for every cluster, and an LRU relink on every hit even
+        /// for the tile already at the tail. Read when an atlas is constructed,
+        /// because a dictionary cannot change its hash under keys it holds.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FastKeys = true;
+
+        private sealed class CheapKeyComparer : IEqualityComparer<Key>
+        {
+            public static readonly CheapKeyComparer Instance = new CheapKeyComparer();
+            public bool Equals(Key a, Key b) => a.Equals(b);
+            public int GetHashCode(Key key) => key.CheapHash();
+        }
+
+        private readonly bool _fastKeys;
+
+        /// <summary>
+        /// Off sends every hit through the dictionary. On, a small table of
+        /// the most recent hit per hash slot answers first: a warm frame asks
+        /// for the same few dozen tiles over and over (every damage number is
+        /// made of the same ten digits), and an array slot and one key compare
+        /// are cheaper than a dictionary probe. Only with
+        /// <see cref="FastKeys"/>, whose hash it indexes by; read when an atlas
+        /// is constructed.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool RecentHits = true;
+
+        private const int RecentSlots = 256;
+        private readonly Entry[] _recent;
+
         private sealed class Entry
         {
             public Key Key;
@@ -337,6 +409,35 @@ namespace OneText
             public int Layer, X, Y, Width, Height, ShelfIndex;
             public long LastUse;
             public LinkedListNode<Entry> Node; // position in the LRU list
+
+            /// <summary>
+            /// True exactly while this entry is the one <see cref="_entries"/>
+            /// holds for its key: set where it is added, cleared everywhere one
+            /// is removed or replaced. What lets the recent-hit table below
+            /// trust an entry without asking the dictionary.
+            /// </summary>
+            public bool Live;
+
+            // With FastEviction: this entry's place in the LRU order of the
+            // tiles of its height, and in that of the tiles on its shelf.
+            // Both lists are kept in the order of the global one (oldest at
+            // the head), which is what makes their heads the answers the
+            // eviction walk used to search the whole atlas for.
+            public Entry BucketPrev, BucketNext, ShelfPrev, ShelfNext;
+            public Bucket InBucket;
+            public Shelf OnShelf;
+
+            // With IndexedLru: the same three lists as slots in _byId, so that
+            // moving a tile writes integers and not references (see IndexedLru).
+            public int Id = -1;
+            public int LruPrev = -1, LruNext = -1, BPrev = -1, BNext = -1, SPrev = -1, SNext = -1;
+        }
+
+        /// <summary>The tiles of one shelf height, oldest first (FastEviction).</summary>
+        private sealed class Bucket
+        {
+            public Entry Head, Tail;
+            public int HeadId = -1, TailId = -1; // IndexedLru
         }
 
         private struct Span
@@ -350,6 +451,14 @@ namespace OneText
             public int LiveTiles;
             public readonly List<Span> Free = new List<Span>();
 
+            // No free span is wider than this (an upper bound, tightened to
+            // the exact widest whenever a scan finds nothing that fits).
+            public int FreeBound;
+
+            // The tiles on this shelf, oldest first (FastEviction).
+            public Entry Head, Tail;
+            public int HeadId = -1, TailId = -1; // IndexedLru
+
             public bool IsEmpty => LiveTiles == 0;
         }
 
@@ -359,9 +468,92 @@ namespace OneText
             public int YCursor;
         }
 
-        private readonly Dictionary<Key, Entry> _entries = new Dictionary<Key, Entry>();
+        private readonly Dictionary<Key, Entry> _entries;
         // Oldest first: eviction walks from the head, a hit moves to the tail.
         private readonly LinkedList<Entry> _lru = new LinkedList<Entry>();
+
+        /// <summary>
+        /// Keep the LRU order (and FastEviction's per-height and per-shelf
+        /// orders) as integer links into one array of entries instead of
+        /// LinkedList nodes and entry references.
+        ///
+        /// The order, and so every eviction, is the same; what changes is what
+        /// a touch writes. Every hit moves its tile to the newest end of three
+        /// lists, about twenty reference stores, and under IL2CPP with the
+        /// incremental collector (Unity's default) each reference store is a
+        /// write barrier with an atomic in it: on a phone that was 9-12 % of
+        /// a warm frame's main thread. Integers are not barriered. Mono in the
+        /// editor has no barrier and barely notices. Read when an atlas is
+        /// constructed.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool IndexedLru = true;
+
+        private readonly bool _indexedLru;
+        private Entry[] _byId = new Entry[256];
+        private int[] _freeIds = new int[256];
+        private int _freeCount, _idHigh;
+        private int _lruHead = -1, _lruTail = -1, _lruCount;
+
+        private int LruCount => _indexedLru ? _lruCount : _lru.Count;
+
+        private Entry LruFirst() => _indexedLru ? (_lruHead >= 0 ? _byId[_lruHead] : null) : _lru.First?.Value;
+
+        private Entry LruNextOf(Entry entry) => _indexedLru
+            ? (entry.LruNext >= 0 ? _byId[entry.LruNext] : null)
+            : entry.Node?.Next?.Value;
+
+        private void LruAdd(Entry entry)
+        {
+            if (!_indexedLru)
+            {
+                entry.Node = _lru.AddLast(entry);
+                return;
+            }
+            int id;
+            if (_freeCount > 0) id = _freeIds[--_freeCount];
+            else
+            {
+                id = _idHigh++;
+                if (id == _byId.Length) Array.Resize(ref _byId, _byId.Length * 2);
+            }
+            _byId[id] = entry;
+            entry.Id = id;
+            entry.LruPrev = _lruTail;
+            entry.LruNext = -1;
+            if (_lruTail >= 0) _byId[_lruTail].LruNext = id; else _lruHead = id;
+            _lruTail = id;
+            _lruCount++;
+        }
+
+        /// <summary>Takes the entry out of the LRU order (and, indexed, gives its slot back).</summary>
+        private void LruRemove(Entry entry)
+        {
+            if (!_indexedLru)
+            {
+                if (entry.Node != null) _lru.Remove(entry.Node);
+                entry.Node = null;
+                return;
+            }
+            int id = entry.Id;
+            if (id < 0) return;
+            if (entry.LruPrev >= 0) _byId[entry.LruPrev].LruNext = entry.LruNext; else _lruHead = entry.LruNext;
+            if (entry.LruNext >= 0) _byId[entry.LruNext].LruPrev = entry.LruPrev; else _lruTail = entry.LruPrev;
+            entry.LruPrev = entry.LruNext = -1;
+            _byId[id] = null;
+            if (_freeCount == _freeIds.Length) Array.Resize(ref _freeIds, _freeIds.Length * 2);
+            _freeIds[_freeCount++] = id;
+            entry.Id = -1;
+            _lruCount--;
+        }
+
+        private void LruClear()
+        {
+            _lru.Clear();
+            if (_idHigh > 0) Array.Clear(_byId, 0, _idHigh);
+            _idHigh = _freeCount = _lruCount = 0;
+            _lruHead = _lruTail = -1;
+        }
         private readonly LayerState[] _layers;
         private long _useStamp;
         private long _flushStamp;
@@ -449,6 +641,16 @@ namespace OneText
         public GlyphAtlas(GlyphAtlasSettings settings, bool precise = false)
         {
             settings = settings.Validated();
+            _fastKeys = FastKeys;
+            _entries = _fastKeys
+                ? new Dictionary<Key, Entry>(CheapKeyComparer.Instance)
+                : new Dictionary<Key, Entry>();
+            _batchPending = _fastKeys
+                ? new HashSet<Key>(CheapKeyComparer.Instance)
+                : new HashSet<Key>();
+            _recent = _fastKeys && RecentHits ? new Entry[RecentSlots] : null;
+            _fastEviction = FastEviction;
+            _indexedLru = IndexedLru;
             _textureSize = settings.TextureSize;
             _layerCount = settings.LayerCount;
             _layers = new LayerState[_layerCount];
@@ -494,7 +696,7 @@ namespace OneText
             foreach (var layer in _layers) shelves += layer.Shelves.Count;
             return new GlyphAtlasStats
             {
-                TileCount = _lru.Count,
+                TileCount = LruCount,
                 UsedPixels = _usedPixels,
                 CapacityPixels = (long)_textureSize * _textureSize * _layerCount,
                 MemoryBytes = (long)_textureSize * _textureSize * _layerCount * _bytesPerTexel,
@@ -527,6 +729,7 @@ namespace OneText
             var key = new Key(font, glyphId, ppem, Precise);
             if (TryTouch(key, out var hit)) return hit;
 
+            CompletePendingBakes();
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
             var raster = GlyphRasterizer.Rasterize(font, glyphId, pixelsPerUnit, Precise);
             return Commit(key, raster, ppem);
@@ -546,10 +749,13 @@ namespace OneText
             var key = new Key(font, hash, ppem, Precise);
             if (TryTouch(key, out var hit)) return hit;
 
+            // Written now, so what is pending goes first, and its pooled lines
+            // are free again only after it has baked.
+            CompletePendingBakes();
             long outlineStart = AtlasDiagnostics.Now;
             s_merged.Clear();
             s_mergedGroups.Clear();
-            _pooledLines = 0;
+            ResetPoolsIfIdle();
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
             BuildClusterContours(font, positioned, start, count, s_merged, s_mergedGroups, pixelsPerUnit);
 
@@ -588,8 +794,11 @@ namespace OneText
         /// choosing. Tests only: it is how a test places tiles of exact sizes,
         /// which is what decides how a flush packs them for upload.
         /// </summary>
-        internal GlyphLocation CommitForTests(FontData font, long id, int ppem, RasterizedGlyph raster) =>
-            IsUsable ? Commit(new Key(font, id, ppem, Precise), raster, ppem) : default;
+        internal GlyphLocation CommitForTests(FontData font, long id, int ppem, RasterizedGlyph raster)
+        {
+            CompletePendingBakes();
+            return IsUsable ? Commit(new Key(font, id, ppem, Precise), raster, ppem) : default;
+        }
 
         /// <summary>True if the atlas already holds this glyph at this size.</summary>
         public bool Contains(FontData font, long id, float pixelsPerEm) =>
@@ -628,7 +837,46 @@ namespace OneText
         /// </summary>
         public bool PrepareClusters(FontData font, float pixelsPerEm,
             List<PositionedGlyph> positioned, List<GlyphClusters.Cluster> clusters,
-            List<GlyphLocation> locations)
+            List<GlyphLocation> locations) =>
+            PrepareClusters(font, pixelsPerEm, positioned, clusters, locations, deferBake: false);
+
+        /// <summary>
+        /// Off bakes every run's misses in a dispatch of their own, inside the
+        /// run's <see cref="PrepareClusters(FontData, float, List{PositionedGlyph}, List{GlyphClusters.Cluster}, List{GlyphLocation}, bool)"/>.
+        /// On lets a caller that promises a <see cref="Flush"/> before anything
+        /// is drawn (the uGUI label) place the tiles now and leave the fields
+        /// to one dispatch for the whole frame. See <see cref="CompletePendingBakes"/>.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool DeferredBake = true;
+
+        /// <summary>
+        /// The same, and with <paramref name="deferBake"/> (and
+        /// <see cref="DeferredBake"/>) the misses are placed but not baked:
+        /// every tile gets its slot, its location and its place in the LRU
+        /// exactly as an immediate bake would give it, and its field is
+        /// computed with every other deferred miss of the frame in one
+        /// dispatch, before the next upload (<see cref="Flush"/>) or anything
+        /// else that reads or writes texels.
+        ///
+        /// Why it pays: a frame that retexts fifty labels with unseen glyphs
+        /// was making one dispatch per run, ~1.6 tiles each, and blocking on
+        /// every one. A dispatch that small cannot fill the workers, and the
+        /// main thread waits for each in turn. One dispatch of the frame's
+        /// two hundred tiles spreads over every core and is waited on once.
+        ///
+        /// What it must not change: nothing is drawn from the CPU copy, only
+        /// from the GPU texture, which sees tiles only at <see cref="Flush"/>,
+        /// and the flush bakes first. Every write that is not deferred, and
+        /// every read of texels (<see cref="Compact"/>, the upload), completes
+        /// the pending bakes first, so writes land in the order they were
+        /// made, the same order the immediate path makes them in — including
+        /// a tile placed and evicted in the same frame, whose bytes the
+        /// immediate path wrote and the next tile in its slot overwrote.
+        /// </summary>
+        public bool PrepareClusters(FontData font, float pixelsPerEm,
+            List<PositionedGlyph> positioned, List<GlyphClusters.Cluster> clusters,
+            List<GlyphLocation> locations, bool deferBake)
         {
             locations?.Clear();
             // Nothing can be baked without a texture, so answer the way a pass
@@ -639,17 +887,26 @@ namespace OneText
             int ppem = QuantizePixelsPerEm(pixelsPerEm);
             bool collecting = locations != null;
 
+            bool defer = deferBake && DeferredBake;
+            // An immediate bake writes now, so whatever is pending goes first.
+            if (!defer) CompletePendingBakes();
             _batchRequests.Clear();
             _batchKeys.Clear();
             _batchPending.Clear();
-            _pooledUsed = 0;
-            _pooledLines = 0;
+            // Pending requests still own their pooled lists until they bake.
+            ResetPoolsIfIdle();
 
             float pixelsPerUnit = ppem / (float)font.UnitsPerEm;
             int glyphsExtracted = 0;
-            foreach (var cluster in clusters)
+            var template = new Key(font, 0, ppem, Precise);
+            // Worker outlines: only for misses that are placed now and baked
+            // later, into a single-channel atlas, where the outline path the
+            // job runs is the one this thread would have run.
+            bool lazyOk = defer && WorkerOutlines && FlatContours && !Precise && OutlineJobs.Available;
+            for (int c = 0; c < clusters.Count; c++)
             {
-                var key = new Key(font, cluster.Hash, ppem, Precise);
+                var cluster = clusters[c];
+                var key = _fastKeys ? template.WithId(cluster.Hash) : new Key(font, cluster.Hash, ppem, Precise);
                 if (collecting)
                 {
                     // TryTouch rather than ContainsKey: it answers the same
@@ -669,8 +926,6 @@ namespace OneText
                 // Repeated words in one run share a tile; bake it once.
                 if (_entries.ContainsKey(key) || !_batchPending.Add(key)) continue;
 
-                var contours = RentContours();
-                var groups = RentGroups();
                 // Timed around the extraction alone, not around the loop. A warm
                 // run walks every cluster here and extracts none, and charging
                 // that walk to "outline" reported 24 us a frame of outline work
@@ -678,22 +933,74 @@ namespace OneText
                 // as a hot rasterizer and is really the cache saying no. The
                 // walk is lookup, and the caller already counts it as lookup.
                 long outlineStart = AtlasDiagnostics.Now;
-                BuildClusterContours(font, positioned, cluster.Start, cluster.Count, contours, groups, pixelsPerUnit);
-                AtlasDiagnostics.Add(ref AtlasDiagnostics.OutlineTicks, outlineStart);
-                glyphsExtracted += cluster.Count;
-
-                _batchRequests.Add(new RasterizeRequest
+                RasterizeRequest request;
+                if (lazyOk && TryBuildLazy(font, positioned, cluster.Start, cluster.Count, ppem, pixelsPerUnit,
+                        out int lazyFirst, out int lazyCount))
                 {
-                    Contours = contours,
-                    Groups = groups,
-                    PixelsPerUnit = pixelsPerUnit,
-                    KnownOverlaps = KnownOverlapsOf(font, positioned, cluster.Start, cluster.Count, RentKnown()),
-                });
+                    RentContours(); // keeps the known-overlap pool in step
+                    if (!_registeredForOutlines)
+                    {
+                        // So a font about to change can have this atlas finish first.
+                        OutlineJobs.Register(this);
+                        _registeredForOutlines = true;
+                    }
+                    request = new RasterizeRequest
+                    {
+                        Lazy = _lazy,
+                        LazyFirst = lazyFirst,
+                        LazyCount = lazyCount,
+                        PixelsPerUnit = pixelsPerUnit,
+                    };
+                    if (AtlasDiagnostics.Enabled) AtlasDiagnostics.WorkerOutlineCount += cluster.Count;
+                }
+                else if (FlatContours && !Precise && TryBuildFlat(font, positioned, cluster.Start, cluster.Count,
+                        pixelsPerUnit, lazyOk ? ppem : -1, out int flatFirst, out int flatCount))
+                {
+                    RentContours(); // keeps the known-overlap pool in step
+                    request = new RasterizeRequest
+                    {
+                        Flat = _flat,
+                        FlatFirst = flatFirst,
+                        FlatCount = flatCount,
+                        PixelsPerUnit = pixelsPerUnit,
+                    };
+                }
+                else
+                {
+                    var contours = RentContours();
+                    var groups = RentGroups();
+                    BuildClusterContours(font, positioned, cluster.Start, cluster.Count, contours, groups, pixelsPerUnit);
+                    request = new RasterizeRequest
+                    {
+                        Contours = contours,
+                        Groups = groups,
+                        PixelsPerUnit = pixelsPerUnit,
+                    };
+                }
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.OutlineTicks, outlineStart);
+                if (request.Lazy == null) glyphsExtracted += cluster.Count;
+
+                request.KnownOverlaps = KnownOverlapsOf(font, positioned, cluster.Start, cluster.Count, RentKnown());
+                _batchRequests.Add(request);
                 _batchKeys.Add(key);
             }
 
             if (AtlasDiagnostics.Enabled) AtlasDiagnostics.OutlineCount += glyphsExtracted;
             if (_batchRequests.Count == 0) return collecting;
+
+            if (defer)
+            {
+                // Placed in the order an immediate bake commits them, with the
+                // tile the batch will fill, so slots, evictions and versions
+                // come out exactly as they would have.
+                long placeStart = AtlasDiagnostics.Now;
+                for (int i = 0; i < _batchKeys.Count; i++)
+                    Place(_batchKeys[i], _batchRequests[i], GlyphRasterizer.Measure(_batchRequests[i], Precise), ppem);
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.PlaceTicks, placeStart);
+                if (BackgroundBake && (_pendingTexels >= BackgroundBakeTexels || WorkersIdle)) BakeInBackground();
+                locations?.Clear();
+                return false;
+            }
 
             GlyphRasterizer.RasterizeBatch(_batchRequests, _batchResults, Precise);
             for (int i = 0; i < _batchKeys.Count && i < _batchResults.Count; i++)
@@ -702,9 +1009,302 @@ namespace OneText
             return false;
         }
 
+        /// <summary>
+        /// One tile placed but not yet baked: the request that will bake it and
+        /// the slot it was given. The slot is kept here rather than read off
+        /// the entry because the entry may be evicted before the bake, and the
+        /// immediate path would still have written its bytes there.
+        /// </summary>
+        private struct PendingBake
+        {
+            public int Layer, X, Y, Width, Height;
+        }
+
+        private List<PendingBake> _pendingBakes = new List<PendingBake>();
+        private List<RasterizeRequest> _pendingRequests = new List<RasterizeRequest>();
+        private int _pendingTexels;
+
+        /// <summary>
+        /// Bakes handed to the workers in the background, waiting for their
+        /// fields: the slots, the requests, the results the rasterizer fills,
+        /// and its record of the batch.
+        /// </summary>
+        private sealed class Flight
+        {
+            public List<PendingBake> Bakes = new List<PendingBake>();
+            public List<RasterizeRequest> Requests = new List<RasterizeRequest>();
+            public readonly List<RasterizedGlyph> Results = new List<RasterizedGlyph>();
+            public GlyphRasterizer.Flight Batch;
+        }
+
+        // Batches in flight, oldest first (always placed before everything in
+        // _pendingBakes), and retired ones for reuse.
+        private readonly List<Flight> _flights = new List<Flight>();
+        private readonly Stack<Flight> _spareFlights = new Stack<Flight>();
+
+        /// <summary>
+        /// Batches one atlas keeps in flight at most before it collects the
+        /// oldest: each is a set of the rasterizer's buffers, and past the
+        /// workers' throughput more of them only hold memory.
+        /// </summary>
+        internal const int MaxFlights = 8;
+
+        /// <summary>
+        /// Off bakes a frame's deferred tiles all at the flush, with the main
+        /// thread waiting for the workers. On, every
+        /// <see cref="BackgroundBakeTexels"/> texels of placed tiles go to the
+        /// workers at once and the frame carries on building labels while
+        /// they bake; the next batch (or the flush) collects them. The flush
+        /// then waits only for the last few labels' tiles. Same requests, same
+        /// fields, written in placement order.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool BackgroundBake = true;
+
+        /// <summary>
+        /// Texels of placed tiles that make a background batch: enough for the
+        /// workers to share (a CJK tile at UI sizes is ~800), small enough that
+        /// what is left for the flush to wait on is short.
+        /// </summary>
+        public static int BackgroundBakeTexels = 8192;
+
+        /// <summary>
+        /// Off waits for <see cref="BackgroundBakeTexels"/> placed texels
+        /// before a batch goes to the workers. On (with
+        /// <see cref="GlyphRasterizer.PipelinedBatches"/>), a run's misses go
+        /// at once whenever this atlas has nothing baking: workers that are
+        /// idle cost nothing to wake, and a frame that bakes a label or two
+        /// otherwise sends its only batch at the flush and waits for all of it
+        /// there. While batches are baking, misses gather to the threshold as
+        /// before, so a frame of fifty labels is not cut into a hundred
+        /// dispatches. Same tiles, same order, same bytes.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool EagerDispatch = true;
+
+        private bool WorkersIdle =>
+            EagerDispatch && GlyphRasterizer.PipelinedBatches &&
+            (_flights.Count == 0 || _flights[_flights.Count - 1].Batch.IsDone);
+
+        /// <summary>True while placed tiles are waiting for their fields.</summary>
+        internal bool HasPendingBakes => _pendingBakes.Count > 0 || _flights.Count > 0;
+
+        private void ResetPoolsIfIdle()
+        {
+            if (_pendingBakes.Count > 0 || _flights.Count > 0) return;
+            _pooledUsed = 0;
+            _pooledLines = 0;
+            _flat.Clear();
+            _lazy.Clear();
+        }
+
+        /// <summary>
+        /// Off builds every miss's contours as lists of lists, copied out of
+        /// the extracted outline, walked again to size the tile and again to
+        /// pack it for the job: four passes of managed code over every point,
+        /// a millisecond and more of a frame that bakes two hundred glyphs. On
+        /// (single-channel atlases, with the native outline path), the outline
+        /// is drawn straight into one flat buffer, offset and bounded as it
+        /// goes, and sizing and packing read the bounds and copy the points
+        /// once. Same points, same bounds, same tiles (<c>BakePathTests</c>).
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FlatContours = true;
+
+        private readonly FlatContours _flat = new FlatContours();
+
+        /// <summary>
+        /// Off draws every miss's outline on the main thread as it is placed
+        /// (<see cref="FlatContours"/>): HarfBuzz reading the glyph and the
+        /// flattening, ~2.5 us a CJK glyph, two thirds of a millisecond of a
+        /// frame that bakes two hundred and fifty. On, a miss whose glyphs have
+        /// all been flattened before at this size is placed from what they
+        /// came to then (<see cref="GlyphFlatStats"/>: the bounds, which size
+        /// the tile, and the counts, which lay out the batch), and the batch
+        /// draws the outlines on the workers before it bakes them
+        /// (<see cref="OutlineJob"/>), each worker through a HarfBuzz font of
+        /// its own. A glyph never flattened at that size goes the main-thread
+        /// way once and is remembered. Same points, same tiles, same slots,
+        /// same bytes (<c>WorkerOutlineTests</c>).
+        ///
+        /// Only where the job's code is this thread's code: single-channel
+        /// atlases, deferred bakes, the Burst outline path
+        /// (<see cref="OutlineJobs.Available"/>), and glyphs that a font asset
+        /// knows to be free of overlapping contours, or that nobody knows
+        /// about while the last batch found none (an overlap is resolved from
+        /// lists, on this thread, after the batch).
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool WorkerOutlines = true;
+
+        private readonly LazyGlyphs _lazy = new LazyGlyphs();
+        private bool _registeredForOutlines;
+
+        /// <summary>True when glyphs of the font with this cache id are placed and still to be drawn on the workers.</summary>
+        internal bool HoldsWorkerGlyphsOf(int fontId) => _lazy.Uses(fontId) && HasPendingBakes;
+
+        /// <summary>
+        /// A cluster as glyphs for the workers to draw, from their statistics;
+        /// false (and nothing kept) when any glyph has not been flattened at
+        /// this size yet, or is known to overlap itself, or might while the
+        /// rasterizer expects overlaps.
+        /// </summary>
+        private bool TryBuildLazy(FontData font, List<PositionedGlyph> positioned, int start, int count,
+            int ppem, float pixelsPerUnit, out int first, out int glyphs)
+        {
+            first = _lazy.Count;
+            glyphs = 0;
+            bool expecting = GlyphRasterizer.ExpectingOverlaps;
+            float flatness = OutlineExtractor.CurrentFlatness;
+            for (int i = start; i < start + count; i++)
+            {
+                var g = positioned[i];
+                bool known = font.TryGetOverlap(g.GlyphId, out bool overlaps);
+                if (known ? overlaps : expecting) { _lazy.Truncate(first); return false; }
+                if (!OutlineJobs.TryGetStats(font, g.GlyphId, ppem, out var stats)) { _lazy.Truncate(first); return false; }
+                _lazy.Add(font, g.GlyphId, pixelsPerUnit, flatness, new Vector2(g.X, g.Y), i - start, stats);
+            }
+            glyphs = count;
+            return true;
+        }
+
+        /// <summary>
+        /// A cluster's contours into <see cref="_flat"/>, as
+        /// <see cref="BuildClusterContours"/> would build them; false (and
+        /// nothing kept) when the native outline path is unavailable.
+        /// </summary>
+        private bool TryBuildFlat(FontData font, List<PositionedGlyph> positioned, int start, int count,
+            float pixelsPerUnit, int recordAtPpem, out int first, out int contours)
+        {
+            first = _flat.ContourCount;
+            int points = _flat.PointCount;
+            for (int i = start; i < start + count; i++)
+            {
+                var g = positioned[i];
+                if (!OutlineExtractor.AppendFlat(font, g.GlyphId, pixelsPerUnit, new Vector2(g.X, g.Y), i - start, _flat,
+                        out var stats))
+                {
+                    _flat.ContourCount = first;
+                    _flat.PointCount = points;
+                    contours = 0;
+                    return false;
+                }
+                // What the glyph came to, for the next time it misses at this size.
+                if (recordAtPpem > 0) OutlineJobs.RecordStats(font, g.GlyphId, recordAtPpem, stats);
+            }
+            contours = _flat.ContourCount - first;
+            return true;
+        }
+
+        /// <summary>
+        /// Hands what is placed so far to the workers. Without
+        /// <see cref="GlyphRasterizer.PipelinedBatches"/> the previous batch is
+        /// collected first (one set of buffers between them); with it, only
+        /// batches already done are, and the rest keep baking.
+        /// </summary>
+        private void BakeInBackground()
+        {
+            if (GlyphRasterizer.PipelinedBatches)
+            {
+                CollectFinishedFlights();
+                if (_flights.Count >= MaxFlights) FinishOldestFlight();
+            }
+            else
+            {
+                FinishBatchInternal();
+            }
+            if (_pendingBakes.Count == 0) return;
+            var flight = _spareFlights.Count > 0 ? _spareFlights.Pop() : new Flight();
+            (flight.Bakes, _pendingBakes) = (_pendingBakes, flight.Bakes);
+            (flight.Requests, _pendingRequests) = (_pendingRequests, flight.Requests);
+            _pendingTexels = 0;
+            flight.Batch = GlyphRasterizer.BeginBackground(flight.Requests, flight.Results, Precise, this);
+            if (flight.Batch == null)
+            {
+                // Nothing to bake, so nothing to write, before or after the
+                // batches still baking.
+                RetireFlight(flight);
+                return;
+            }
+            _flights.Add(flight);
+        }
+
+        void GlyphRasterizer.IBatchOwner.FinishBatch() => FinishBatchInternal();
+
+        /// <summary>Collects every batch in flight, oldest first.</summary>
+        private void FinishBatchInternal()
+        {
+            while (_flights.Count > 0) FinishOldestFlight();
+        }
+
+        /// <summary>Collects the batches at the head of the queue whose workers are done, without waiting.</summary>
+        private void CollectFinishedFlights()
+        {
+            while (_flights.Count > 0 && _flights[0].Batch.IsDone) FinishOldestFlight();
+        }
+
+        private void FinishOldestFlight()
+        {
+            var flight = _flights[0];
+            _flights.RemoveAt(0);
+            GlyphRasterizer.EndBatch(flight.Batch);
+            WriteFlight(flight);
+        }
+
+        private void WriteFlight(Flight flight)
+        {
+            if (IsUsable)
+            {
+                long copyStart = AtlasDiagnostics.Now;
+                CopyIntoSlots(flight.Bakes, flight.Results);
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.CopyTicks, copyStart);
+            }
+            RetireFlight(flight);
+        }
+
+        private void RetireFlight(Flight flight)
+        {
+            flight.Bakes.Clear();
+            flight.Requests.Clear();
+            flight.Results.Clear();
+            flight.Batch = null;
+            _spareFlights.Push(flight);
+        }
+
+        /// <summary>
+        /// Bakes every placed-but-unbaked tile in one dispatch and writes each
+        /// into the slot it was given, in placement order. Called by
+        /// <see cref="Flush"/>, by <see cref="Compact"/>, and before any tile is
+        /// written immediately; harmless to call when nothing is pending.
+        /// </summary>
+        public void CompletePendingBakes()
+        {
+            if (GlyphRasterizer.PipelinedBatches && BackgroundBake && _pendingBakes.Count > 0)
+            {
+                // The rest goes to the workers too, behind the batches already
+                // baking, and the earlier ones are written while it bakes.
+                BakeInBackground();
+                FinishBatchInternal();
+                return;
+            }
+            // The background batches were placed first, so they are written first.
+            FinishBatchInternal();
+            if (_pendingBakes.Count == 0) return;
+            _pendingTexels = 0;
+            GlyphRasterizer.RasterizeBatch(_pendingRequests, _batchResults, Precise);
+            if (IsUsable)
+            {
+                long copyStart = AtlasDiagnostics.Now;
+                CopyIntoSlots(_pendingBakes, _batchResults);
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.CopyTicks, copyStart);
+            }
+            _pendingBakes.Clear();
+            _pendingRequests.Clear();
+        }
+
         private readonly List<RasterizeRequest> _batchRequests = new List<RasterizeRequest>();
         private readonly List<Key> _batchKeys = new List<Key>();
-        private readonly HashSet<Key> _batchPending = new HashSet<Key>();
+        private readonly HashSet<Key> _batchPending;
         private readonly List<RasterizedGlyph> _batchResults = new List<RasterizedGlyph>();
         private readonly List<List<List<Vector2>>> _contourPool = new List<List<List<Vector2>>>();
         private readonly List<List<int>> _groupPool = new List<List<int>>();
@@ -800,7 +1400,22 @@ namespace OneText
 
         private bool TryTouch(Key key, out GlyphLocation location)
         {
-            if (!_entries.TryGetValue(key, out var hit))
+            Entry hit;
+            if (_recent != null)
+            {
+                int slot = key.CheapHash() & (RecentSlots - 1);
+                hit = _recent[slot];
+                if (hit == null || !hit.Live || !hit.Key.Equals(key))
+                {
+                    if (!_entries.TryGetValue(key, out hit))
+                    {
+                        location = default;
+                        return false;
+                    }
+                    _recent[slot] = hit;
+                }
+            }
+            else if (!_entries.TryGetValue(key, out hit))
             {
                 location = default;
                 return false;
@@ -813,12 +1428,257 @@ namespace OneText
         private void Touch(Entry entry)
         {
             entry.LastUse = ++_useStamp;
+            if (_indexedLru)
+            {
+                int id = entry.Id;
+                if (id < 0 || id == _lruTail) return;
+                // Out of the middle (it is not the tail, so it has a next) ...
+                if (entry.LruPrev >= 0) _byId[entry.LruPrev].LruNext = entry.LruNext; else _lruHead = entry.LruNext;
+                _byId[entry.LruNext].LruPrev = entry.LruPrev;
+                // ... and onto the newest end.
+                entry.LruPrev = _lruTail;
+                entry.LruNext = -1;
+                _byId[_lruTail].LruNext = id;
+                _lruTail = id;
+                if (_fastEviction) Relink(entry);
+                return;
+            }
             if (entry.Node == null) return;
+            // Already the newest: unlinking and relinking it at the tail puts
+            // it exactly where it is.
+            if (_fastKeys && _lru.Last == entry.Node) return;
             _lru.Remove(entry.Node);
             _lru.AddLast(entry.Node);
+            if (_fastEviction) Relink(entry);
         }
 
-        private GlyphLocation Commit(Key key, RasterizedGlyph raster, int ppem)
+        // ------------------------------------------------------ FastEviction
+
+        /// <summary>
+        /// Off walks the whole LRU list to choose every eviction, and a second
+        /// time, building a dictionary of every shelf, whenever the wanted
+        /// height has nothing cold enough. Under sustained pressure that is
+        /// the atlas's four thousand tiles walked per new glyph: a frame of
+        /// fifty retexts with unseen glyphs evicts ~230 tiles and spent over a
+        /// millisecond choosing them.
+        ///
+        /// On keeps, beside the global LRU list, one per shelf height and one
+        /// per shelf, in the same order. The eviction rule is unchanged and
+        /// so is every tile it picks: the oldest tile of the wanted height
+        /// (the head of its list) when it is not newer than the last upload,
+        /// else the oldest tile of whichever other shelf's newest tile is the
+        /// oldest (a scan of shelf tails, not of tiles), else that recent
+        /// head. Stamps are unique, so "oldest" has one answer either way.
+        /// Read when an atlas is constructed.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FastEviction = true;
+
+        /// <summary>
+        /// Off has every allocation look at every free span of every shelf of
+        /// the wanted height. Under sustained pressure the shelves fill with
+        /// slivers too narrow for anything, and a frame of two hundred new
+        /// glyphs spent 1.4 ms walking ~360,000 of them. On keeps an upper
+        /// bound on each shelf's widest free span and skips the walk when the
+        /// tile is wider; the bound is exact again after any walk that finds
+        /// nothing. The same span is chosen either way.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FastShelfScan = true;
+
+        private readonly bool _fastEviction;
+        private readonly Dictionary<int, Bucket> _buckets = new Dictionary<int, Bucket>();
+
+        private Bucket BucketFor(int wanted, bool create)
+        {
+            if (_buckets.TryGetValue(wanted, out var bucket) || !create) return bucket;
+            bucket = new Bucket();
+            _buckets.Add(wanted, bucket);
+            return bucket;
+        }
+
+        /// <summary>Appends a newly placed tile to its height's and its shelf's lists.</summary>
+        private void Link(Entry entry, Shelf shelf)
+        {
+            var bucket = BucketFor(ShelfHeightFor(entry.Height), create: true);
+            if (_indexedLru)
+            {
+                entry.InBucket = bucket;
+                entry.BPrev = bucket.TailId;
+                entry.BNext = -1;
+                if (bucket.TailId >= 0) _byId[bucket.TailId].BNext = entry.Id; else bucket.HeadId = entry.Id;
+                bucket.TailId = entry.Id;
+                LinkShelf(entry, shelf);
+                return;
+            }
+            entry.InBucket = bucket;
+            entry.BucketPrev = bucket.Tail;
+            entry.BucketNext = null;
+            if (bucket.Tail != null) bucket.Tail.BucketNext = entry; else bucket.Head = entry;
+            bucket.Tail = entry;
+            LinkShelf(entry, shelf);
+        }
+
+        private void LinkShelf(Entry entry, Shelf shelf)
+        {
+            if (_indexedLru)
+            {
+                entry.OnShelf = shelf;
+                entry.SPrev = shelf.TailId;
+                entry.SNext = -1;
+                if (shelf.TailId >= 0) _byId[shelf.TailId].SNext = entry.Id; else shelf.HeadId = entry.Id;
+                shelf.TailId = entry.Id;
+                return;
+            }
+            entry.OnShelf = shelf;
+            entry.ShelfPrev = shelf.Tail;
+            entry.ShelfNext = null;
+            if (shelf.Tail != null) shelf.Tail.ShelfNext = entry; else shelf.Head = entry;
+            shelf.Tail = entry;
+        }
+
+        private void Unlink(Entry entry)
+        {
+            var bucket = entry.InBucket;
+            if (_indexedLru)
+            {
+                if (bucket != null)
+                {
+                    if (entry.BPrev >= 0) _byId[entry.BPrev].BNext = entry.BNext; else bucket.HeadId = entry.BNext;
+                    if (entry.BNext >= 0) _byId[entry.BNext].BPrev = entry.BPrev; else bucket.TailId = entry.BPrev;
+                    entry.InBucket = null;
+                    entry.BPrev = entry.BNext = -1;
+                }
+                UnlinkShelf(entry);
+                return;
+            }
+            if (bucket != null)
+            {
+                if (entry.BucketPrev != null) entry.BucketPrev.BucketNext = entry.BucketNext; else bucket.Head = entry.BucketNext;
+                if (entry.BucketNext != null) entry.BucketNext.BucketPrev = entry.BucketPrev; else bucket.Tail = entry.BucketPrev;
+                entry.InBucket = null;
+                entry.BucketPrev = entry.BucketNext = null;
+            }
+            UnlinkShelf(entry);
+        }
+
+        private void UnlinkShelf(Entry entry)
+        {
+            var shelf = entry.OnShelf;
+            if (shelf == null) return;
+            if (_indexedLru)
+            {
+                if (entry.SPrev >= 0) _byId[entry.SPrev].SNext = entry.SNext; else shelf.HeadId = entry.SNext;
+                if (entry.SNext >= 0) _byId[entry.SNext].SPrev = entry.SPrev; else shelf.TailId = entry.SPrev;
+                entry.OnShelf = null;
+                entry.SPrev = entry.SNext = -1;
+                return;
+            }
+            if (entry.ShelfPrev != null) entry.ShelfPrev.ShelfNext = entry.ShelfNext; else shelf.Head = entry.ShelfNext;
+            if (entry.ShelfNext != null) entry.ShelfNext.ShelfPrev = entry.ShelfPrev; else shelf.Tail = entry.ShelfPrev;
+            entry.OnShelf = null;
+            entry.ShelfPrev = entry.ShelfNext = null;
+        }
+
+        /// <summary>A touched tile is the newest of its height and of its shelf too.</summary>
+        private void Relink(Entry entry)
+        {
+            if (_indexedLru)
+            {
+                int id = entry.Id;
+                var b = entry.InBucket;
+                if (b != null && b.TailId != id)
+                {
+                    if (entry.BPrev >= 0) _byId[entry.BPrev].BNext = entry.BNext; else b.HeadId = entry.BNext;
+                    _byId[entry.BNext].BPrev = entry.BPrev;
+                    entry.BPrev = b.TailId;
+                    entry.BNext = -1;
+                    _byId[b.TailId].BNext = id;
+                    b.TailId = id;
+                }
+                var sh = entry.OnShelf;
+                if (sh != null && sh.TailId != id)
+                {
+                    if (entry.SPrev >= 0) _byId[entry.SPrev].SNext = entry.SNext; else sh.HeadId = entry.SNext;
+                    _byId[entry.SNext].SPrev = entry.SPrev;
+                    entry.SPrev = sh.TailId;
+                    entry.SNext = -1;
+                    _byId[sh.TailId].SNext = id;
+                    sh.TailId = id;
+                }
+                return;
+            }
+            var bucket = entry.InBucket;
+            if (bucket != null && bucket.Tail != entry)
+            {
+                if (entry.BucketPrev != null) entry.BucketPrev.BucketNext = entry.BucketNext; else bucket.Head = entry.BucketNext;
+                entry.BucketNext.BucketPrev = entry.BucketPrev;
+                entry.BucketPrev = bucket.Tail;
+                entry.BucketNext = null;
+                bucket.Tail.BucketNext = entry;
+                bucket.Tail = entry;
+            }
+            var shelf = entry.OnShelf;
+            if (shelf != null && shelf.Tail != entry)
+            {
+                if (entry.ShelfPrev != null) entry.ShelfPrev.ShelfNext = entry.ShelfNext; else shelf.Head = entry.ShelfNext;
+                entry.ShelfNext.ShelfPrev = entry.ShelfPrev;
+                entry.ShelfPrev = shelf.Tail;
+                entry.ShelfNext = null;
+                shelf.Tail.ShelfNext = entry;
+                shelf.Tail = entry;
+            }
+        }
+
+        /// <summary><see cref="EvictForFit"/>'s choice, from the list heads.</summary>
+        private Entry FastEvictionTarget(int wanted)
+        {
+            var bucket = BucketFor(wanted, create: false);
+            Entry recentFallback = null;
+            Entry bucketHead = bucket == null ? null
+                : _indexedLru ? (bucket.HeadId >= 0 ? _byId[bucket.HeadId] : null) : bucket.Head;
+            if (bucketHead != null)
+            {
+                if (bucketHead.LastUse <= _flushStamp) return bucketHead;
+                recentFallback = bucketHead;
+            }
+
+            Shelf coldest = null;
+            long coldestUse = long.MaxValue;
+            for (int li = 0; li < _layerCount; li++)
+            {
+                var shelves = _layers[li].Shelves;
+                for (int si = 0; si < shelves.Count; si++)
+                {
+                    var shelf = shelves[si];
+                    var tail = _indexedLru ? (shelf.TailId >= 0 ? _byId[shelf.TailId] : null) : shelf.Tail;
+                    if (tail == null || shelf.Height == wanted) continue;
+                    if (tail.LastUse >= coldestUse) continue;
+                    coldestUse = tail.LastUse;
+                    coldest = shelf;
+                }
+            }
+            if (coldest == null) return recentFallback;
+            return _indexedLru ? _byId[coldest.HeadId] : coldest.Head;
+        }
+
+        /// <summary>
+        /// Writes a baked tile now. Every caller completes the pending bakes
+        /// before it rasterizes (so the bytes land in placement order, and so
+        /// that bake cannot reuse the rasterizer's buffer
+        /// <paramref name="raster"/> points into).
+        /// </summary>
+        private GlyphLocation Commit(Key key, RasterizedGlyph raster, int ppem) =>
+            Place(key, default, raster, ppem, immediate: true);
+
+        /// <summary>
+        /// Gives a tile its slot and its entry. Immediately, it writes
+        /// <paramref name="raster"/>'s pixels; otherwise <paramref name="raster"/>
+        /// is only the tile's shape (<see cref="GlyphRasterizer.Measure"/>) and
+        /// <paramref name="request"/> is queued to bake into the slot later.
+        /// </summary>
+        private GlyphLocation Place(Key key, in RasterizeRequest request, RasterizedGlyph raster, int ppem,
+            bool immediate = false)
         {
             // The single place a tile is written, so the single place that has
             // to refuse when there is nowhere to write it. The callers above
@@ -829,7 +1689,8 @@ namespace OneText
             if (raster.IsEmpty)
             {
                 var emptyLocation = new GlyphLocation(false, Vector2.zero, Vector2.zero, default, 0);
-                _entries[key] = new Entry { Key = key, Location = emptyLocation };
+                RetireReplaced(key);
+                _entries[key] = new Entry { Key = key, Location = emptyLocation, Live = true };
                 return emptyLocation;
             }
 
@@ -865,9 +1726,26 @@ namespace OneText
                 HasSlot = true,
                 Prewarmed = MarkingPrewarmed,
             };
-            entry.Location = WriteSlot(layer, x, y, raster);
-            entry.Node = _lru.AddLast(entry);
+            if (immediate)
+            {
+                entry.Location = WriteSlot(layer, x, y, raster);
+            }
+            else
+            {
+                _pendingBakes.Add(new PendingBake
+                {
+                    Layer = layer, X = x, Y = y, Width = raster.Width, Height = raster.Height,
+                });
+                _pendingRequests.Add(request);
+                _pendingTexels += raster.Width * raster.Height;
+                MarkTileDirty(layer, x, y, raster.Width, raster.Height);
+                entry.Location = LocationOf(layer, x, y, raster);
+            }
+            LruAdd(entry);
             entry.LastUse = ++_useStamp;
+            if (_fastEviction) Link(entry, _layers[layer].Shelves[shelfIndex]);
+            RetireReplaced(key);
+            entry.Live = true;
             _entries[key] = entry;
             int pixels = raster.Width * raster.Height;
             _usedPixels += pixels;
@@ -884,6 +1762,16 @@ namespace OneText
                 if (_demand.TryAdd(key, pixels)) _demandPixels += pixels;
             }
             return entry.Location;
+        }
+
+        /// <summary>
+        /// An entry about to be overwritten in the dictionary under the same
+        /// key stops being live. Callers commit after a miss, so there is
+        /// normally nothing there; the test hook can commit over a key.
+        /// </summary>
+        private void RetireReplaced(Key key)
+        {
+            if (_recent != null && _entries.TryGetValue(key, out var replaced)) replaced.Live = false;
         }
 
         /// <summary>
@@ -916,17 +1804,29 @@ namespace OneText
                 return false;
             }
 
-            if (TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
+            if (FitMemo ? TryAllocRemembered(w, h, out layer, out x, out y, out shelfIndex)
+                    : TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
 
             // Space may exist but be scattered across half-used shelves.
             if (TryCompact(w, h) && TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
 
-            while (EvictForFit(w, h))
+            long evictStart = AtlasDiagnostics.Now;
+            try
             {
-                if (TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
-                if (TryCompact(w, h) && TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
+                while (EvictForFit(w, h))
+                {
+                    if (AtlasDiagnostics.Enabled) AtlasDiagnostics.EvictCount++;
+                    if (FitMemo
+                            ? TryAllocRemembered(w, h, out layer, out x, out y, out shelfIndex)
+                            : TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
+                    if (TryCompact(w, h) && TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
+                }
+                return false;
             }
-            return false;
+            finally
+            {
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.EvictTicks, evictStart);
+            }
         }
 
         /// <summary>
@@ -945,9 +1845,229 @@ namespace OneText
             return true;
         }
 
+        /// <summary>
+        /// Off walks every shelf of every layer for each tile, twice when it
+        /// evicts: a full atlas fails the first walk (which is why it evicts)
+        /// and walks again after each eviction. On, a walk that found no room
+        /// for a width at a shelf height is remembered, and so is every shelf
+        /// that could have gained room since (one a tile left, one opened or
+        /// re-typed: <see cref="NoteShelf"/>). Placing a tile anywhere else
+        /// only takes room away, so until something changes the answer the
+        /// next tile of that height and at least that width can only fit on
+        /// one of the noted shelves, or in a new shelf of one of their layers,
+        /// and those are tried in the order the walk would have reached them.
+        /// Same slot, every time; past a handful of noted shelves it walks
+        /// everything again. Under sustained eviction this is a few shelves a
+        /// tile instead of a few hundred.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FitMemo = true;
+
+        private struct NotedShelf
+        {
+            public int Layer, Index;
+            public Shelf Shelf;
+        }
+
+        // A ring of the last shelves that may have gained room, and how many
+        // were ever noted; a memory is good while the notes since it are all
+        // still in the ring and few enough to be worth trying one by one.
+        private const int NoteRing = 32, NotesWorthTrying = 12;
+        private readonly NotedShelf[] _notes = new NotedShelf[NoteRing];
+        private long _noteCount;
+
+        // Per shelf height (ladder index): the widest room a full walk that
+        // failed saw on any shelf of that height (an upper bound: free spans
+        // are bounded by FreeBound), and the note count then (-1: nothing
+        // remembered). A tile wider than that room fits nowhere but on a
+        // shelf noted since.
+        private readonly int[] _noRoomWidth = new int[ShelfHeights.Length];
+
+        // Set by a failed TryAlloc: the widest room it saw at the wanted height.
+        private int _walkRoom;
+        private readonly long[] _noRoomSince = NewMemory();
+        private readonly NotedShelf[] _candidates = new NotedShelf[NotesWorthTrying];
+
+        private static long[] NewMemory()
+        {
+            var since = new long[ShelfHeights.Length];
+            for (int i = 0; i < since.Length; i++) since[i] = -1;
+            return since;
+        }
+
+        private void NoteShelf(int layer, int index, Shelf shelf)
+        {
+            _notes[(int)(_noteCount % NoteRing)] = new NotedShelf { Layer = layer, Index = index, Shelf = shelf };
+            _noteCount++;
+        }
+
+        private void ForgetNoRoom()
+        {
+            for (int i = 0; i < _noRoomSince.Length; i++) _noRoomSince[i] = -1;
+        }
+
+        private static int LadderIndex(int wanted)
+        {
+            for (int i = 0; i < ShelfHeights.Length; i++)
+                if (ShelfHeights[i] == wanted) return i;
+            return -1;
+        }
+
+        private bool TryAllocRemembered(int w, int h, out int layer, out int x, out int y, out int shelfIndex)
+        {
+            int wanted = ShelfHeightFor(h);
+            int k = LadderIndex(wanted);
+            if (k >= 0 && _noRoomSince[k] >= 0 && w > _noRoomWidth[k] && _noteCount - _noRoomSince[k] <= NotesWorthTrying)
+                return TryNoted(k, w, wanted, out layer, out x, out y, out shelfIndex);
+
+            if (TryAlloc(w, h, out layer, out x, out y, out shelfIndex)) return true;
+            if (k >= 0)
+            {
+                _noRoomWidth[k] = _walkRoom;
+                _noRoomSince[k] = _noteCount;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The noted shelves since the memory for this height, in the walk's
+        /// order (layer, then shelf), each layer's new shelf after its own.
+        /// </summary>
+        private bool TryNoted(int k, int w, int wanted, out int layer, out int x, out int y, out int shelfIndex)
+        {
+            layer = x = y = shelfIndex = 0;
+            int n = 0;
+            for (long i = _noRoomSince[k]; i < _noteCount; i++)
+            {
+                var note = _notes[(int)(i % NoteRing)];
+                int at = n;
+                bool duplicate = false;
+                for (int j = 0; j < n; j++)
+                {
+                    var c = _candidates[j];
+                    if (c.Layer == note.Layer && c.Shelf == note.Shelf) { duplicate = true; break; }
+                }
+                if (duplicate) continue;
+                // Insertion by (layer, index).
+                while (at > 0 && (_candidates[at - 1].Layer > note.Layer ||
+                       (_candidates[at - 1].Layer == note.Layer && _candidates[at - 1].Index > note.Index)))
+                {
+                    _candidates[at] = _candidates[at - 1];
+                    at--;
+                }
+                _candidates[at] = note;
+                n++;
+            }
+
+            int room = _noRoomWidth[k];
+            for (int j = 0; j < n; j++)
+            {
+                var c = _candidates[j];
+                var state = _layers[c.Layer];
+                // A shelf removed since it was noted is not there to try; its
+                // rows went back to the layer, which the new shelf below tries.
+                if (c.Index < state.Shelves.Count && state.Shelves[c.Index] == c.Shelf)
+                {
+                    if (TryShelf(c.Shelf, c.Layer, c.Index, w, wanted, out layer, out x, out y, out shelfIndex))
+                    {
+                        if (c.Shelf.LiveTiles == 1) NoteShelf(c.Layer, c.Index, c.Shelf); // re-typed: room for its height
+                        return true;
+                    }
+                    if (!c.Shelf.IsEmpty && c.Shelf.Height == wanted)
+                    {
+                        int left = Math.Max(c.Shelf.FreeBound, _textureSize - c.Shelf.X);
+                        if (left > room) room = left;
+                    }
+                }
+                bool lastOfLayer = j + 1 == n || _candidates[j + 1].Layer != c.Layer;
+                if (lastOfLayer && TryNewShelf(state, c.Layer, w, wanted, out layer, out x, out y, out shelfIndex))
+                    return true;
+            }
+            // Nothing fits this width anywhere now: the shelves not noted still
+            // have no more room than remembered, and the noted ones have just
+            // said how much they have. A memory from now on, with no notes.
+            _noRoomWidth[k] = room;
+            _noRoomSince[k] = _noteCount;
+            return false;
+        }
+
+        /// <summary>
+        /// One shelf of <see cref="TryAlloc"/>'s walk, the same tests in the
+        /// same order (the walk keeps its own copy inline: it is the loop a
+        /// full atlas runs for every tile, and a call per shelf shows there).
+        /// </summary>
+        private bool TryShelf(Shelf shelf, int li, int si, int w, int wanted,
+            out int layer, out int x, out int y, out int shelfIndex)
+        {
+            layer = x = y = shelfIndex = 0;
+            if (shelf.IsEmpty)
+            {
+                if (wanted > shelf.Capacity) return false;
+                shelf.Height = wanted;
+            }
+            else if (shelf.Height != wanted)
+            {
+                return false;
+            }
+
+            int widest = 0;
+            bool scan = !FastShelfScan || shelf.FreeBound >= w;
+            for (int fi = 0; scan && fi < shelf.Free.Count; fi++)
+            {
+                var span = shelf.Free[fi];
+                if (span.Width < w)
+                {
+                    if (span.Width > widest) widest = span.Width;
+                    continue;
+                }
+                x = span.X;
+                y = shelf.Y;
+                layer = li;
+                shelfIndex = si;
+                if (span.Width == w) shelf.Free.RemoveAt(fi);
+                else shelf.Free[fi] = new Span { X = span.X + w, Width = span.Width - w };
+                shelf.LiveTiles++;
+                return true;
+            }
+            if (scan) shelf.FreeBound = widest;
+
+            if (shelf.X + w <= _textureSize)
+            {
+                x = shelf.X;
+                y = shelf.Y;
+                layer = li;
+                shelfIndex = si;
+                shelf.X += w;
+                shelf.LiveTiles++;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>The new shelf at the top of a layer, as <see cref="TryAlloc"/> opens one.</summary>
+        private bool TryNewShelf(LayerState state, int li, int w, int wanted,
+            out int layer, out int x, out int y, out int shelfIndex)
+        {
+            layer = x = y = shelfIndex = 0;
+            if (state.YCursor + wanted > _textureSize) return false;
+            var shelf = new Shelf
+            {
+                Y = state.YCursor, Capacity = wanted, Height = wanted, X = w, LiveTiles = 1,
+            };
+            state.YCursor += wanted;
+            state.Shelves.Add(shelf);
+            x = 0;
+            y = shelf.Y;
+            layer = li;
+            shelfIndex = state.Shelves.Count - 1;
+            NoteShelf(li, shelfIndex, shelf);
+            return true;
+        }
+
         private bool TryAlloc(int w, int h, out int layer, out int x, out int y, out int shelfIndex)
         {
             int wanted = ShelfHeightFor(h);
+            int room = 0;
 
             for (int li = 0; li < _layerCount; li++)
             {
@@ -969,10 +2089,20 @@ namespace OneText
                         continue;
                     }
 
-                    for (int fi = 0; fi < shelf.Free.Count; fi++)
+                    // A fragmented shelf can hold hundreds of slivers; when
+                    // none of them can be wide enough there is no reason to
+                    // look at them (FastShelfScan). The first that fits is
+                    // still the first in the list.
+                    int widest = 0;
+                    bool scan = !FastShelfScan || shelf.FreeBound >= w;
+                    for (int fi = 0; scan && fi < shelf.Free.Count; fi++)
                     {
                         var span = shelf.Free[fi];
-                        if (span.Width < w) continue;
+                        if (span.Width < w)
+                        {
+                            if (span.Width > widest) widest = span.Width;
+                            continue;
+                        }
                         x = span.X;
                         y = shelf.Y;
                         layer = li;
@@ -982,6 +2112,7 @@ namespace OneText
                         shelf.LiveTiles++;
                         return true;
                     }
+                    if (scan) shelf.FreeBound = widest;
 
                     if (shelf.X + w <= _textureSize)
                     {
@@ -991,8 +2122,12 @@ namespace OneText
                         shelfIndex = si;
                         shelf.X += w;
                         shelf.LiveTiles++;
+                        // An empty shelf just took this height: room for more of it.
+                        if (shelf.LiveTiles == 1) NoteShelf(li, si, shelf);
                         return true;
                     }
+                    int left = Math.Max(shelf.FreeBound, _textureSize - shelf.X);
+                    if (left > room) room = left;
                 }
 
                 if (state.YCursor + wanted <= _textureSize)
@@ -1007,11 +2142,13 @@ namespace OneText
                     y = shelf.Y;
                     layer = li;
                     shelfIndex = state.Shelves.Count - 1;
+                    NoteShelf(li, shelfIndex, shelf);
                     return true;
                 }
             }
 
             layer = x = y = shelfIndex = 0;
+            _walkRoom = room;
             return false;
         }
 
@@ -1032,8 +2169,18 @@ namespace OneText
         {
             int wanted = ShelfHeightFor(h);
 
+            if (_fastEviction)
+            {
+                var chosen = FastEvictionTarget(wanted);
+                if (chosen == null) return false;
+                Release(chosen);
+                _evictions++;
+                Version++;
+                return true;
+            }
+
             Entry target = null, recentFallback = null;
-            foreach (var entry in _lru)
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
             {
                 if (!entry.HasSlot) continue;
                 if (_layers[entry.Layer].Shelves[entry.ShelfIndex].Height != wanted) continue;
@@ -1064,7 +2211,7 @@ namespace OneText
             long coldestUse = long.MaxValue;
             var newest = new Dictionary<(int, int), long>();
 
-            foreach (var entry in _lru)
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
             {
                 if (!entry.HasSlot) continue;
                 var key = (entry.Layer, entry.ShelfIndex);
@@ -1080,7 +2227,7 @@ namespace OneText
             }
             if (coldest.layer < 0) return null;
 
-            foreach (var entry in _lru)
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
                 if (entry.HasSlot && entry.Layer == coldest.layer && entry.ShelfIndex == coldest.shelf)
                     return entry;
             return null;
@@ -1088,9 +2235,14 @@ namespace OneText
 
         private void Release(Entry entry)
         {
+            // The shelf it leaves may have room now (FitMemo).
+            if (entry.HasSlot) NoteShelf(entry.Layer, entry.ShelfIndex, _layers[entry.Layer].Shelves[entry.ShelfIndex]);
+            entry.Live = false;
             _entries.Remove(entry.Key);
-            if (entry.Node != null) _lru.Remove(entry.Node);
-            entry.Node = null;
+            // Unlinked from the per-height and per-shelf lists before the LRU
+            // gives the entry's slot back: indexed, those lists name it by slot.
+            if (_fastEviction) Unlink(entry);
+            LruRemove(entry);
             if (!entry.HasSlot) return;
 
             FreeSpan(_layers[entry.Layer], entry.ShelfIndex, entry.X, entry.Width);
@@ -1147,11 +2299,13 @@ namespace OneText
                     }
                 }
                 shelf.Free.Add(span);
+                if (span.Width > shelf.FreeBound) shelf.FreeBound = span.Width;
             }
 
             if (!shelf.IsEmpty) return;
 
             shelf.Free.Clear();
+            shelf.FreeBound = 0;
             shelf.X = 0;
             shelf.Height = shelf.Capacity; // free to serve any bucket again
             // An empty shelf at the top of the layer gives its rows back. Only
@@ -1173,10 +2327,14 @@ namespace OneText
         /// </summary>
         public void Compact()
         {
-            if (!IsUsable || _lru.Count == 0) return;
+            // It reads every live tile's texels, and a placed tile has none yet.
+            CompletePendingBakes();
+            if (!IsUsable || LruCount == 0) return;
+            long compactStart = AtlasDiagnostics.Now;
+            if (AtlasDiagnostics.Enabled) AtlasDiagnostics.CompactCount++;
 
-            var live = new List<Entry>(_lru.Count);
-            foreach (var entry in _lru)
+            var live = new List<Entry>(LruCount);
+            for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
                 if (entry.HasSlot) live.Add(entry);
             if (live.Count == 0) return;
 
@@ -1206,6 +2364,7 @@ namespace OneText
                 layer.Shelves.Clear();
                 layer.YCursor = 0;
             }
+            ForgetNoRoom();
             for (int layer = 0; layer < _layerCount; layer++) ClearLayerPixels(layer);
             // Recounted rather than adjusted, because the loop below may drop a
             // tile it cannot re-place, and a provenance count that drifts is
@@ -1231,9 +2390,10 @@ namespace OneText
                 {
                     // Cannot happen for tiles that already fitted, but dropping
                     // is still better than a corrupt entry.
+                    entry.Live = false;
                     _entries.Remove(entry.Key);
-                    if (entry.Node != null) _lru.Remove(entry.Node);
-                    entry.Node = null;
+                    if (_fastEviction) Unlink(entry);
+                    LruRemove(entry);
                     entry.HasSlot = false;
                     continue;
                 }
@@ -1260,10 +2420,25 @@ namespace OneText
                 }
             }
 
+            if (_fastEviction)
+            {
+                // The shelves are new objects; their lists are rebuilt in the
+                // global order. Heights did not change, so neither did buckets.
+                for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
+                {
+                    entry.OnShelf = null;
+                    entry.ShelfPrev = entry.ShelfNext = null;
+                    entry.SPrev = entry.SNext = -1;
+                }
+                for (var entry = LruFirst(); entry != null; entry = LruNextOf(entry))
+                    if (entry.HasSlot) LinkShelf(entry, _layers[entry.Layer].Shelves[entry.ShelfIndex]);
+            }
+
             _compactions++;
             _compactedSinceFlush = true;
             Version++;
             MarkFullUpload();
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.CompactTicks, compactStart);
         }
 
         private Rect UvRectOf(int x, int y, int w, int h) => new Rect(
@@ -1282,6 +2457,103 @@ namespace OneText
         private GlyphLocation WriteSlot(int layer, int x, int y, RasterizedGlyph raster)
         {
             long copyStart = AtlasDiagnostics.Now;
+            CopyIntoSlot(layer, x, y, raster);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.CopyTicks, copyStart);
+            MarkTileDirty(layer, x, y, raster.Width, raster.Height);
+            return LocationOf(layer, x, y, raster);
+        }
+
+        /// <summary>
+        /// Off copies a tile into the atlas a row at a time through
+        /// <c>NativeArray.Copy</c>, which checks its arguments and the safety
+        /// handle on every row; a frame of two hundred new tiles made ~6,000
+        /// of those calls. On copies the same rows with a plain memcpy from
+        /// the pinned tile into the layer. Same bytes, same places.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool RawTileCopy = true;
+
+        /// <summary>
+        /// Off asks the texture for a layer's pixels once per tile written; on,
+        /// once per layer per batch. Each ask is an engine call that builds a
+        /// <c>NativeArray</c> (and, in the editor, a safety handle) over the
+        /// same memory, and a batch of two hundred tiles asked two hundred
+        /// times for the same four layers. Same rows, same bytes.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool LayerPointersOnce = true;
+
+        private unsafe byte*[] _layerPointers;
+
+        /// <summary>
+        /// Writes a batch's tiles into the slots they were placed in, in
+        /// placement order. A result whose size is not its slot's (it can only
+        /// mean the request changed under us) is skipped.
+        /// </summary>
+        private unsafe void CopyIntoSlots(List<PendingBake> bakes, List<RasterizedGlyph> results)
+        {
+            int n = Math.Min(bakes.Count, results.Count);
+            if (!(LayerPointersOnce && RawTileCopy))
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    var slot = bakes[i];
+                    var raster = results[i];
+                    if (raster.IsEmpty || raster.Pixels == null ||
+                        raster.Width != slot.Width || raster.Height != slot.Height) continue;
+                    CopyIntoSlot(slot.Layer, slot.X, slot.Y, raster);
+                }
+                return;
+            }
+
+            _layerPointers ??= new byte*[_layerCount];
+            for (int l = 0; l < _layerCount; l++) _layerPointers[l] = null;
+            int stride = _textureSize * _bytesPerTexel;
+            for (int i = 0; i < n; i++)
+            {
+                var slot = bakes[i];
+                var raster = results[i];
+                if (raster.IsEmpty || raster.Pixels == null ||
+                    raster.Width != slot.Width || raster.Height != slot.Height) continue;
+                int bytes = raster.Width * _bytesPerTexel;
+                if (raster.PixelStart < 0 || raster.PixelStart + bytes * raster.Height > raster.Pixels.Length ||
+                    slot.X + raster.Width > _textureSize || slot.Y + raster.Height > _textureSize)
+                    throw new ArgumentOutOfRangeException(nameof(results), "tile does not fit its slot");
+                byte* layer = _layerPointers[slot.Layer];
+                if (layer == null)
+                {
+                    layer = (byte*)Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility
+                        .GetUnsafePtr(Texture.GetPixelData<byte>(0, slot.Layer));
+                    _layerPointers[slot.Layer] = layer;
+                }
+                byte* target = layer + ((long)slot.Y * _textureSize + slot.X) * _bytesPerTexel;
+                fixed (byte* source = raster.Pixels)
+                    TileRows.Copy(target, stride, source + raster.PixelStart, bytes, raster.Height);
+            }
+        }
+
+        private unsafe void CopyIntoSlot(int layer, int x, int y, RasterizedGlyph raster)
+        {
+            if (RawTileCopy)
+            {
+                var layerPixels = Texture.GetPixelData<byte>(0, layer);
+                int bytes = raster.Width * _bytesPerTexel;
+                int stride = _textureSize * _bytesPerTexel;
+                if (raster.PixelStart < 0 || raster.PixelStart + bytes * raster.Height > raster.Pixels.Length ||
+                    x + raster.Width > _textureSize || y + raster.Height > _textureSize)
+                    throw new ArgumentOutOfRangeException(nameof(raster), "tile does not fit its slot");
+                byte* target = (byte*)Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility
+                    .GetUnsafePtr(layerPixels) + ((long)y * _textureSize + x) * _bytesPerTexel;
+                fixed (byte* source = raster.Pixels)
+                {
+                    byte* from = source + raster.PixelStart;
+                    for (int row = 0; row < raster.Height; row++)
+                        Unity.Collections.LowLevel.Unsafe.UnsafeUtility.MemCpy(
+                            target + (long)row * stride, from + (long)row * bytes, bytes);
+                }
+                return;
+            }
+
             var dst = Texture.GetPixelData<byte>(0, layer);
             // Row-wise memcpy: a per-byte loop here costs more than the GPU
             // upload it feeds.
@@ -1291,9 +2563,10 @@ namespace OneText
                 NativeArray<byte>.Copy(raster.Pixels, raster.PixelStart + row * rowBytes,
                     dst, ((y + row) * _textureSize + x) * _bytesPerTexel, rowBytes);
             }
-            AtlasDiagnostics.Add(ref AtlasDiagnostics.CopyTicks, copyStart);
-            MarkTileDirty(layer, x, y, raster.Width, raster.Height);
+        }
 
+        private GlyphLocation LocationOf(int layer, int x, int y, RasterizedGlyph raster)
+        {
             var sizeUnits = new Vector2(
                 raster.Width * raster.UnitsPerPixel, raster.Height * raster.UnitsPerPixel);
             return new GlyphLocation(true, raster.OriginUnits, sizeUnits,
@@ -1362,6 +2635,10 @@ namespace OneText
         /// </summary>
         public void Flush()
         {
+            // Placed tiles get their fields before anything goes up.
+            long bakeStart = AtlasDiagnostics.Now;
+            CompletePendingBakes();
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.FlushBakeTicks, bakeStart);
             if (!IsUsable || !_dirty) return;
             long uploadStart = AtlasDiagnostics.Now;
             if (AtlasDiagnostics.Enabled)
@@ -1580,8 +2857,38 @@ namespace OneText
                 }
                 _staging = null;
             }
+            // A batch still baking writes into buffers it does not own once we
+            // are gone; collect it, then drop everything.
+            foreach (var flight in _flights) GlyphRasterizer.EndBatch(flight.Batch);
+            _flights.Clear();
+            _lazy.Clear();
+            OutlineJobs.Unregister(this);
+            _registeredForOutlines = false;
+            _pendingBakes.Clear();
+            _pendingRequests.Clear();
+            _pendingTexels = 0;
+            foreach (var entry in _entries.Values) entry.Live = false;
+            if (_recent != null) Array.Clear(_recent, 0, _recent.Length);
             _entries.Clear();
-            _lru.Clear();
+            LruClear();
+            _buckets.Clear();
+        }
+    }
+
+    /// <summary>
+    /// A tile's rows into a layer, as one native call rather than one
+    /// managed-to-native memcpy per row: a frame of two hundred new tiles is
+    /// six thousand rows of a few dozen bytes, and the call was most of each.
+    /// </summary>
+    [Unity.Burst.BurstCompile]
+    internal static unsafe class TileRows
+    {
+        [Unity.Burst.BurstCompile]
+        public static void Copy(byte* target, int stride, byte* source, int bytes, int rows)
+        {
+            for (int row = 0; row < rows; row++)
+                Unity.Collections.LowLevel.Unsafe.UnsafeUtility.MemCpy(
+                    target + (long)row * stride, source + (long)row * bytes, bytes);
         }
     }
 }

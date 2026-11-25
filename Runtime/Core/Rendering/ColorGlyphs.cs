@@ -47,9 +47,15 @@ namespace OneText
     /// PNG (JPEG, TIFF, Apple's compressed formats) yields nothing, and that
     /// glyph goes down the outline path.
     ///
-    /// COLRv1 (gradients and transforms) is also absent. It is a paint graph,
-    /// not a layer list, and it deserves its own milestone rather than a
-    /// half-implementation that renders some fonts wrong.
+    /// And a third, which the newer emoji and icon fonts are moving to:
+    ///
+    /// <list type="bullet">
+    /// <item><b>COLRv1</b>: a paint graph rather than a layer list —
+    /// gradients, transforms, clips and compositing. Read from the table and
+    /// drawn by <see cref="ColrPaintRenderer"/>; see <see cref="ColrTable"/>
+    /// for why that is done here and not through HarfBuzz, and for the one
+    /// thing it does not do (colour variations follow the default instance).</item>
+    /// </list>
     /// </summary>
     public static class ColorGlyphs
     {
@@ -63,6 +69,7 @@ namespace OneText
             None = 0,
             Bitmaps = 1 << 0,   // CBDT/CBLC
             Layers = 1 << 1,    // COLRv0 + CPAL
+            Paint = 1 << 2,     // COLRv1
         }
 
         // Keyed by FontData.CacheId, never by the native face pointer. A freed
@@ -84,6 +91,7 @@ namespace OneText
             if (HarfBuzzApi.hb_ot_color_has_png(font.Face) != 0) support |= Support.Bitmaps;
             if (HarfBuzzApi.hb_ot_color_has_layers(font.Face) != 0 &&
                 HarfBuzzApi.hb_ot_color_has_palettes(font.Face) != 0) support |= Support.Layers;
+            if (ColrTable.For(font) != null) support |= Support.Paint;
 
             s_support[font.CacheId] = support;
             return support;
@@ -98,10 +106,38 @@ namespace OneText
         /// do not, and keying every tile by colour would cost a miss per label
         /// colour for nothing.
         /// </summary>
-        public static unsafe bool UsesTextColor(FontData font, uint glyphId)
+        public static bool UsesTextColor(FontData font, uint glyphId)
         {
-            if ((SupportedBy(font) & Support.Layers) == 0) return false;
+            var support = SupportedBy(font);
 
+            // A glyph with a paint graph is drawn from it, so the graph is the
+            // one to ask; a font may carry layers for the same glyph as a
+            // fallback for readers that stop at version 0.
+            if ((support & Support.Paint) != 0)
+            {
+                var colr = ColrTable.For(font);
+                if (colr.FollowsText.TryGetValue(glyphId, out bool follows)) return follows;
+                if (colr.TryFindRoot(glyphId, out uint paint))
+                {
+                    // The palette goes with it: an index the palette does not
+                    // have is drawn in the text colour too.
+                    follows = (t_painter ??= new ColrPaintRenderer())
+                        .FollowsText(colr, paint, ReadPalette(font));
+                    // And if the graph is abandoned, the layers are what gets
+                    // drawn. Asking both costs a tile per label colour for the
+                    // rare glyph they disagree on, and never a wrong colour.
+                    if (!follows && (support & Support.Layers) != 0)
+                        follows = LayersUseTextColor(font, glyphId);
+                    colr.FollowsText[glyphId] = follows;
+                    return follows;
+                }
+            }
+
+            return (support & Support.Layers) != 0 && LayersUseTextColor(font, glyphId);
+        }
+
+        private static unsafe bool LayersUseTextColor(FontData font, uint glyphId)
+        {
             uint count = 0;
             uint total = HarfBuzzApi.hb_ot_color_glyph_get_layers(font.Face, glyphId, 0, ref count, null);
             if (total == 0 || total > MaxLayers) return false;
@@ -137,10 +173,33 @@ namespace OneText
 
             if ((support & Support.Bitmaps) != 0 && TryDecodeBitmap(font, glyphId, out result))
                 return true;
+            if ((support & Support.Paint) != 0 &&
+                TryDecodePaint(font, glyphId, pixelsPerUnit, textColor, out result))
+                return true;
             if ((support & Support.Layers) != 0 &&
                 TryDecodeLayers(font, glyphId, pixelsPerUnit, textColor, out result))
                 return true;
             return false;
+        }
+
+        // ---------------------------------------------------------- paint graph
+
+        [ThreadStatic] private static ColrPaintRenderer t_painter;
+
+        /// <summary>
+        /// A COLRv1 glyph. Tried before the layers because a font that carries
+        /// both for one glyph means the layers as the fallback.
+        /// </summary>
+        private static bool TryDecodePaint(FontData font, uint glyphId, float pixelsPerUnit,
+            Color32 textColor, out ColorGlyph result)
+        {
+            result = default;
+            var colr = ColrTable.For(font);
+            if (colr == null || !colr.TryFindRoot(glyphId, out uint paint)) return false;
+
+            var painter = t_painter ??= new ColrPaintRenderer();
+            return painter.TryRender(colr, font, glyphId, paint, pixelsPerUnit, textColor,
+                ReadPalette(font), out result);
         }
 
         // ------------------------------------------------------------- bitmaps
@@ -318,11 +377,24 @@ namespace OneText
         private static void Rasterize(FontData font, uint glyphId, float pixelsPerUnit,
             Vector2 origin, int width, int height, float[] coverage)
         {
-            Array.Clear(coverage, 0, coverage.Length);
-
             var outline = t_outline ??= new GlyphOutline();
             outline.Clear();
             OutlineExtractor.Extract(font, glyphId, outline, pixelsPerUnit);
+            FillOutline(outline, pixelsPerUnit, origin, width, height, coverage);
+        }
+
+        /// <summary>
+        /// The filler itself, on contours that are already in the tile's
+        /// font-unit space. The paint renderer hands it outlines it has
+        /// carried through a transform, and boxes, and so fills exactly the
+        /// way a layer does. Writes the first width × height entries of
+        /// <paramref name="coverage"/>, which may be a longer scratch array.
+        /// </summary>
+        internal static void FillOutline(GlyphOutline outline, float pixelsPerUnit,
+            Vector2 origin, int width, int height, float[] coverage)
+        {
+            int texels = width * height;
+            Array.Clear(coverage, 0, texels);
             if (outline.Contours.Count == 0) return;
 
             // 2x2 supersampling: enough to stop a fill looking cut out with a
@@ -376,7 +448,7 @@ namespace OneText
                 }
             }
 
-            for (int i = 0; i < coverage.Length; i++) coverage[i] = Mathf.Clamp01(coverage[i]);
+            for (int i = 0; i < texels; i++) coverage[i] = Mathf.Clamp01(coverage[i]);
         }
 
         [ThreadStatic] private static List<(float X, int Winding)> t_crossings;
@@ -406,7 +478,11 @@ namespace OneText
         }
 
         /// <summary>Drops the per-face cache; call after unloading fonts.</summary>
-        public static void ClearCache() => s_support.Clear();
+        public static void ClearCache()
+        {
+            s_support.Clear();
+            ColrTable.ClearCache();
+        }
 
         /// <summary>
         /// Forgets one font's answer. Called from <see cref="FontData.Dispose"/>:
@@ -414,6 +490,10 @@ namespace OneText
         /// and every reload is a new CacheId, so without this the table grows
         /// for the lifetime of the editor.
         /// </summary>
-        internal static void Forget(int cacheId) => s_support.Remove(cacheId);
+        internal static void Forget(int cacheId)
+        {
+            s_support.Remove(cacheId);
+            ColrTable.Forget(cacheId);
+        }
     }
 }

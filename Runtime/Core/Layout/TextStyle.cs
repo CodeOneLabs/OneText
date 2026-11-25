@@ -137,8 +137,9 @@ namespace OneText
         /// white when it said nothing, with <c>&lt;alpha&gt;</c> laid over
         /// either.
         ///
-        /// White rather than the label's colour on purpose — the label's is
-        /// multiplied in at emit, so tinting or fading a label never
+        /// White rather than the label's colour on purpose — the label's joins
+        /// at emit (it tints white, and gives a tagged colour only its alpha;
+        /// see <see cref="TextQuad.OwnsColor"/>), so tinting or fading a label never
         /// invalidates a baked quad. <c>&lt;alpha&gt;</c> rides along in the
         /// same channel and gets the same benefit, which is what lets a
         /// typewriter reveal built out of <c>&lt;alpha=#00&gt;</c> cost nothing
@@ -151,7 +152,39 @@ namespace OneText
             return color;
         }
 
-        public bool Equals(TextStyle other) =>
+        public bool Equals(TextStyle other)
+        {
+            if (FlagsFirstEquals)
+            {
+                // The same twelve comparisons, the ones most likely to differ
+                // first: two adjacent styles nearly always differ in a flag
+                // (a <b>, an <i>, a colour's HasColor) and the order below
+                // asked eleven other questions before that one. A conjunction
+                // of side-effect-free tests has one answer in any order.
+                return Flags == other.Flags &&
+                       ColorEquals(Color, other.Color) &&
+                       SizeScale.Equals(other.SizeScale) &&
+                       SizeAbsolute.Equals(other.SizeAbsolute) &&
+                       NamedStyle == other.NamedStyle &&
+                       FontOverride == other.FontOverride &&
+                       Sprite == other.Sprite &&
+                       AlphaOverride == other.AlphaOverride &&
+                       ColorEquals(MarkColor, other.MarkColor) &&
+                       BaselineShiftEm.Equals(other.BaselineShiftEm) &&
+                       LetterSpacingEm.Equals(other.LetterSpacingEm) &&
+                       MonoAdvanceEm.Equals(other.MonoAdvanceEm);
+            }
+            return EqualsInDeclarationOrder(other);
+        }
+
+        /// <summary>
+        /// Whether <see cref="Equals(TextStyle)"/> compares the flags first.
+        /// Same answer either way; a switch so the order can be measured.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FlagsFirstEquals = true;
+
+        private bool EqualsInDeclarationOrder(in TextStyle other) =>
             SizeAbsolute.Equals(other.SizeAbsolute) &&
             SizeScale.Equals(other.SizeScale) &&
             ColorEquals(Color, other.Color) &&

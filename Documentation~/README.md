@@ -62,6 +62,35 @@ or a Mermaid plugin to read.
 ![Assembly dependency graph with the defines that gate the optional ones](diagrams/assemblies.png)
 <sub>Source: [diagrams/assemblies.mmd](diagrams/assemblies.mmd)</sub>
 
+## Hot paths and the code they replaced
+
+The rebuild path (text setter to mesh) carries about fifty-four fast paths, each
+behind an `internal static bool` marked `[HotPathSwitch]` (`Runtime/Core/HotPathSwitchAttribute.cs`).
+On, the default, is what ships. Off runs the implementation it replaced, which is
+kept on purpose:
+
+- **As the test's oracle.** Each fast path has an equivalence test that runs both
+  and asserts the same layout, quads, atlas bytes or mesh: `LayoutFastPathTests`,
+  `StyledLayoutFastPathTests`, `UnicodeShortcutTests`, `InertShapingTests`,
+  `FontResolveEquivalenceTests`, `SystemFontIndexEquivalenceTests`,
+  `StraightQuadsTests`, `DirectMeshTests`, `LabelHotPathTests`, `BakePathTests`,
+  `WorkerOutlineTests`, `Il2CppPathTests`. "Nothing draws differently" is the rule
+  every one of these was admitted under.
+- **As the benchmark's other arm.** Run-to-run noise between two Unity sessions is
+  about ±4 %, more than most of these are worth alone, so the only A/B that has
+  held up is one process with the switch flipped back and forth. A harness reaches
+  them by name through `OneText.Benchmarks.HotPathSwitches` (`Editor/Dev/Benchmarks`);
+  `SetAll(false)` is the package before the hot-path work.
+
+Three things to know before adding one. A benchmark number is not evidence the
+output is right: the first of these measured 17 % faster on the null graphics
+device while drawing nothing on a real one, and only rendering the golden scenes
+with it off and on showed that. An atlas reads the switches that shape its tables
+when it is constructed, so flip those before building what is measured. And when
+comparing renders, run an on-against-on control first: in the editor a Burst job
+runs as managed code until its compile finishes, and the two differ by one in a
+few texels (the tile-writing jobs are `CompileSynchronously` for this reason).
+
 ## How a module doc is laid out
 
 Every `README.md` under here follows the same headings, so you can open any of

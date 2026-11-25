@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Done** | M0 to M15, shipped as v0.1.0 (2026-08-05): shaping, the Unicode algorithms, layout, the shared atlas, uGUI components, natives for every platform including wasm, rich text, colour emoji, animation, Asian typography, the Hub, an input field that survives an IME, decorations, MSDF, ruby, vertical writing. Then v0.2.0 (2026-08-08): world-space text, auto-size, MSDF error correction, and the Hub's Onboarding tab for leaving TMP. Then v0.3.0 (2026-08-11): a migration that runs on part of a project and mends the rest, the rich-text tags a real TMP project actually contains, and a `<b>` that can reach a designed bold |
-| **Now: M16** | Ship it: a remote and CI's first green run, the browser demo, the platform and IME matrix on real hardware, OpenUPM listing and the TMP migration guide (the tooling shipped in v0.2.0 and grew up in v0.3.0; the prose has not) |
-| **Next: M17** | The known gaps: COLRv1, tate-chū-yoko, vertical editing, Thai proven against real data |
+| **Now: M16** | Ship it: a remote and CI's first green run, the browser demo, the platform and IME matrix on real hardware, OpenUPM listing. The TMP migration guide, the other half of that item, is written: the tooling shipped in v0.2.0 and grew up in v0.3.0, and the prose is [MIGRATING-FROM-TMP.md](MIGRATING-FROM-TMP.md) |
+| **Next: M17** | The known gaps: tate-chū-yoko, vertical editing, Thai proven against real data (COLRv1 is done, bar colour variations) |
 | **Later** | The open squares: UI Toolkit frontend, ECS/DOTS, accessibility |
 | **1.0** | A trust claim, not a feature list: every platform verified on real hardware, CI green as a standing condition, the IME matrix passed, external projects shipping on the package |
 
@@ -83,18 +83,23 @@ item is one the roadmap has already promised somewhere.
    platform and IME*, so macOS-only manual testing exercises half its design.
    Windows Korean and Japanese IMEs by hand; the mobile soft-keyboard path on
    at least one device per OS.
-4. **OpenUPM listing and the TMP migration guide.** Promised with M7, still
-   unwritten. This is the front door for adoption; the demo is the window
-   display.
+4. **OpenUPM listing and the TMP migration guide.** Both promised with M7.
+   The guide is written: [MIGRATING-FROM-TMP.md](MIGRATING-FROM-TMP.md). The
+   OpenUPM listing is still to do; until then the install is by git URL. This
+   is the front door for adoption; the demo is the window display.
 
 ## M17: The known gaps
 
 The items the earlier milestones deferred honestly, ordered by how soon a
 real user would file each one:
 
-1. **COLRv1.** Deferred in M8 as "a paint graph deserves a milestone rather
-   than a half-implementation". Newer emoji and icon fonts lean on it more
-   every year.
+1. ~~**COLRv1.**~~ Done: the paint graph is read from the table and drawn
+   on the CPU into the colour atlas — every paint format, all three
+   gradients and extend modes, clip boxes and all twenty-eight composite
+   modes — and matches Chrome's rendering of the same glyphs to within
+   antialiasing. See the changelog. What is left is the variation data
+   (variable colour fonts draw their default instance's colours), and a run
+   against a shipping emoji font rather than the authored test face.
 2. ~~**MSDF error correction.**~~ Done, both halves: the per-texel rules
    folded into the rasterize job, and the pass over neighbouring pairs that
    catches a median which is right at every texel and dives between two of

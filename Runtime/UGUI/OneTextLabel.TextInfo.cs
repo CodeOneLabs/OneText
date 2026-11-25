@@ -214,7 +214,7 @@ namespace OneText.UGUI
         /// caller edited only the first few, and is why this is a per-tile
         /// question rather than a per-label one.
         /// </summary>
-        private bool EmitOverrideQuad(VertexHelper vh, in TextQuad quad,
+        private bool EmitOverrideQuad(QuadBuffer sink, in TextQuad quad,
             in DecorationChannels decoration, int index)
         {
             var mesh = _textInfo?.meshInfo[0];
@@ -222,14 +222,12 @@ namespace OneText.UGUI
             if (mesh == null || v < 0 || v + 3 >= mesh.vertexCount) return false;
 
             var uv = quad.UvRect;
-            int start = vh.currentVertCount;
             var shared = new QuadChannels(quad.Layer, AtlasOf(quad), uv, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 0], uv.xMin, uv.yMin, mesh.colors32[v + 0], shared, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 1], uv.xMin, uv.yMax, mesh.colors32[v + 1], shared, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 2], uv.xMax, uv.yMax, mesh.colors32[v + 2], shared, decoration);
-            AddOverrideVert(vh, mesh.vertices[v + 3], uv.xMax, uv.yMin, mesh.colors32[v + 3], shared, decoration);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
+            var vertices = sink.ReserveQuad(out int start);
+            AddOverrideVert(ref vertices[start], mesh.vertices[v + 0], uv.xMin, uv.yMin, mesh.colors32[v + 0], shared, decoration);
+            AddOverrideVert(ref vertices[start + 1], mesh.vertices[v + 1], uv.xMin, uv.yMax, mesh.colors32[v + 1], shared, decoration);
+            AddOverrideVert(ref vertices[start + 2], mesh.vertices[v + 2], uv.xMax, uv.yMax, mesh.colors32[v + 2], shared, decoration);
+            AddOverrideVert(ref vertices[start + 3], mesh.vertices[v + 3], uv.xMax, uv.yMin, mesh.colors32[v + 3], shared, decoration);
             return true;
         }
 
@@ -239,8 +237,8 @@ namespace OneText.UGUI
         /// change. Everything else rides in the channels the quad worked out
         /// once, exactly as it does for a tile the label placed itself.
         /// </summary>
-        private static void AddOverrideVert(VertexHelper vh, Vector3 at, float u, float v,
+        private static void AddOverrideVert(ref MeshVertex vertex, Vector3 at, float u, float v,
             Color32 color, in QuadChannels shared, in DecorationChannels decoration) =>
-            AddVert(vh, at.x, at.y, u, v, shared, color, decoration);
+            WriteVertex(ref vertex, at.x, at.y, u, v, shared, color, decoration);
     }
 }

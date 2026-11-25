@@ -305,6 +305,16 @@ committed file is `100755`; a plugin Unity copies into a player is happier
 executable, and the vendored one was `644` for no reason anyone chose), leave
 the `.meta` alone, and read the checks in the run log before believing it.
 
+**It is due a rebuild.** The committed Linux binary predates seven entry points
+that `InertGlyphs` (the shaping shortcut for runs no lookup can touch) calls:
+`hb_face_reference_table`, `hb_face_collect_unicodes`,
+`hb_ot_layout_collect_lookups`, `hb_ot_layout_get_glyphs_in_class`,
+`hb_font_get_glyph_h_advance`, `hb_set_clear`, `hb_set_next_range`. Every other
+binary already exports them. Until the workflow is run, the shortcut catches the
+`EntryPointNotFoundException` on Linux and leaves every run to HarfBuzz, which
+is correct and merely slower; `NativesTests.EveryBinaryExportsEveryEntryPoint`
+allows exactly those seven to be missing there and nothing else.
+
 ## Web (WebGL): the one we build ourselves
 
 `Runtime/Plugins/WebGL/libHarfBuzzSharp.a` is 3.8 MB, a GNU archive of
@@ -344,7 +354,8 @@ written. `HB_TINY` expands to `HB_LEAN` + `HB_MINI`, and `HB_LEAN` defines
 `HB_NO_DRAW`, `HB_NO_COLOR`, `HB_NO_VAR`, `HB_NO_BITMAP` and `HB_NO_METRICS`,
 every one of which is something `HarfBuzzApi.cs` calls. `hb_font_draw_glyph` is
 how the engine gets glyphs at all; `hb_ot_color_*` is COLRv0, CPAL and CBDT
-PNGs; `hb_ot_var_*` and `hb_font_set_variations` are variable fonts;
+PNGs (COLRv1 is read from the table in C#, `ColrTable.cs`, because the paint
+API is not exported by every binary here); `hb_ot_var_*` and `hb_font_set_variations` are variable fonts;
 `hb_font_get_h_extents` is line metrics. A `HB_TINY` build would compile and
 then fail to link against half the P/Invoke surface.
 

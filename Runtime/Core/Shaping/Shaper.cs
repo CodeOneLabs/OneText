@@ -16,6 +16,17 @@ namespace OneText
     {
         private IntPtr _buffer;
 
+        /// <summary>
+        /// Answer a left-to-right run whose every character is inert in its
+        /// font (no lookup HarfBuzz could select acts on its glyph; see
+        /// <see cref="InertGlyphs"/>) from <c>cmap</c> and <c>hmtx</c>,
+        /// without calling HarfBuzz. The answer is HarfBuzz's to the glyph;
+        /// <c>InertShapingTests</c> holds the two paths to that. Off = every
+        /// run goes through <c>hb_shape</c>.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool InertShortcut = true;
+
         public Shaper()
         {
             _buffer = HarfBuzzApi.hb_buffer_create();
@@ -99,6 +110,10 @@ namespace OneText
             if (font == null || !font.IsValid) throw new ArgumentException("Invalid font.", nameof(font));
             if (output == null) throw new ArgumentNullException(nameof(output));
             if (text.IsEmpty || length <= 0) return;
+
+            if (InertShortcut && direction == Direction.LeftToRight
+                && font.InertGlyphs.TryShape(text, start, length, output))
+                return;
 
             HarfBuzzApi.hb_buffer_reset(_buffer);
             unsafe
