@@ -2,9 +2,21 @@
 
 **Every language. One draw call.**
 
+[![Release](https://img.shields.io/github/v/release/CodeOneLabs/OneText?label=release)](https://github.com/CodeOneLabs/OneText/releases/latest)
+[![OpenUPM](https://img.shields.io/npm/v/com.onetext.core?label=openupm&registry_uri=https://package.openupm.com)](https://openupm.com/packages/com.onetext.core/)
+[![Unity 2022.3+](https://img.shields.io/badge/unity-2022.3%2B-black)](#requirements)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Thai stacks. Arabic joins. Emoji stay whole. OneText is a free, MIT-licensed
 text engine for Unity uGUI, built on the shaping stack the rest of the world
 already trusts: HarfBuzz + FreeType, same as Chrome, Android and InDesign.
+
+**[Website](https://memegames.dev/OneText/)** ·
+**[Browser demo](https://memegames.dev/OneText/demo/)** ·
+[Migrating from TMP](Docs/MIGRATING-FROM-TMP.md) ·
+[Benchmarks](Docs/BENCHMARKS.md) ·
+[Changelog](CHANGELOG.md) ·
+[Roadmap](Docs/ROADMAP.md)
 
 ![Arabic, Hindi, Thai, Korean and an emoji ZWJ sequence rendered by TextMeshPro and by OneText, side by side](page~/assets/vs-tmp.png)
 
@@ -12,65 +24,94 @@ already trusts: HarfBuzz + FreeType, same as Chrome, Android and InDesign.
 
 ## Install
 
-Two steps. No baking.
+Two steps. No baking. The HarfBuzz/FreeType natives ship inside the package.
 
-**Window > Package Manager > + > Add package from git URL…**
+**From OpenUPM**
+
+```
+openupm add com.onetext.core
+```
+
+**From a git URL** — *Window > Package Manager > + > Add package from git URL…*
 
 ```
 https://github.com/CodeOneLabs/OneText.git
 ```
 
-That is the whole install; the HarfBuzz/FreeType natives ship inside the
-package. Then **GameObject > UI > OneText > Label**, assign a font, and type in
-any language on Earth. For text in the world rather than on a canvas —
-nameplates, signs, diegetic UI — add `OneTextMesh` instead: the same pipeline
-through a MeshRenderer, no Canvas and no uGUI dependency at all. Shipping
-Thai, Lao, Khmer or Burmese? Import the **Word-break dictionaries** sample so
-those scripts wrap on real word boundaries.
+Add `#v0.5.0` to the end to stay on one release.
+
+## First label
+
+1. **GameObject > UI > OneText > Label**.
+2. Assign a font.
+3. Type in any language on Earth.
+
+From code it is the property you would expect, and `.text` still compiles:
+
+```csharp
+using OneText.UGUI;
+
+label.Text = "مرحبا · สวัสดี · 안녕하세요";
+label.SetText(score);   // int, float and span overloads allocate nothing
+```
+
+| You want | Use |
+|---|---|
+| Text on a canvas | `OneTextLabel` — *GameObject > UI > OneText > Label* |
+| An editable field | `OneTextInputField` — *GameObject > UI > OneText > Input Field* |
+| A dropdown | `OneTextDropdown` — *GameObject > UI > OneText > Dropdown* |
+| Text in the world: nameplates, signs, diegetic UI | `OneTextMesh` — the same pipeline through a MeshRenderer, no Canvas and no uGUI dependency at all |
+| Thai, Lao, Khmer or Burmese that wraps on real word boundaries | the **Word-break dictionaries** sample, from the package's page in the Package Manager |
 
 ## In the box
 
 One package. Every feature. Nothing sold separately.
 
-- **Shaping & bidi** — HarfBuzz GSUB/GPOS and full UAX #9. Arabic, Devanagari,
-  Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking.
-- **Rich text & emoji** — named styles, inline sprites, colour emoji including
-  ZWJ sequences, flags and skin tones, from bitmap, layered (COLRv0) and
-  paint-graph (COLRv1) fonts alike.
-- **Text animation** — typewriter by grapheme, cluster or syllable,
-  per-punctuation pauses, `<wait=>`, skip, per-unit callbacks, an effects API.
-- **Asian typography** — kinsoku, punctuation compression, CJK–Latin spacing,
-  Korean word wrap, dictionary line breaking for Thai, Lao, Khmer and Burmese,
-  and a josa tag.
-- **Outline, shadow, glow** — packed into vertex channels already paid for, so
-  a decorated label and a plain one share one material and one draw call.
-- **Vertical writing & ruby** — 縦書き down right-to-left columns, furigana
-  sized and placed by the layout engine.
-- **An input field that survives an IME** — Korean, Japanese and Chinese
-  composition drawn inline at the caret; no syllable lost on focus change.
-- **System-font fallback** — a character no bundled font covers is drawn from
-  one the device has, not as a box.
-- **World-space text** — `OneTextMesh`: the whole pipeline through a
-  MeshRenderer, no Canvas, on TMP's world scale so a nameplate keeps its
-  numbers. Labels can size themselves to their rect, too.
-- **The Hub, in Project Settings > OneText** — the project's defaults (default
-  font and fallback chain, the size and behaviour a new label is created with,
-  the atlas budget), plus fonts, charsets, dictionaries, a string gallery, and
-  Doctor: a renderability lint that exits 1 so CI can fail the merge. Plus
-  Onboarding, which does the mechanical half of leaving TMP.
+| | |
+|---|---|
+| **Shaping & bidi** | HarfBuzz GSUB/GPOS and full UAX #9. Arabic, Devanagari, Thai, Khmer, Myanmar, Tibetan: contextual forms, reordering, mark stacking. |
+| **Rich text & emoji** | Named styles, inline sprites, colour emoji including ZWJ sequences, flags and skin tones, from bitmap, layered (COLRv0) and paint-graph (COLRv1) fonts alike. |
+| **Text animation** | Typewriter by grapheme, cluster or syllable, per-punctuation pauses, `<wait=>`, skip, per-unit callbacks, an effects API. |
+| **Asian typography** | Kinsoku, punctuation compression, CJK–Latin spacing, Korean word wrap, dictionary line breaking for Thai, Lao, Khmer and Burmese, and a josa tag. |
+| **Outline, shadow, glow** | Packed into vertex channels already paid for, so a decorated label and a plain one share one material and one draw call. |
+| **Vertical writing & ruby** | 縦書き down right-to-left columns, furigana sized and placed by the layout engine. |
+| **An input field that survives an IME** | Korean, Japanese and Chinese composition drawn inline at the caret; no syllable lost on focus change. |
+| **System-font fallback** | A character no bundled font covers is drawn from one the device has, not as a box. |
+| **World-space text** | `OneTextMesh`, on TMP's world scale so a nameplate keeps its numbers. Labels can size themselves to their rect, too. |
+| **Fonts by language** | Fallbacks named by key, and `FontResidency` to load them for the languages in play and unload them when nothing wants them. From Resources, or from Addressables in a project that has it. |
+| **The Hub** | *Project Settings > OneText*: the project's defaults (default font and fallback chain, the size and behaviour a new label is created with, the atlas budget), plus fonts, charsets, dictionaries, a string gallery, and Doctor: a renderability lint that exits 1 so CI can fail the merge. Plus Onboarding, which does the mechanical half of leaving TMP. |
 
 ## Correctness as a number
 
 Unicode publishes a test for every algorithm it defines. OneText runs all of
-them, on every commit: **888,289 cases, zero failures** — UAX #9 bidi, UAX #14
-line breaking, UAX #29 segmentation, UTS #51 emoji. Then once more against
-real fonts: every assigned codepoint in Unicode 17.0.0, all 159,631 of them,
-shaped, outlined, rasterized and placed.
+them, on every commit:
+
+| Suite | What it covers |
+|---|---|
+| UAX #9 | bidirectional text |
+| UAX #14 | line breaking |
+| UAX #29 | grapheme, word and sentence segmentation |
+| UTS #51 | emoji |
+
+**888,289 cases, zero failures.** Then once more against real fonts: every
+assigned codepoint in Unicode 17.0.0, all 159,631 of them, shaped, outlined,
+rasterized and placed.
 
 ## Fast where it hurts
 
 A language pack lands mid-session. TextMeshPro stops for **349.9 ms**. OneText
-takes **1.6 ms**. Medians, tails, draw calls, a phone — and the runs we lose — are in
+takes **1.6 ms**.
+
+The ordinary frame, too. Medians in µs for a text change plus
+`Canvas.ForceUpdateCanvases()`, on an Apple M4 Pro:
+
+| Scenario | OneText | TextMeshPro dynamic |
+|---|---|---|
+| Live-service HUD | 135 | 283 |
+| Chat stream of unseen glyphs | 107 | 683 |
+| 200 world-space labels, 50 retexted | 180 | 380 |
+
+Tails, draw calls, a phone — and the runs we lose — are in
 [Docs/BENCHMARKS.md](Docs/BENCHMARKS.md), because a comparison that lists only
 its wins is an advertisement.
 
@@ -83,27 +124,36 @@ its wins is an advertisement.
 | ![The Hub](page~/assets/shots/hub-overview.png) | ![The atlas, live](page~/assets/shots/hub-atlas.png) |
 | *The Hub, on the project settings page: defaults, fonts, charsets, dictionaries, atlas and Doctor* | *The atlas, live: per-tile LRU, defragmentation, a budget you set* |
 
-More in the site's [quick tour](page~/index.html): MSDF `precise`,
+More on the [website](https://memegames.dev/OneText/): MSDF `precise`,
 decorations, Doctor and the word-break dictionaries, screen by screen.
 
 ## Migrating from TMP
 
-It is a `MaskableGraphic`, so everything you already know just works:
-`RectTransform`, layout groups, `ContentSizeFitter`, masks, raycasting. There
-is no atlas to bake first, and `.text` still compiles — the lowercase TMP
-names are kept as aliases so a project's four hundred call sites do not have
-to change on day one. That includes the ones whose units differ:
-`lineSpacing` converts TMP's offset into OneText's multiplier on the way
-through, and `alignment` takes a `TextAlignmentOptions` this package declares
-under TMP's own names and values, so even the enum-typed lines compile.
+**What already works.** A label is a `MaskableGraphic`, so everything you
+know carries over: `RectTransform`, layout groups, `ContentSizeFitter`, masks,
+raycasting. There is no atlas to bake first.
 
-The Hub's **Onboarding** tab does the rest. It scans your scenes, prefabs and
-scripts, counts every TMP and legacy text component, and reports what will not
-survive — a margin with no counterpart, a tag OneText would print literally, a
-password field that would lose its masking — before it changes anything. Then it swaps
-the components, re-points every reference and carries the listeners, and
-rewrites the mechanical type renames in your own source. Boring, on
-purpose.
+**What still compiles.** The lowercase TMP names are kept as aliases, so a
+project's four hundred call sites do not have to change on day one:
+
+- `.text`, `.fontSize` and the rest of the lowercase members.
+- `lineSpacing`, which converts TMP's offset into OneText's multiplier on the
+  way through.
+- `alignment`, which takes a `TextAlignmentOptions` this package declares under
+  TMP's own names and values, so even the enum-typed lines compile.
+
+**What the Hub's Onboarding tab does.**
+
+1. **Scans** your scenes, prefabs and scripts and counts every TMP and legacy
+   text component.
+2. **Reports** what will not survive — a margin with no counterpart, a tag
+   OneText would print literally, a password field that would lose its
+   masking — before it changes anything.
+3. **Converts**: swaps the components, re-points every reference and carries
+   the listeners.
+4. **Rewrites** the mechanical type renames in your own source.
+
+Boring, on purpose.
 
 You do not have to do it all in one afternoon. Tick the scenes and prefabs you
 want and convert those; the fields elsewhere in the project that named a
@@ -115,59 +165,30 @@ The whole of it, finding by finding and member by member, is in
 
 ## Status
 
-**v0.4.2.** Everything above is shipped. v0.1.0 was the first public release,
-v0.2.0 added world-space text, self-sizing labels, MSDF error correction and
-the Onboarding tab, and v0.3.0 was about coming from TextMesh Pro and finding
-less missing: a migration you can run on part of a project without the rest
-going quiet, the rich-text tags a real TMP project turns out to contain, and a
-`<b>` that reaches a designed bold instead of silently drawing regular.
+**v0.5.0**, 2026-11-25. Everything above is shipped. New in this release:
 
-v0.3.2 is about what a label costs and what a Korean keyboard does to a field.
-A score, a timer or a countdown can change every frame and allocate nothing —
-`SetText(int)` and its span-taking siblings write into a buffer the label owns,
-and the whole pipeline down to the shaper reads characters rather than strings.
-Writing the value a label already holds now costs nothing at all, and a label
-drawing in a system font stopped re-laying-out every frame. On the editing
-side, eight bugs a Korean IME could produce — a backspace that took two
-characters, a syllable that came back doubled after a click away, the same
-syllable typed twice never advancing — turned out to be mostly one thing, and
-each fix is a test replaying the frames a real keyboard produced.
+- **COLRv1 colour glyphs.** The paint-graph format the newer emoji and icon
+  fonts are built in — gradients, transforms, compositing — is drawn into the
+  same atlas as every other colour glyph. Colour variations are not applied
+  yet.
+- **A label rebuild costs about half what it did**, and a frame of glyphs
+  nobody predicted between a quarter and a twelfth. On a phone (Galaxy Z
+  Flip7, IL2CPP) the package is 1.9 to 5.4x faster than 0.4.2.
+- **Reading a label's preferred size no longer lays it out every time**, so
+  one row animating in a list does not re-shape the whole list.
+- **Fixes a TMP project meets first**: `<sprite name="star">` draws the sprite,
+  a `<color>` tag keeps its colour under a coloured label, and `SetText(int)`
+  and its siblings draw what they were given.
 
-v0.3.3 is what two real projects found. One builds every screen from code and
-runs a headless server: a label now brings its own CanvasRenderer, the input
-field and the project fonts can be wired from a script instead of by reflection
-and a settings change reaches labels already on screen, a line that cannot wrap
-is cut at the box's edge with its ellipsis, a device with no array textures
-gets an atlas that holds nothing rather than an exception, and a colour emoji
-keeps its own colours under a coloured label. The other is Unity 6.6, where the
-64-bit `EntityId` made the old instance id a compile error; the package builds
-clean there and still on 2022.3.
+One thing to know: the Linux native is due a rebuild, and until then the new
+shaping shortcut stands down there — correct, and no faster than 0.4.2.
 
-v0.4.0 lets a localised game keep one language's fonts in memory instead of
-all of them. Fallbacks can be named by key rather than referenced, and
-`FontResidency` loads them for the languages in play, for code that asks, or
-for a character nothing loaded draws, and unloads them — face, bytes, atlas
-tiles and asset — when nothing wants them, a frame after every label has been
-given the chance to take them back. They come from Resources, or from
-Addressables in a project that has it.
-
-v0.4.1 closes the one frame in which a label could draw the wrong characters:
-when the atlas moved tiles in the middle of a canvas pass, a label that had
-already built kept the old locations until the next frame. Meshes are now
-repaired after uGUI's graphic pass and before anything is drawn.
-
-v0.4.2 fixes three more ways a glyph could draw wrong: one tile stamped over
-another when a frame's new tiles overflowed the staging texture ("iYoji" for
-"Yoji" on Metal), a hairline of an evicted glyph along the edge of a quad on
-outlined text, and notches and faint lines at the joints of fonts that draw
-each stroke as its own outline (Tilt Neon, and the joins of Arabic). A font
-asset now records which of its glyphs overlap when it is made, so text drawn
-from it never checks. What comes next is verification and reach, not
-features:
+Every release, change by change, is in [CHANGELOG.md](CHANGELOG.md). What
+comes next is verification and reach, not features:
 
 | | |
 |---|---|
-| **Now** | Public remote and CI's first green run, the playable browser demo, the platform and IME matrix verified on real hardware, OpenUPM. The TMP migration guide in prose is written: [Docs/MIGRATING-FROM-TMP.md](Docs/MIGRATING-FROM-TMP.md) |
+| **Now** | The platform and IME matrix verified on real hardware. Already off this row: the public remote and CI's first green run, the [browser demo](https://memegames.dev/OneText/demo/), the [migration guide](Docs/MIGRATING-FROM-TMP.md) and the OpenUPM listing |
 | **Next** | Tate-chū-yoko, vertical editing, Thai proven against real data, COLRv1 colour variations |
 | **Later** | UI Toolkit frontend, ECS/DOTS, accessibility |
 | **1.0** | A trust claim, not a feature list: every platform verified on real hardware, CI green as a standing condition, external projects shipping on the package |
@@ -176,20 +197,26 @@ Reasoning behind the ordering in [Docs/ROADMAP.md](Docs/ROADMAP.md).
 
 ## Requirements
 
-Unity 2022.3 LTS or newer. Windows, macOS, Linux, Android, iOS or Web (the
-Web native needs Unity 6's toolchain; built against Emscripten 3.1.38). The
-natives ship with the package — [Docs/NATIVES.md](Docs/NATIVES.md) says where
-they come from and what was verified. Player builds need no project settings
-of their own. Only macOS and the Web have been run end to end so far; if
-another platform misbehaves, that is a bug worth filing.
+| | |
+|---|---|
+| **Unity** | 2022.3 LTS or newer |
+| **Platforms** | Windows, macOS, Linux, Android, iOS, Web |
+| **Web** | Needs Unity 6's toolchain; the native is built against Emscripten 3.1.38 |
+| **Project settings** | None of its own for player builds |
+| **Natives** | Ship with the package — [Docs/NATIVES.md](Docs/NATIVES.md) says where they come from and what was verified |
+
+Only macOS and the Web have been run end to end so far; if another platform
+misbehaves, that is a bug worth filing.
 
 ## License
 
 [MIT](LICENSE). All of it — no Pro tier, no paid modules. Native dependencies
-(HarfBuzz, FreeType) are permissively licensed;
-see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+(HarfBuzz, FreeType) are permissively licensed; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-Contributions welcome: [CONTRIBUTING.md](CONTRIBUTING.md), including the
-clean-room policy (public specifications and open-source references only).
-Per-module contributor docs with diagrams live in
+## Contributing
+
+Contributions welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the ground
+rules, including the clean-room policy (public specifications and open-source
+references only). Per-module contributor docs with diagrams live in
 [Documentation~/](Documentation~/README.md).
