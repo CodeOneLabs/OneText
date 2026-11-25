@@ -34,6 +34,19 @@ namespace OneText
         public Color32 Color;
 
         /// <summary>
+        /// True if markup chose this tile's colour: a <c>&lt;color&gt;</c> tag
+        /// over its run, or the wash of a <c>&lt;mark&gt;</c>. The label's own
+        /// colour then gives it only its alpha, so a fade still fades it, and
+        /// leaves its rgb alone: <c>&lt;color=blue&gt;</c> in a red label is
+        /// blue, not the black that red times blue makes.
+        ///
+        /// False, the default, is a tile the label tints, which is every tile
+        /// of untagged text. A modifier that wants its own colour to survive
+        /// the label's sets this along with <see cref="Color"/>.
+        /// </summary>
+        public bool OwnsColor;
+
+        /// <summary>
         /// Grapheme clusters this tile covers, inclusive. A tile is usually one
         /// cluster; connected scripts bake several into one seam-free field, and
         /// then it is all of them.

@@ -61,6 +61,15 @@
   go away; a score or timer that is only ever written was the case that failed.
   The mesh build now asks the buffer, like the rest of the pipeline.
   ([#11](https://github.com/CodeOneLabs/OneText/issues/11))
+- **A `<color>` tag names the colour, whatever the label's own is.** The
+  label's colour was multiplied into the tag's, rgb and all, so
+  `<color=blue>` in a red label drew black, and any tag over a coloured label
+  came out darker than asked. The tag now keeps its rgb, as it does in TMP,
+  and takes only the label's alpha, so fading a label still fades its coloured
+  words. The same goes for a `<mark>` wash and for the underline or
+  strikethrough of a tagged run, in `OneTextLabel` and `OneTextMesh` alike.
+  Untagged text, and every label left white, draws as before. A quad modifier
+  that wants its colour kept the same way sets the new `TextQuad.OwnsColor`.
 
 ## [0.4.2] - 2026-10-25
 

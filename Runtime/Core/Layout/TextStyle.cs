@@ -137,8 +137,9 @@ namespace OneText
         /// white when it said nothing, with <c>&lt;alpha&gt;</c> laid over
         /// either.
         ///
-        /// White rather than the label's colour on purpose — the label's is
-        /// multiplied in at emit, so tinting or fading a label never
+        /// White rather than the label's colour on purpose — the label's joins
+        /// at emit (it tints white, and gives a tagged colour only its alpha;
+        /// see <see cref="TextQuad.OwnsColor"/>), so tinting or fading a label never
         /// invalidates a baked quad. <c>&lt;alpha&gt;</c> rides along in the
         /// same channel and gets the same benefit, which is what lets a
         /// typewriter reveal built out of <c>&lt;alpha=#00&gt;</c> cost nothing

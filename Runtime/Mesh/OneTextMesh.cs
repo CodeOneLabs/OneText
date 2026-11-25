@@ -894,7 +894,11 @@ namespace OneText
                 float runPixelsPerEm =
                     runSize / PointsToUnits * TextQualityScale.ForWorld(_quality);
                 var runColor = run.Style.ResolveColor();
-                var color = Multiply(runColor, tint);
+                // A <color> tag keeps its rgb and takes the component's alpha,
+                // the same rule OneTextLabel.Tint states.
+                var color = run.Style.HasColor
+                    ? new Color32(runColor.r, runColor.g, runColor.b, (byte)(runColor.a * tint.a / 255))
+                    : Multiply(runColor, tint);
                 var frame = FrameOf(run, vertical, scale);
 
                 if (ColorGlyphs.IsColorFont(font))
