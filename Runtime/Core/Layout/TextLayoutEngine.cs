@@ -158,6 +158,7 @@ namespace OneText
         {
             result.Clear();
             _spanCursor = 0;
+            _boldFont = null;
             _rubies.Clear();
             _edgeGive = settings.PunctuationCompression;
             var primary = settings.Fonts?.Primary;
@@ -186,14 +187,33 @@ namespace OneText
 
             EnsureCapacity(n);
             _simple = IsSimple(text, settings, n);
+            if (_simple && SimpleLineFastPath && LayoutSimpleLine(text, settings, result, primary, n))
+                return;
+            _spansOrdered = StyledItemization && SpansOrdered(settings.Spans);
+            _simpleText = _simple || (SimpleTextShortcut && IsSimpleText(text, settings, n));
+            if (_simpleText && !_simple && _spansOrdered && StyledLineFastPath &&
+                settings.Spans.Count > 0 && LayoutStyledLine(text, settings, result, n))
+                return;
 
             long breakStart = AtlasDiagnostics.Now;
-            if (_simple)
+            if (_simpleText)
             {
                 // No break opportunities at all: printable ASCII carries no
                 // mandatory break, and NoWrap means nothing reads the allowed
                 // ones. The paragraph loop below sees one paragraph.
                 Array.Clear(_opportunities, 0, n + 1);
+            }
+            else if (settings.Wrap == TextWrap.NoWrap && NoWrapMandatoryBreaksOnly)
+            {
+                // Under NoWrap the table is read for one thing: where the
+                // paragraphs end. FindLineEnd returns the paragraph's end
+                // without looking at it, the inline clip and the ellipsis walk
+                // grapheme boundaries, and every tailoring below (nobr, ruby,
+                // the Thai dictionary, Korean word wrap, kinsoku) only ever
+                // turns Allowed into None or None into Allowed. So the
+                // mandatory breaks are all of the answer anyone reads, and
+                // they are a scan for newlines rather than UAX #14.
+                LineBreaker.AnalyzeMandatory(text, _opportunities);
             }
             else
             {
@@ -213,7 +233,7 @@ namespace OneText
             AtlasDiagnostics.Add(ref AtlasDiagnostics.BreakTicks, breakStart);
 
             long segmentStart = AtlasDiagnostics.Now;
-            if (_simple)
+            if (_simpleText)
             {
                 // One character, one grapheme, all the way down.
                 _graphemes.Clear();
@@ -398,12 +418,470 @@ namespace OneText
             var primary = settings.Fonts?.Primary;
             if (primary == null) return false;
 
+            if (!AsciiCoverageCache)
+            {
+                for (int i = 0; i < length; i++)
+                {
+                    char c = text[i];
+                    if (c < ' ' || c > '~') return false;
+                    if (!primary.HasGlyph(c)) return false;
+                }
+                return true;
+            }
+
+            // The same question, with each answer remembered. HasGlyph is a
+            // call into HarfBuzz per character, and a label asks it about the
+            // same ninety-five characters on every rebuild of its life. Keyed
+            // by the native handle as well as the object, because a disposed
+            // font keeps its object and loses its handle, and HasGlyph's
+            // answer for it changes to no.
+            if (!ReferenceEquals(primary, _asciiFont) || primary.Font != _asciiHandle)
+            {
+                _asciiFont = primary;
+                _asciiHandle = primary.Font;
+                _asciiKnownLo = _asciiKnownHi = _asciiHasLo = _asciiHasHi = 0UL;
+            }
             for (int i = 0; i < length; i++)
             {
                 char c = text[i];
                 if (c < ' ' || c > '~') return false;
-                if (!primary.HasGlyph(c)) return false;
+                int bit = c - ' ';
+                if (bit < 64)
+                {
+                    ulong mask = 1UL << bit;
+                    if ((_asciiKnownLo & mask) == 0)
+                    {
+                        _asciiKnownLo |= mask;
+                        if (primary.HasGlyph(c)) _asciiHasLo |= mask;
+                    }
+                    if ((_asciiHasLo & mask) == 0) return false;
+                }
+                else
+                {
+                    ulong mask = 1UL << (bit - 64);
+                    if ((_asciiKnownHi & mask) == 0)
+                    {
+                        _asciiKnownHi |= mask;
+                        if (primary.HasGlyph(c)) _asciiHasHi |= mask;
+                    }
+                    if ((_asciiHasHi & mask) == 0) return false;
+                }
             }
+            return true;
+        }
+
+        /// <summary>
+        /// Whether <see cref="IsSimple"/> remembers which printable ASCII
+        /// characters the primary face covers instead of asking HarfBuzz per
+        /// character per layout. Same answers either way; on so the switch
+        /// exists to measure it and to prove that.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool AsciiCoverageCache = true;
+
+        /// <summary>
+        /// The half of <see cref="IsSimple"/> that is about the text and the
+        /// frame rather than about the fonts and the spans, widened from ASCII
+        /// to everything the first wave's two Unicode shortcuts already prove
+        /// things about: one NoWrap horizontal paragraph in which every
+        /// character is a grapheme cluster on its own
+        /// (<see cref="TextSegmenter.IsStandalone"/>: printable ASCII, CJK
+        /// punctuation, kana, Han, Hangul syllables, the full-width forms) and
+        /// none has a bidi class that could raise a level
+        /// (<see cref="BidiRuns.HasNothingHard"/>), under a base direction
+        /// that is not right-to-left.
+        ///
+        /// Text like that has no mandatory break (none of those characters is
+        /// BK, CR, LF or NL, and NoWrap reads no other opportunity), one
+        /// grapheme per character, and one bidi run at level 0, whatever its
+        /// spans say and whichever faces draw it. So it skips the three
+        /// analyses that would arrive at those answers, and itemizes as usual.
+        /// </summary>
+        private static bool IsSimpleText(ReadOnlySpan<char> text, in TextLayoutSettings settings, int length)
+        {
+            if (settings.Wrap != TextWrap.NoWrap) return false;
+            if (IsVertical(settings)) return false;
+            if (settings.Rubies != null && settings.Rubies.Count > 0) return false;
+            if (settings.BaseDirection != 0 &&
+                settings.BaseDirection != BidiAlgorithm.AutoDirection) return false;
+            for (int i = 0; i < length; i++)
+                if (!TextSegmenter.IsStandalone(text[i])) return false;
+            return BidiRuns.HasNothingHard(text, 0, length);
+        }
+
+        /// <summary>
+        /// Whether text that passes <see cref="IsSimpleText"/> but not
+        /// <see cref="IsSimple"/> (it has spans, or a face other than the
+        /// primary draws some of it) skips break analysis, grapheme
+        /// segmentation and bidi as simple text does. Same result either way.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool SimpleTextShortcut = true;
+
+        // Set once per Layout alongside _simple: true whenever _simple is,
+        // and also for styled text that is simple in every other way.
+        private bool _simpleText;
+
+        private FontData _asciiFont;
+        private IntPtr _asciiHandle;
+        private ulong _asciiKnownLo, _asciiKnownHi, _asciiHasLo, _asciiHasHi;
+
+        /// <summary>
+        /// Whether text that passes <see cref="IsSimple"/> is laid out by
+        /// <see cref="LayoutSimpleLine"/> rather than by the general machinery.
+        /// The result is the same in every field; the switch exists so that
+        /// can be measured and tested, both ways, in one process.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool SimpleLineFastPath = true;
+
+        /// <summary>
+        /// Whether NoWrap text finds its paragraphs with
+        /// <see cref="LineBreaker.AnalyzeMandatory"/> instead of the full
+        /// UAX #14 analysis and its tailorings, none of whose other answers
+        /// a line that cannot wrap reads.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool NoWrapMandatoryBreaksOnly = true;
+
+        /// <summary>
+        /// The whole of <see cref="Layout(ReadOnlySpan{char}, in TextLayoutSettings, TextLayoutResult)"/>
+        /// for one line of simple text: shape once, sum the advances, write one
+        /// run and one line, align.
+        ///
+        /// Every step is the general path's own step with its answer already
+        /// known, and is written as the same arithmetic in the same order,
+        /// because the claim is not "close" but "equal": a damage number laid
+        /// out here and the same number laid out the long way must put every
+        /// glyph on the same float. What the general path would decide here,
+        /// and why it is a constant:
+        ///
+        /// - one paragraph, one item: printable ASCII has no mandatory break,
+        ///   and the guard has proved the primary face covers all of it, so
+        ///   nothing splits on font, level or style (there are no spans);
+        /// - level 0, left to right: no strong right-to-left character, and
+        ///   the base direction is not right-to-left;
+        /// - one grapheme per character;
+        /// - no East Asian spacing: <see cref="AsianSpacingFor"/> and
+        ///   <see cref="LineEdgeCompressionFor"/> answer 0 for every ASCII
+        ///   character, because every rule in them keys on Han, kana, Hangul
+        ///   or full-width punctuation;
+        /// - no monospace: that is <c>&lt;mspace&gt;</c>, which is a span;
+        /// - no justification: the only line is its paragraph's last;
+        /// - nothing to reorder: one run.
+        ///
+        /// A line that would be clipped is the one case left to the general
+        /// path, which this hands back to by returning false having written
+        /// nothing a second pass would have to undo.
+        /// </summary>
+        private bool LayoutSimpleLine(ReadOnlySpan<char> text, in TextLayoutSettings settings,
+            TextLayoutResult result, FontData font, int n)
+        {
+            long itemizeStart = AtlasDiagnostics.Now;
+            var glyphs = result.Glyphs;
+            long measureShapeStart = AtlasDiagnostics.Now;
+            _shaper.Shape(font, text, 0, n, Shaper.Direction.LeftToRight, glyphs, settings.Language);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.MeasureShapeTicks, measureShapeStart);
+            if (AtlasDiagnostics.Enabled) AtlasDiagnostics.MeasureShapeCount++;
+
+            float fontSize = settings.FontSize;
+            float scale = fontSize / font.UnitsPerEm;
+            float letterSpacingEm = ResolveLetterSpacing(settings, TextStyle.Default, font);
+            int trackingUnits = letterSpacingEm == 0f
+                ? 0
+                : (int)Math.Round(letterSpacingEm * font.UnitsPerEm);
+
+            // The measuring pass's per-character advances, which the trailing
+            // space rule and the clip test read, and the emitting pass's run
+            // width, which is summed over the glyphs after tracking is written
+            // into them. Both in glyph order, as there.
+            Array.Clear(_advances, 0, n);
+            float width = 0f;
+            int count = glyphs.Count;
+            for (int g = 0; g < count; g++)
+            {
+                var glyph = glyphs[g];
+                int cluster = Math.Min(Math.Max(glyph.Cluster, 0), n - 1);
+                int extra = TrackingFor(glyph, trackingUnits);
+                _advances[cluster] += (glyph.XAdvance + extra) * scale;
+                if (extra != 0)
+                {
+                    glyph = new ShapedGlyph(glyph.GlyphId, glyph.Cluster,
+                        glyph.XAdvance + extra, glyph.YAdvance, glyph.XOffset, glyph.YOffset);
+                    glyphs[g] = glyph;
+                }
+                width += glyph.XAdvance * scale;
+            }
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.ItemizeTicks, itemizeStart);
+
+            long wrapStart = AtlasDiagnostics.Now;
+            if (settings.Overflow != TextOverflow.Overflow && settings.MaxWidth > 0f)
+            {
+                // ClipInline's test. If it would cut, the general path cuts.
+                float sum = 0f;
+                for (int i = 0; i < n; i++) sum += _advances[i];
+                if (sum - TrailingSpaceWidth(text, 0, n) > settings.MaxWidth)
+                {
+                    glyphs.Clear();
+                    return false;
+                }
+            }
+
+            var graphemes = result.GraphemeStarts;
+            for (int i = 0; i <= n; i++) graphemes.Add(i);
+
+            float ascent = Math.Max(0f, font.Ascender * scale + 0f);
+            float descent = Math.Max(0f, -font.Descender * scale - 0f);
+            float gap = Math.Max(0f, font.LineGap * scale);
+            float spacing = settings.LineSpacing > 0f ? settings.LineSpacing : 1f;
+            float height = (ascent + descent + gap) * spacing;
+            float visibleWidth = (0f + width) - TrailingSpaceWidth(text, 0, n);
+            float baseline = 0f + (height - (ascent + descent)) * 0.5f + ascent;
+
+            var style = TextStyle.Default;
+            result.Runs.Add(new TextRun
+            {
+                Font = font,
+                GlyphStart = 0,
+                GlyphCount = count,
+                TextStart = 0,
+                TextLength = n,
+                X = 0f,
+                Baseline = baseline,
+                Width = width,
+                Level = 0,
+                FontSize = fontSize,
+                Style = style,
+                BaselineShift = style.BaselineShiftEm * fontSize,
+            });
+            result.Lines.Add(new TextLine
+            {
+                RunStart = 0,
+                RunCount = 1,
+                TextStart = 0,
+                TextLength = n,
+                Width = visibleWidth,
+                Baseline = baseline,
+                Ascent = ascent,
+                Descent = descent,
+                Height = height,
+                ParagraphLevel = 0,
+                IsParagraphEnd = true,
+            });
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.WrapTicks, wrapStart);
+
+            Publish(settings, result, visibleWidth > 0f ? visibleWidth : 0f, 0f + height);
+
+            long alignStart = AtlasDiagnostics.Now;
+            Align(settings, result);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.AlignTicks, alignStart);
+            return true;
+        }
+
+        /// <summary>
+        /// Whether styled text that passes <see cref="IsSimpleText"/> is laid
+        /// out by <see cref="LayoutStyledLine"/> rather than by the general
+        /// machinery. Same result in every field; a switch so that can be
+        /// measured and held to.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool StyledLineFastPath = true;
+
+        /// <summary>
+        /// <see cref="LayoutSimpleLine"/> for one line of styled simple text:
+        /// the general path with every step whose answer is fixed taken out,
+        /// and the measuring and emitting passes fused per item.
+        ///
+        /// What is fixed, and why: one paragraph, one bidi run at level 0, one
+        /// grapheme per character (<see cref="IsSimpleText"/>); the line is the
+        /// paragraph's whole length, because NoWrap never breaks it, and it is
+        /// the paragraph's last line, so nothing justifies it; there is no ruby
+        /// to pad or place. What is not fixed is everything about the items,
+        /// which <see cref="BuildStyledItems"/> decides exactly as the general
+        /// path does, and every per-glyph rule (tracking, monospace, the East
+        /// Asian spacing calls, line-edge compression), which runs here through
+        /// the same functions in the same order.
+        ///
+        /// The fusion is the one liberty. The general path shapes every item
+        /// into a measuring buffer, sums advances, decides the line, and only
+        /// then copies each item's glyphs out and applies the emitting pass's
+        /// spacing to them. Here each item is shaped straight into the result,
+        /// measured from the raw glyphs, and then given the emitting pass's
+        /// spacing in place, because the line it is being emitted for is
+        /// already known to be [0, n). The one thing that could still change
+        /// that, the inline clip, is tested before anything is published, and
+        /// a line it would cut goes back to the general path with the result
+        /// as it found it.
+        ///
+        /// A sprite goes the general way too: it is a placeholder with an
+        /// advance rather than a shaped item, and no simple label has one.
+        /// </summary>
+        private bool LayoutStyledLine(ReadOnlySpan<char> text, in TextLayoutSettings settings,
+            TextLayoutResult result, int n)
+        {
+            long itemizeStart = AtlasDiagnostics.Now;
+            for (int i = 0; i <= n; i++) _graphemeStart[i] = true;
+            _bidiRuns.Clear();
+            _bidiRuns.Add(new BidiRuns.Run { Start = 0, Length = n, Level = 0 });
+            _items.Clear();
+            BuildStyledItems(text, settings, n);
+            int itemCount = _items.Count;
+            for (int k = 0; k < itemCount; k++)
+                if (_items[k].Style.IsSprite) return false;
+
+            Array.Clear(_advances, 0, n);
+            if (_edgeGive)
+            {
+                Array.Clear(_startGive, 0, n);
+                Array.Clear(_endGive, 0, n);
+            }
+            if (_plainRuns.Length < itemCount + 1)
+                _plainRuns = new TextRun[(itemCount + 1) * 2];
+            var runs = _plainRuns;
+
+            var glyphs = result.Glyphs;
+            bool asian = !HoistedSpacingChecks || settings.CjkLatinSpacing || settings.PunctuationCompression;
+            for (int k = 0; k < itemCount; k++)
+            {
+                var item = _items[k];
+                int glyphStart = glyphs.Count;
+                long measureShapeStart = AtlasDiagnostics.Now;
+                _shaper.Shape(item.Font, text, item.Start, item.End - item.Start,
+                    Shaper.Direction.LeftToRight, glyphs, settings.Language);
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.MeasureShapeTicks, measureShapeStart);
+                if (AtlasDiagnostics.Enabled) AtlasDiagnostics.MeasureShapeCount++;
+                int glyphEnd = glyphs.Count;
+
+                // MeasureItems, for this item, from the glyphs as shaped.
+                float scale = item.FontSize / item.Font.UnitsPerEm;
+                int trackingUnits = TrackingUnits(item);
+                int monoUnits = MonoUnits(item);
+                for (int g = glyphStart; g < glyphEnd; g++)
+                {
+                    var glyph = glyphs[g];
+                    int cluster = Math.Min(Math.Max(glyph.Cluster, item.Start), item.End - 1);
+                    int extra = monoUnits > 0
+                        ? MonoFor(glyph, monoUnits) + TrackingFor(glyph, trackingUnits)
+                        : TrackingFor(glyph, trackingUnits)
+                          + (asian ? AsianSpacingFor(text, settings, item, glyph) : 0);
+                    _advances[cluster] += (glyph.XAdvance + extra) * scale;
+                    if (!_edgeGive || !AsianTypography.MayCompress(text[cluster])) continue;
+                    _startGive[cluster] +=
+                        -LineEdgeCompressionFor(text, settings, item, glyph, LineEdge.Start) * scale;
+                    _endGive[cluster] +=
+                        -LineEdgeCompressionFor(text, settings, item, glyph, LineEdge.End) * scale;
+                }
+
+                // ShapeRun, for this item over the whole line [0, n). The
+                // glyphs it would copy out of the measuring buffer are these.
+                if (monoUnits <= 0)
+                    ApplyAsianSpacing(text, settings, result, item, glyphStart, 0, n);
+                if (trackingUnits != 0 || monoUnits > 0)
+                {
+                    for (int g = glyphStart; g < glyphEnd; g++)
+                    {
+                        var glyph = glyphs[g];
+                        int mono = MonoFor(glyph, monoUnits);
+                        int extra = mono + TrackingFor(glyph, trackingUnits);
+                        if (extra == 0) continue;
+                        glyphs[g] = new ShapedGlyph(glyph.GlyphId, glyph.Cluster,
+                            glyph.XAdvance + extra, glyph.YAdvance,
+                            glyph.XOffset + mono / 2, glyph.YOffset);
+                    }
+                }
+                float width = 0f;
+                for (int g = glyphStart; g < glyphEnd; g++)
+                    width += glyphs[g].XAdvance * scale;
+
+                runs[k] = new TextRun
+                {
+                    Font = item.Font,
+                    GlyphStart = glyphStart,
+                    GlyphCount = glyphEnd - glyphStart,
+                    TextStart = item.Start,
+                    TextLength = item.End - item.Start,
+                    Width = width,
+                    Level = item.Level,
+                    FontSize = item.FontSize,
+                    Style = item.Style,
+                    BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
+                    SyntheticBold = SyntheticBoldFor(settings, item),
+                    Rotated = item.Rotated,
+                };
+            }
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.ItemizeTicks, itemizeStart);
+
+            long wrapStart = AtlasDiagnostics.Now;
+            // ClipInline's test. If it would cut, the general path cuts.
+            float limit = InlineLimit(settings);
+            if (settings.Overflow != TextOverflow.Overflow && limit > 0f &&
+                MeasureVisible(text, 0, n) > limit)
+            {
+                glyphs.Clear();
+                return false;
+            }
+
+            var graphemes = result.GraphemeStarts;
+            for (int i = 0; i <= n; i++) graphemes.Add(i);
+
+            // EmitPlainLine from here: line metrics, then placement.
+            float ascent = 0f, descent = 0f, gap = 0f;
+            for (int r = 0; r < itemCount; r++)
+            {
+                ref var run = ref runs[r];
+                var font = run.Font;
+                float scale = run.FontSize / font.UnitsPerEm;
+                ascent = Math.Max(ascent, font.Ascender * scale + run.BaselineShift);
+                descent = Math.Max(descent, -font.Descender * scale - run.BaselineShift);
+                gap = Math.Max(gap, font.LineGap * scale);
+            }
+            if (itemCount == 0)
+                EmptyLineMetrics(settings.Fonts.Primary, settings, out ascent, out descent, out gap);
+
+            float spacing = settings.LineSpacing > 0f ? settings.LineSpacing : 1f;
+            float height = (ascent + descent + gap) * spacing;
+
+            float advance = 0f;
+            for (int r = 0; r < itemCount; r++) advance += runs[r].Width;
+            float visibleWidth = advance - TrailingSpaceWidth(text, 0, n);
+
+            float cursorY = 0f;
+            float baseline = cursorY + (height - (ascent + descent)) * 0.5f + ascent;
+            float x = 0f;
+            for (int r = 0; r < itemCount; r++)
+            {
+                ref var run = ref runs[r];
+                float width = run.Width;
+                run.X = x;
+                run.Baseline = baseline;
+                result.Runs.Add(run);
+                x += width;
+            }
+
+            result.Lines.Add(new TextLine
+            {
+                RunStart = 0,
+                RunCount = result.Runs.Count,
+                TextStart = 0,
+                TextLength = n,
+                Width = visibleWidth,
+                Baseline = baseline,
+                Ascent = ascent,
+                Descent = descent,
+                Height = height,
+                ParagraphLevel = 0,
+                IsParagraphEnd = true,
+            });
+            cursorY += height;
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.WrapTicks, wrapStart);
+
+            float inlineExtent = 0f;
+            if (visibleWidth > inlineExtent) inlineExtent = visibleWidth;
+            Publish(settings, result, inlineExtent, cursorY);
+
+            long alignStart = AtlasDiagnostics.Now;
+            Align(settings, result);
+            AtlasDiagnostics.Add(ref AtlasDiagnostics.AlignTicks, alignStart);
             return true;
         }
 
@@ -421,9 +899,18 @@ namespace OneText
         private void MeasureItems(ReadOnlySpan<char> text, in TextLayoutSettings settings)
         {
             _measured.Clear();
+            _emitCursor = 0;
+            _itemsOrdered = true;
+            int previousEnd = int.MinValue;
+            // AsianSpacingFor answers 0 before reading anything when both of
+            // its rules are off, which is nearly every label; asked once here
+            // rather than in a call per glyph.
+            bool asian = !HoistedSpacingChecks || settings.CjkLatinSpacing || settings.PunctuationCompression;
             for (int itemIndex = 0; itemIndex < _items.Count; itemIndex++)
             {
                 var item = _items[itemIndex];
+                if (item.Start < previousEnd || item.End <= item.Start) _itemsOrdered = false;
+                previousEnd = item.End;
                 item.MeasuredCount = -1;
                 if (item.Style.IsSprite)
                 {
@@ -467,7 +954,7 @@ namespace OneText
                     int extra = monoUnits > 0
                         ? MonoFor(glyph, monoUnits) + TrackingFor(glyph, trackingUnits)
                         : TrackingFor(glyph, trackingUnits)
-                          + AsianSpacingFor(text, settings, item, glyph);
+                          + (asian ? AsianSpacingFor(text, settings, item, glyph) : 0);
                     _advances[cluster] += (glyph.XAdvance + extra) * scale;
 
                     // Both edges are costed for every character, because which
@@ -642,6 +1129,15 @@ namespace OneText
                 _bidiRuns.Add(new BidiRuns.Run { Start = start, Length = end - start, Level = 0 });
                 paragraphLevel = 0;
             }
+            else if (_simpleText)
+            {
+                // Nothing that can raise a level, under a base direction that
+                // is not right-to-left: one run at level 0, which is what
+                // BidiRuns' own shortcut answers for the same text.
+                _bidiRuns.Clear();
+                _bidiRuns.Add(new BidiRuns.Run { Start = start, Length = end - start, Level = 0 });
+                paragraphLevel = 0;
+            }
             else
             {
                 paragraphLevel = BidiRuns.GetLogicalRuns(
@@ -652,6 +1148,22 @@ namespace OneText
             // comparison, no per-character size arithmetic. This is the common
             // case and it has to cost what it cost before markup existed.
             bool styled = settings.Spans != null && settings.Spans.Count > 0;
+
+            if (!styled && !vertical && PlainItemization)
+            {
+                BuildPlainItems(text, settings, end);
+                MeasureItems(text, settings);
+                MeasureRubies(text, settings, start, end);
+                return paragraphLevel;
+            }
+
+            if (styled && !vertical && StyledItemization && _spansOrdered)
+            {
+                BuildStyledItems(text, settings, end);
+                MeasureItems(text, settings);
+                MeasureRubies(text, settings, start, end);
+                return paragraphLevel;
+            }
 
             foreach (var run in _bidiRuns)
             {
@@ -738,6 +1250,305 @@ namespace OneText
             MeasureRubies(text, settings, start, end);
 
             return paragraphLevel;
+        }
+
+        /// <summary>
+        /// Whether unstyled horizontal text is itemized by
+        /// <see cref="BuildPlainItems"/>. Same items either way; the switch
+        /// exists to measure that and to prove it.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool PlainItemization = true;
+
+        /// <summary>
+        /// Whether the measuring pass decides once per layout, rather than in
+        /// a call per glyph, that the East Asian spacing rules are off.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool HoistedSpacingChecks = true;
+
+        /// <summary>
+        /// The itemization loop of <see cref="BuildItems"/> for text with no
+        /// style spans, laid out horizontally: the general loop with the
+        /// answers it would compute for every character already written in.
+        ///
+        /// Without spans every character's style is the default and its size
+        /// the label's, and horizontally nothing is rotated, so of the five
+        /// reasons the general loop has to end an item (font, sprite,
+        /// rotation, size, style) only the font is left. What remains per
+        /// grapheme is the one question that has a different answer per
+        /// character, which face draws it. The general loop builds a default
+        /// style per grapheme and copies it twice to arrive at the same
+        /// place; on a short label that bookkeeping was half the loop.
+        /// </summary>
+        private void BuildPlainItems(ReadOnlySpan<char> text, in TextLayoutSettings settings, int end)
+        {
+            var fonts = settings.Fonts;
+            string language = settings.Language;
+            float fontSize = settings.FontSize;
+            // Letter spacing depends on the font alone here, and a label
+            // alternates between two or three of them at most.
+            FontData spacedFont = null;
+            float spacing = 0f;
+
+            for (int r = 0; r < _bidiRuns.Count; r++)
+            {
+                var run = _bidiRuns[r];
+                int runEnd = Math.Min(run.Start + run.Length, end);
+                FontData current = null;
+                int itemStart = run.Start;
+                for (int i = run.Start; i < runEnd;)
+                {
+                    char c = text[i];
+                    int width = char.IsHighSurrogate(c) ? 2 : 1;
+                    if (_graphemeStart[i] || current == null)
+                    {
+                        int cp = width == 2 ? Codepoint(text, i) : c;
+                        var font = fonts.Resolve(cp, false, false, PresentationAt(text, i, width, runEnd),
+                            language);
+                        if (current == null)
+                        {
+                            current = font;
+                        }
+                        else if (font != current)
+                        {
+                            if (!ReferenceEquals(current, spacedFont))
+                            {
+                                spacedFont = current;
+                                spacing = ResolveLetterSpacing(settings, TextStyle.Default, current);
+                            }
+                            _items.Add(new Item
+                            {
+                                Font = current, Level = run.Level, Start = itemStart, End = i,
+                                Style = TextStyle.Default, FontSize = fontSize, LetterSpacingEm = spacing,
+                            });
+                            current = font;
+                            itemStart = i;
+                        }
+                    }
+                    i += width;
+                }
+                if (current != null && itemStart < runEnd)
+                {
+                    if (!ReferenceEquals(current, spacedFont))
+                    {
+                        spacedFont = current;
+                        spacing = ResolveLetterSpacing(settings, TextStyle.Default, current);
+                    }
+                    _items.Add(new Item
+                    {
+                        Font = current, Level = run.Level, Start = itemStart, End = runEnd,
+                        Style = TextStyle.Default, FontSize = fontSize, LetterSpacingEm = spacing,
+                    });
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether styled horizontal text is itemized by
+        /// <see cref="BuildStyledItems"/>, which resolves a style once per span
+        /// rather than once per character. Same items either way; the switch
+        /// exists to measure that and to prove it.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool StyledItemization = true;
+
+        // Whether this layout's spans are ordered and disjoint, which is what
+        // BuildStyledItems needs to walk them once. Decided per layout, read
+        // per paragraph.
+        private bool _spansOrdered;
+
+        /// <summary>
+        /// True when every span starts at or after the end of the one before
+        /// it and none has a negative length: what the parser produces, and
+        /// the shape under which <see cref="ResolveStyle"/>'s answer for a
+        /// character is simply "the first span that ends after it". A list
+        /// built some other way (overlapping, out of order) keeps the general
+        /// loop, whose cursor has its own answer for those.
+        /// </summary>
+        private static bool SpansOrdered(IReadOnlyList<TextStyleSpan> spans)
+        {
+            if (spans == null) return false;
+            int previousEnd = int.MinValue;
+            for (int k = 0; k < spans.Count; k++)
+            {
+                var span = spans[k];
+                if (span.Length < 0 || span.Start < previousEnd) return false;
+                previousEnd = span.Start + span.Length;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// The general itemization loop of <see cref="BuildItems"/> for styled
+        /// horizontal text, with the style resolved per span instead of per
+        /// grapheme.
+        ///
+        /// The general loop asks <see cref="ResolveStyle"/> at every grapheme
+        /// start: an interface call that copies a seventy-byte span three or
+        /// four times, a named-style delegate, a size, a font override
+        /// delegate, a bold face lookup and a twelve-field style comparison,
+        /// all to arrive at the answer it had one character earlier. Over
+        /// ordered spans that answer only changes where a span ends, so this
+        /// walks the span list alongside the text and recomputes it there.
+        ///
+        /// Everything else is the general loop exactly: font and style are
+        /// still decided at grapheme starts only (a span that begins inside a
+        /// cluster takes effect at the next one, as there), an item still ends
+        /// for a font, a sprite, a size or a style, and two runs never share an
+        /// item. The item boundaries are the general path's, which is the
+        /// point: a colour change ends a shaping run there, so it ends one here.
+        /// </summary>
+        private void BuildStyledItems(ReadOnlySpan<char> text, in TextLayoutSettings settings, int end)
+        {
+            var fonts = settings.Fonts;
+            var spans = settings.Spans;
+            int spanCount = spans.Count;
+            string language = settings.Language;
+            float labelSize = settings.FontSize;
+            var resolveNamed = settings.ResolveNamedStyle;
+            var resolveOverride = settings.ResolveFontOverride;
+
+            // Letter spacing for a style that has no opinion of its own
+            // depends on the font alone, as in BuildPlainItems.
+            FontData spacedFont = null;
+            float spacing = 0f;
+
+            // The bold or italic face of the last regular face asked about.
+            // Resolve(cp, bold, italic) is the regular answer turned into a
+            // styled face by TryGetStyled, and that second half depends on the
+            // regular face and the style alone.
+            FontData styledFrom = null, styledFont = null;
+            var styledFace = FontStack.Face.Regular;
+
+            for (int r = 0; r < _bidiRuns.Count; r++)
+            {
+                var run = _bidiRuns[r];
+                int runEnd = Math.Min(run.Start + run.Length, end);
+
+                FontData current = null;
+                var currentStyle = TextStyle.Default;
+                float currentSize = labelSize;
+                int itemStart = run.Start;
+
+                // The style in force, and the index it stops being in force.
+                int k = 0;
+                int styleEnd = int.MinValue;
+                var style = TextStyle.Default;
+                float size = labelSize;
+                FontData overridden = null;
+                var face = FontStack.Face.Regular;
+                // Whether style or size differ from the current item's: the
+                // last two terms of the general loop's break test, which only
+                // change when one of the two sides does.
+                bool differs = false;
+
+                for (int i = run.Start; i < runEnd;)
+                {
+                    char c = text[i];
+                    int width = char.IsHighSurrogate(c) ? 2 : 1;
+                    if (_graphemeStart[i] || current == null)
+                    {
+                        if (i >= styleEnd)
+                        {
+                            while (k < spanCount && i >= spans[k].End) k++;
+                            if (k < spanCount)
+                            {
+                                var span = spans[k];
+                                style = span.Style;
+                                styleEnd = span.End;
+                                if (style.NamedStyle >= 0 && resolveNamed != null)
+                                    style = resolveNamed(style.NamedStyle, style);
+                            }
+                            else
+                            {
+                                style = TextStyle.Default;
+                                styleEnd = int.MaxValue;
+                            }
+                            size = style.ResolveSize(labelSize);
+                            overridden = null;
+                            if (style.FontOverride >= 0 && resolveOverride != null)
+                            {
+                                overridden = resolveOverride(style.FontOverride);
+                                if (overridden != null && !overridden.IsValid) overridden = null;
+                            }
+                            face = (style.Bold ? FontStack.Face.Bold : 0) |
+                                   (style.Italic ? FontStack.Face.Italic : 0);
+                            if (current != null)
+                                differs = size != currentSize || !style.Equals(currentStyle);
+                        }
+
+                        FontData font;
+                        if (overridden != null)
+                        {
+                            font = overridden;
+                        }
+                        else
+                        {
+                            int cp = width == 2 ? Codepoint(text, i) : c;
+                            font = fonts.Resolve(cp, false, false, PresentationAt(text, i, width, runEnd),
+                                language);
+                            if (face != FontStack.Face.Regular)
+                            {
+                                if (!ReferenceEquals(font, styledFrom) || face != styledFace)
+                                {
+                                    styledFrom = font;
+                                    styledFace = face;
+                                    styledFont = fonts.TryGetStyled(font, face, out var styled) ? styled : font;
+                                }
+                                font = styledFont;
+                            }
+                        }
+
+                        if (current == null)
+                        {
+                            current = font;
+                            currentStyle = style;
+                            currentSize = size;
+                            // A style always equals itself; a NaN size never does.
+                            differs = size != size;
+                        }
+                        else if (font != current || style.IsSprite || currentStyle.IsSprite || differs)
+                        {
+                            _items.Add(new Item
+                            {
+                                Font = current, Level = run.Level, Start = itemStart, End = i,
+                                Style = currentStyle, FontSize = currentSize,
+                                LetterSpacingEm = StyledSpacing(settings, currentStyle, current,
+                                    ref spacedFont, ref spacing),
+                            });
+                            current = font;
+                            currentStyle = style;
+                            currentSize = size;
+                            differs = size != size;
+                            itemStart = i;
+                        }
+                    }
+                    i += width;
+                }
+                if (current != null && itemStart < runEnd)
+                    _items.Add(new Item
+                    {
+                        Font = current, Level = run.Level, Start = itemStart, End = runEnd,
+                        Style = currentStyle, FontSize = currentSize,
+                        LetterSpacingEm = StyledSpacing(settings, currentStyle, current,
+                            ref spacedFont, ref spacing),
+                    });
+            }
+        }
+
+        /// <summary><see cref="ResolveLetterSpacing"/>, remembering the face's answer for the last face asked.</summary>
+        private static float StyledSpacing(in TextLayoutSettings settings, in TextStyle style, FontData font,
+            ref FontData spacedFont, ref float spacing)
+        {
+            if (style.HasLetterSpacing || settings.HasLetterSpacing)
+                return ResolveLetterSpacing(settings, style, font);
+            if (!ReferenceEquals(font, spacedFont))
+            {
+                spacedFont = font;
+                spacing = ResolveLetterSpacing(settings, style, font);
+            }
+            return spacing;
         }
 
         // ----------------------------------------------------------------- ruby
@@ -1015,6 +1826,40 @@ namespace OneText
             settings.Fonts != null && !settings.Fonts.HasBold(item.Font);
 
         /// <summary>
+        /// <see cref="NeedsSyntheticBold"/>, remembering the stack's answer
+        /// for the last face asked within this layout.
+        ///
+        /// <see cref="FontStack.HasBold"/> finds the face's family by walking
+        /// every entry's faces and then looks the bold up, and a bold label
+        /// asks it once per run about the same one or two faces. The answer
+        /// can only change when the stack does, and a stack is not changed in
+        /// the middle of a layout, so the memory is dropped at the start of
+        /// each one.
+        /// </summary>
+        private bool SyntheticBoldFor(in TextLayoutSettings settings, in Item item)
+        {
+            if (!CachedBoldQuery) return NeedsSyntheticBold(settings, item);
+            if (!item.Style.Bold || item.Style.FontOverride >= 0 || item.Style.IsSprite ||
+                settings.Fonts == null) return false;
+            if (!ReferenceEquals(item.Font, _boldFont))
+            {
+                _boldFont = item.Font;
+                _boldFontHasBold = settings.Fonts.HasBold(item.Font);
+            }
+            return !_boldFontHasBold;
+        }
+
+        /// <summary>
+        /// Whether <see cref="SyntheticBoldFor"/> remembers the stack's answer
+        /// within a layout. Same answer either way.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool CachedBoldQuery = true;
+
+        private FontData _boldFont;
+        private bool _boldFontHasBold;
+
+        /// <summary>
         /// Reads a variation selector following this character.
         ///
         /// U+FE0E and U+FE0F are how Unicode lets a codepoint that has both a
@@ -1252,17 +2097,81 @@ namespace OneText
 
         // ----------------------------------------------------------- line output
 
+        /// <summary>
+        /// Whether a horizontal line with no ruby and nothing to justify is
+        /// emitted by <see cref="EmitPlainLine"/>. Same line either way; the
+        /// switch exists to measure that and to prove it.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool LeanEmit = true;
+
+        /// <summary>
+        /// Whether a line looks only at the items it overlaps instead of at
+        /// every item of its paragraph. Same runs either way: the items skipped
+        /// are exactly the ones the loop would have found empty. A switch so
+        /// that can be measured and held to.
+        ///
+        /// A paragraph of Korean drawn from a CJK face with a Latin primary is
+        /// a new item at every space, because the space comes from the primary:
+        /// three hundred characters made 141 items over 16 lines, and each line
+        /// copied all 141 out of the list to find its nine.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool ItemWindow = true;
+
+        // Whether _items is in logical order with no overlaps and no empty
+        // item, which is what the window relies on; established by
+        // MeasureItems, which every itemization path ends in.
+        private bool _itemsOrdered;
+
+        // The first item the last line could have used. Lines are emitted in
+        // order, so the next one starts its search there.
+        private int _emitCursor;
+
+        /// <summary>
+        /// The index of the first item ending after <paramref name="start"/>.
+        /// Every item before it ends at or before the line starts, so it
+        /// contributes nothing to the line. A line can be emitted again (the
+        /// ellipsis re-emits the last one), so a cursor past the answer starts
+        /// over.
+        /// </summary>
+        private int FirstItemEndingAfter(int start)
+        {
+            int k = _emitCursor;
+            if (k > _items.Count || (k > 0 && _items[k - 1].End > start)) k = 0;
+            while (k < _items.Count && _items[k].End <= start) k++;
+            _emitCursor = k;
+            return k;
+        }
+
+        // The line's runs for EmitPlainLine, in an array so they can be read
+        // and placed where they lie. A run is a hundred-byte struct holding a
+        // reference, and every pass over a List<TextRun> copied each one out
+        // and back: on a short label those copies cost more than the
+        // arithmetic they carried.
+        private TextRun[] _plainRuns = new TextRun[8];
+
         /// <returns>False if the line was dropped because the box is full.</returns>
         private bool EmitLine(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
             int start, int end, bool lastInParagraph, bool withEllipsis, bool replacesLastLine,
             byte paragraphLevel, ref float cursorY)
         {
+            // Ruby, columns and justification are what the general emitter
+            // has and this one does not.
+            if (LeanEmit && _rubies.Count == 0 && !IsVertical(settings) &&
+                (lastInParagraph || AlignmentFor(settings, start) != TextAlignment.Justified))
+                return EmitPlainLine(text, settings, result, start, end, lastInParagraph, withEllipsis,
+                    replacesLastLine, paragraphLevel, ref cursorY);
+
             int runStart = result.Runs.Count;
             int glyphStart = result.Glyphs.Count;
 
             _lineRuns.Clear();
-            foreach (var item in _items)
+            bool window = ItemWindow && _itemsOrdered;
+            for (int k = window ? FirstItemEndingAfter(start) : 0; k < _items.Count; k++)
             {
+                var item = _items[k];
+                if (window && item.Start >= end) break;
                 int s = Math.Max(item.Start, start);
                 int e = Math.Min(item.End, end);
                 if (s >= e) continue;
@@ -1392,6 +2301,132 @@ namespace OneText
 
             cursorY += height;
             return true;
+        }
+
+        /// <summary>
+        /// <see cref="EmitLine"/> for a horizontal line with no ruby that is
+        /// not justified, which is nearly every line: the same steps in the
+        /// same order, with the branches that cannot apply taken out and the
+        /// runs kept in <see cref="_plainRuns"/> rather than a list.
+        /// </summary>
+        private bool EmitPlainLine(ReadOnlySpan<char> text, in TextLayoutSettings settings, TextLayoutResult result,
+            int start, int end, bool lastInParagraph, bool withEllipsis, bool replacesLastLine,
+            byte paragraphLevel, ref float cursorY)
+        {
+            int runStart = result.Runs.Count;
+            int glyphStart = result.Glyphs.Count;
+
+            if (_plainRuns.Length < _items.Count + 1)
+                _plainRuns = new TextRun[(_items.Count + 1) * 2];
+            var runs = _plainRuns;
+            int count = 0;
+            bool window = ItemWindow && _itemsOrdered;
+            for (int k = window ? FirstItemEndingAfter(start) : 0; k < _items.Count; k++)
+            {
+                var item = _items[k];
+                if (window && item.Start >= end) break;
+                int s = Math.Max(item.Start, start);
+                int e = Math.Min(item.End, end);
+                if (s >= e) continue;
+                runs[count++] = ShapeRun(text, settings, result, item, s, e, start, end);
+            }
+            if (withEllipsis)
+                runs[count++] = ShapeEllipsis(text, settings, result, paragraphLevel, end);
+
+            float ascent = 0f, descent = 0f, gap = 0f;
+            for (int r = 0; r < count; r++)
+            {
+                ref var run = ref runs[r];
+                var font = run.Font;
+                float scale = run.FontSize / font.UnitsPerEm;
+                if (run.Style.IsSprite)
+                {
+                    ascent = Math.Max(ascent, run.FontSize + run.BaselineShift);
+                    descent = Math.Max(descent, -run.BaselineShift);
+                    continue;
+                }
+                ascent = Math.Max(ascent, font.Ascender * scale + run.BaselineShift);
+                descent = Math.Max(descent, -font.Descender * scale - run.BaselineShift);
+                gap = Math.Max(gap, font.LineGap * scale);
+            }
+            if (count == 0)
+                EmptyLineMetrics(settings.Fonts.Primary, settings, out ascent, out descent, out gap);
+
+            float spacing = settings.LineSpacing > 0f ? settings.LineSpacing : 1f;
+            float height = (ascent + descent + gap) * spacing;
+
+            float blockLimit = BlockLimit(settings);
+            if (!replacesLastLine && blockLimit > 0f && settings.Overflow != TextOverflow.Overflow &&
+                result.Lines.Count > 0 && cursorY + height > blockLimit)
+            {
+                result.Runs.RemoveRange(runStart, result.Runs.Count - runStart);
+                result.Glyphs.RemoveRange(glyphStart, result.Glyphs.Count - glyphStart);
+                result.Truncated = true;
+                if (settings.Overflow == TextOverflow.Ellipsis) ApplyEllipsis(text, settings, result);
+                return false;
+            }
+
+            float advance = 0f;
+            for (int r = 0; r < count; r++) advance += runs[r].Width;
+            float visibleWidth = advance - TrailingSpaceWidth(text, start, end);
+
+            if (count > 1) ReorderVisually(runs, count, paragraphLevel);
+
+            float baseline = cursorY + (height - (ascent + descent)) * 0.5f + ascent;
+            float x = 0f;
+            for (int r = 0; r < count; r++)
+            {
+                ref var run = ref runs[r];
+                float width = run.Width;
+                run.X = x;
+                run.Baseline = baseline;
+                result.Runs.Add(run);
+                x += width;
+            }
+
+            result.Lines.Add(new TextLine
+            {
+                RunStart = runStart,
+                RunCount = result.Runs.Count - runStart,
+                TextStart = start,
+                TextLength = end - start,
+                Width = visibleWidth,
+                Baseline = baseline,
+                Ascent = ascent,
+                Descent = descent,
+                Height = height,
+                ParagraphLevel = paragraphLevel,
+                IsParagraphEnd = lastInParagraph,
+            });
+
+            cursorY += height;
+            return true;
+        }
+
+        /// <summary><see cref="ReorderVisually(List{TextRun}, byte)"/> over the first <paramref name="count"/> runs of an array.</summary>
+        private static void ReorderVisually(TextRun[] runs, int count, byte paragraphLevel)
+        {
+            int maxLevel = 0;
+            int minOddLevel = byte.MaxValue;
+            for (int r = 0; r < count; r++)
+            {
+                int level = runs[r].Level;
+                if (level > maxLevel) maxLevel = level;
+                int odd = level | 1;
+                if (odd < minOddLevel) minOddLevel = odd;
+            }
+
+            for (int level = maxLevel; level >= minOddLevel; level--)
+            {
+                for (int i = 0; i < count;)
+                {
+                    if (runs[i].Level < level) { i++; continue; }
+                    int j = i;
+                    while (j < count && runs[j].Level >= level) j++;
+                    Array.Reverse(runs, i, j - i);
+                    i = j;
+                }
+            }
         }
 
         /// <summary>
@@ -1646,7 +2681,7 @@ namespace OneText
                     FontSize = item.FontSize,
                     Style = item.Style,
                     BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
-                SyntheticBold = NeedsSyntheticBold(settings, item),
+                SyntheticBold = SyntheticBoldFor(settings, item),
                     Rotated = item.Rotated,
                 };
             }
@@ -1735,7 +2770,7 @@ namespace OneText
                 FontSize = item.FontSize,
                 Style = item.Style,
                 BaselineShift = item.Style.BaselineShiftEm * item.FontSize,
-                SyntheticBold = NeedsSyntheticBold(settings, item),
+                SyntheticBold = SyntheticBoldFor(settings, item),
                 Rotated = item.Rotated,
             };
         }

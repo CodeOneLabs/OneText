@@ -70,6 +70,100 @@
   strikethrough of a tagged run, in `OneTextLabel` and `OneTextMesh` alike.
   Untagged text, and every label left white, draws as before. A quad modifier
   that wants its colour kept the same way sets the new `TextQuad.OwnsColor`.
+- **An unmatched FSI takes its direction from its own paragraph.** The scan for
+  the matching PDI ran to the end of a scratch buffer sized for the longest
+  paragraph seen so far, so an FSI with no PDI could read classes left by an
+  earlier call and resolve differently depending on what had been laid out
+  before it. It now stops at the paragraph's end. Found because the layout
+  shortcuts send fewer paragraphs through bidi resolution, which changed what
+  the buffer held: the Unicode bidi conformance run failed 26,324 of 770,241
+  cases in a full test pass while passing on its own.
+
+### Performance
+
+- **A label rebuild costs about half what it did, and a frame of glyphs nobody
+  predicted between a quarter and a twelfth.** Nothing draws differently: every
+  change below is held to the code it replaced by a test that runs both and
+  compares layouts, quads, atlas bytes or meshes, and the 27 golden scenes
+  render identically with all of them off and all of them on. Medians in µs,
+  Apple M4 Pro, editor in Release code optimization, text change plus
+  `Canvas.ForceUpdateCanvases()`:
+
+  | Scenario | 0.4.2 | now | TextMeshPro dynamic |
+  |---|---|---|---|
+  | C3: 200 world-space labels, 50 retexted | 467 | 180 | 380 |
+  | C1: live-service HUD | 308 | 135 | 283 |
+  | C2: chat stream of unseen glyphs | 393 | 107 | 683 |
+  | 5 rebuilds a frame, warm atlas | 118 | 67 | 96 |
+  | 50 rebuilds a frame, warm atlas | 1,018 | 479 | 892 |
+  | 5 rebuilds a frame, new glyphs | 2,036 | 332 | 10,429 |
+  | 50 rebuilds a frame, new glyphs | 21,298 | 1,695 | 2,441 |
+
+  The costs were per call, not per character, so most of this is short paths
+  for the common case and work moved off the main thread:
+  - **Layout.** A single-line, single-style, left-to-right string skips
+    line-break analysis, bidi resolution, segmentation and itemization, each
+    of which concluded nothing for it; styled text has the same path. Runs no
+    OpenType lookup can touch are shaped from the font's own advance table
+    without calling HarfBuzz.
+  - **Mesh.** The label writes one interleaved vertex buffer and hands it to
+    its `CanvasRenderer`, instead of filling uGUI's `VertexHelper` (eight
+    parallel lists per vertex). A label with an `IMeshModifier` on it
+    (`Outline`, `Shadow`, third-party effects) or more than 65,000 vertices
+    still goes through `VertexHelper`, so those keep working unchanged.
+  - **Atlas.** A glyph the label has not seen is given its tile at once and
+    its field is baked afterwards, in background batches on the job workers:
+    outlines are recorded by Burst-compiled HarfBuzz draw callbacks, the
+    distance field is a Neon row job, and a worker scans for overlapping
+    contours behind the bake. Lookups hash a cheaper key and remember recent
+    hits; eviction and shelf placement walk only what changed.
+  - **Fonts.** The first character that falls through to the system fonts
+    starts reading every system font's `cmap` on a worker thread, and the
+    faces of a collection share one parsed table.
+
+  Full tables, tails, coverage, the rows that are still lost and a phone are
+  in [Docs/BENCHMARKS.md](Docs/BENCHMARKS.md).
+- **The same on a phone, where IL2CPP charges for things the editor does
+  not.** Measured on a Galaxy Z Flip7 (Exynos 2500, IL2CPP release): generic
+  span searches and `Mesh.SetVertexBufferData`'s array overloads each ask the
+  runtime for a type object on every call (9 to 19 % of the main thread in the
+  warm scenes), every reference stored while moving a tile in the atlas's LRU
+  lists is a garbage-collector write barrier (11 to 14 %), and the distance
+  job zero-filled 16 KB of scratch per texel row (16 % of all CPU time in the
+  new-glyph scene). All three are gone, and the Burst outline flattening now
+  matches IL2CPP's float arithmetic bit for bit, so it runs there too. On that
+  phone the package is 1.9 to 5.4x faster than 0.4.2 and ahead of TextMeshPro
+  dynamic in six of the seven scenarios above; it is behind at the median of
+  the last one (8.2 ms against 5.6 ms, with a p99 of 10.9 ms against 86 ms).
+  That row also turns on the font: with a CJK font that covers the whole
+  corpus, so that TextMeshPro draws all of it too, it is a narrow loss on the
+  desktop as well (3.5 ms against 3.2).
+
+### Changed
+
+- **A text change no longer marks the label's layout dirty when nothing is
+  listening.** Under a bare canvas, with no layout group above it, no layout
+  controller on it and no dirty-layout callback registered, the call concluded
+  that there was nothing to rebuild and cost a microsecond to do so. The label
+  remembers that conclusion and forgets it on a parent change, enable, child
+  change, validate, or any layout rebuild that walks it. A layout system that
+  is not uGUI's and finds labels some other way should check that it still
+  hears about text changes.
+- **The system fonts are indexed on a worker thread.** The first character no
+  project font covers starts a thread that reads every system font's `cmap`,
+  so a later character nothing on the machine has costs memory lookups rather
+  than a walk of the disk. The faces chosen are the same as before; what is
+  new is a thread the package starts, once, on the first such character.
+- **In the editor, the first tiles of a session are baked by Burst, like every
+  later one and like a player.** The tile-writing jobs compile synchronously.
+  They used to run as managed code until the background compile finished,
+  which differs from Burst by one in a few texels; a golden image captured in
+  the first seconds of a session could differ from one captured later.
+- **The Linux native is due a rebuild.** The shaping shortcut calls seven
+  HarfBuzz entry points the committed Linux binary predates. Until the
+  natives workflow is run, the shortcut stands down on Linux and every run
+  goes to HarfBuzz as before: correct, and no faster than 0.4.2 there.
+  [Docs/NATIVES.md](Docs/NATIVES.md) lists them.
 
 ## [0.4.2] - 2026-10-25
 

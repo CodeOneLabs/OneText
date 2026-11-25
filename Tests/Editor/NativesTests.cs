@@ -158,6 +158,75 @@ namespace OneText.Tests
                 "the xcframework manifest does not distinguish the simulator slice");
         }
 
+        [Test]
+        public void EveryBinaryExportsEveryEntryPoint()
+        {
+            // An entry point missing from one binary is not a build error
+            // anywhere: on a dynamic library it is EntryPointNotFoundException
+            // at the first call, on that platform alone, and on Web (static,
+            // `__Internal`) it is a link failure. HarfBuzzApi.cs is the list,
+            // read the way Tools/build_linux_natives.sh reads it. The names
+            // are looked for as NUL-terminated strings, which is how every one
+            // of these formats stores an exported name (and the Linux binary
+            // is stripped, so a name there is an export).
+            var api = File.ReadAllText(Path.GetFullPath(
+                "Packages/com.onetext.core/Runtime/Core/Native/HarfBuzzApi.cs"));
+            var names = new SortedSet<string>();
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                         api, "EntryPoint = HbPrefix \\+ \"(hb_[a-z0-9_]+)\""))
+                names.Add(m.Groups[1].Value);
+            Assert.Greater(names.Count, 50, "read too few entry points from HarfBuzzApi.cs");
+
+            var binaries = new List<(string path, string prefix)>
+            {
+                ("WebGL/libHarfBuzzSharp.a", "onetext_"),
+                ("iOS/libHarfBuzzSharp.xcframework/ios-arm64/libHarfBuzzSharp.framework/libHarfBuzzSharp", ""),
+                ("iOS/libHarfBuzzSharp.xcframework/ios-arm64_x86_64-simulator/libHarfBuzzSharp.framework/libHarfBuzzSharp", ""),
+            };
+            foreach (var (path, _, _, _) in Expected)
+                if (!path.EndsWith(".xcframework")) binaries.Add((path, ""));
+
+            var optional = new HashSet<string>(InertGlyphs.EntryPoints);
+            var failures = new List<string>();
+            foreach (var (path, prefix) in binaries)
+            {
+                var bytes = File.ReadAllBytes(Path.GetFullPath($"{PluginRoot}/{path}"));
+                var missing = new List<string>();
+                foreach (var name in names)
+                    if (!ContainsName(bytes, prefix + name)) missing.Add(name);
+                if (missing.Count == 0) continue;
+                // The Linux library is built in CI with exactly the entry points
+                // HarfBuzzApi.cs had then, and picks up new ones when rebuilt.
+                // Until it is, the inert-glyph shortcut is the only caller of
+                // the newer ones, and it turns itself off when they are absent.
+                if (path.StartsWith("Linux/") && missing.TrueForAll(optional.Contains))
+                {
+                    Debug.LogWarning($"[natives] {path} predates {string.Join(", ", missing)}; " +
+                        "the inert-glyph shortcut is off there until the build-natives workflow rebuilds it");
+                    continue;
+                }
+                failures.Add($"{path}: {string.Join(", ", missing)}");
+            }
+            CollectionAssert.IsEmpty(failures, "entry points missing from a shipped binary");
+        }
+
+        private static bool ContainsName(byte[] haystack, string name)
+        {
+            var bytes = System.Text.Encoding.ASCII.GetBytes(name + "\0");
+            for (int i = 0; i + bytes.Length <= haystack.Length; i++)
+            {
+                if (haystack[i] != bytes[0]) continue;
+                int j = 1;
+                while (j < bytes.Length && haystack[i + j] == bytes[j]) j++;
+                if (j < bytes.Length) continue;
+                byte before = i > 0 ? haystack[i - 1] : (byte)0;
+                bool identifier = (before >= 'a' && before <= 'z') || (before >= 'A' && before <= 'Z') ||
+                                  (before >= '0' && before <= '9');
+                if (!identifier) return true;
+            }
+            return false;
+        }
+
         private static bool Contains(byte[] haystack, string needle)
         {
             var bytes = System.Text.Encoding.ASCII.GetBytes(needle);

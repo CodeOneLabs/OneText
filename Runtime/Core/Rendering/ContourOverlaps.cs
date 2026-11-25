@@ -116,7 +116,8 @@ namespace OneText
     /// roughly the segments times the edges a scanline crosses, rather than the
     /// segments squared.
     /// </summary>
-    [BurstCompile]
+    // Compiled before first use; see SdfBatchJob.
+    [BurstCompile(CompileSynchronously = true)]
     internal struct OverlapScanJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float2> Points;

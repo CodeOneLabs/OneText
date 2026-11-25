@@ -118,13 +118,19 @@ namespace OneText
 
         private static OneTextSettings s_instance;
         private static bool s_searched;
+        internal static bool CheckSearchedFirst = true;
 
         /// <summary>The project's settings, or null when none has been created.</summary>
         public static OneTextSettings Instance
         {
             get
             {
-                if (s_instance == null && !s_searched)
+                // The flag first: it is false once, and after that the
+                // comparison with null — a native call asking whether the
+                // asset is alive — answers a question nobody asked. The font
+                // stack reads the settings for every character its own fonts
+                // miss. (CheckSearchedFirst off is the old order, to measure.)
+                if (CheckSearchedFirst ? !s_searched && s_instance == null : s_instance == null && !s_searched)
                 {
                     s_searched = true;
                     s_instance = Resources.Load<OneTextSettings>(ResourcePath);

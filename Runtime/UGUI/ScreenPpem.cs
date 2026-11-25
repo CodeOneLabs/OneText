@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace OneText.UGUI
 {
@@ -102,6 +103,45 @@ namespace OneText.UGUI
             }
         }
 
+        /// <summary>
+        /// The canvas half for a label that is rebuilding its mesh: shared
+        /// between the labels of one graphic rebuild loop, read fresh anywhere
+        /// else.
+        ///
+        /// Memoising this per poll was tried and was wrong (a poll's reading
+        /// outlives the pass it was taken in, and a camera that moves after it
+        /// would be baked at the old density by a hand-driven rebuild). The
+        /// graphic rebuild loop is a narrower window with a known edge: uGUI
+        /// rebuilds every queued graphic back to back inside one
+        /// willRenderCanvases dispatch, nothing between two of those rebuilds
+        /// moves a camera, and <see cref="PollNow"/> — run by the same dispatch
+        /// once the loop is done, and by anything that renders without one —
+        /// forgets the reading. A rebuild outside the loop (a capture, a
+        /// ForceMeshUpdate, a test) never sees it at all.
+        /// </summary>
+        internal static Context ContextForRebuild(Canvas canvas)
+        {
+            if (!ShareContextInRebuildLoop || !CanvasUpdateRegistry.IsRebuildingGraphics())
+                return Context.For(canvas);
+            if (s_loopContextValid && ReferenceEquals(s_loopCanvas, canvas)) return s_loopContext;
+            s_loopContext = Context.For(canvas);
+            s_loopCanvas = canvas;
+            s_loopContextValid = true;
+            return s_loopContext;
+        }
+
+        /// <summary>
+        /// Share the canvas reading between the labels rebuilt in one graphic
+        /// rebuild loop (see <see cref="ContextForRebuild"/>). A switch so the
+        /// two can be held against each other.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool ShareContextInRebuildLoop = true;
+
+        private static Context s_loopContext;
+        private static Canvas s_loopCanvas;
+        private static bool s_loopContextValid;
+
         /// <summary>The per-label half: a scale, and one dot product in perspective.</summary>
         internal static float Compute(OneTextLabel label, in Context context)
         {
@@ -165,6 +205,11 @@ namespace OneText.UGUI
         /// </summary>
         public static void PollNow()
         {
+            // The rebuild loop this dispatch ran is over; whatever it read
+            // about cameras is not evidence about the next one.
+            s_loopContextValid = false;
+            s_loopCanvas = null;
+
             Canvas cached = null;
             var context = default(Context);
             bool have = false;

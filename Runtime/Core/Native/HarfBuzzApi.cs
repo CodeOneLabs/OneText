@@ -224,6 +224,44 @@ namespace OneText.Native
             CallingConvention = CallingConvention.Cdecl)]
         internal static extern void hb_set_add_range(IntPtr set, uint first, uint last);
 
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_set_clear",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_set_clear(IntPtr set);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_set_next_range",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int hb_set_next_range(IntPtr set, ref uint first, ref uint last);
+
+        // --- layout coverage, for the inert-glyph shortcut (InertGlyphs) ---
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_face_reference_table",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr hb_face_reference_table(IntPtr face, uint tag);
+
+        /// <summary>
+        /// Lookups reachable from <paramref name="features"/> (an array ending
+        /// in a zero tag) under every script and language when both of those
+        /// are null.
+        /// </summary>
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_ot_layout_collect_lookups",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe void hb_ot_layout_collect_lookups(IntPtr face, uint tableTag,
+            uint* scripts, uint* languages, uint* features, IntPtr lookupIndexes);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_face_collect_unicodes",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_face_collect_unicodes(IntPtr face, IntPtr unicodes);
+
+        internal const int HB_OT_LAYOUT_GLYPH_CLASS_MARK = 3;
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_ot_layout_get_glyphs_in_class",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_ot_layout_get_glyphs_in_class(IntPtr face, int klass, IntPtr glyphs);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_font_get_glyph_h_advance",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int hb_font_get_glyph_h_advance(IntPtr font, uint glyph);
+
         [DllImport(Lib, EntryPoint = HbPrefix + "hb_face_is_immutable",
             CallingConvention = CallingConvention.Cdecl)]
         internal static extern int hb_face_is_immutable(IntPtr face);
@@ -409,6 +447,29 @@ namespace OneText.Native
         [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_close_path_func",
             CallingConvention = CallingConvention.Cdecl)]
         internal static extern void hb_draw_funcs_set_close_path_func(IntPtr dfuncs, DrawClosePathFunc func, IntPtr userData, IntPtr destroy);
+
+        // The same five setters taking a raw function pointer, for callbacks
+        // compiled by Burst (OutlineExtractor.NativeCallbacks): those are
+        // native code already and must not be marshalled as delegates.
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_move_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_move_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_line_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_line_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_quadratic_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_quadratic_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_cubic_to_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_cubic_to_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
+
+        [DllImport(Lib, EntryPoint = HbPrefix + "hb_draw_funcs_set_close_path_func",
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void hb_draw_funcs_set_close_path_func(IntPtr dfuncs, IntPtr func, IntPtr userData, IntPtr destroy);
 
         [DllImport(Lib, EntryPoint = HbPrefix + "hb_font_draw_glyph",
             CallingConvention = CallingConvention.Cdecl)]

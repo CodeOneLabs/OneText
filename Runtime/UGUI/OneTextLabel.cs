@@ -333,7 +333,7 @@ namespace OneText.UGUI
         }
 
         private bool SourceEquals(ReadOnlySpan<char> value) =>
-            value.Length == _sourceLength && value.SequenceEqual(SourceSpan);
+            value.Length == _sourceLength && SpanScan.Equal(value, SourceSpan);
 
         private bool SourceEquals(string value) =>
             value == null ? _sourceLength == 0 : SourceEquals(value.AsSpan());
@@ -793,7 +793,7 @@ namespace OneText.UGUI
         /// existed, and a zoom-out therefore never invalidates anything.
         /// </summary>
         internal bool RefreshPpemScale() =>
-            RefreshPpemScale(ScreenPpem.Context.For(canvas));
+            RefreshPpemScale(ScreenPpem.ContextForRebuild(canvas));
 
         /// <summary>
         /// The same, against a canvas context the caller already read. The
@@ -964,6 +964,9 @@ namespace OneText.UGUI
 
         protected override void OnEnable()
         {
+            // Before base.OnEnable, whose SetAllDirty asks the question: while
+            // the label was off its hierarchy may have changed in any way.
+            ForgetLayoutHearing();
             base.OnEnable();
             // Deserialization fills the string, never the buffer.
             SyncSourceFromSerialized();
@@ -1259,6 +1262,7 @@ namespace OneText.UGUI
 
         protected override void OnValidate()
         {
+            ForgetLayoutHearing();
             base.OnValidate();
             // The inspector writes the serialized string directly, so the
             // buffer everything downstream reads is now the old text. Nothing
@@ -1327,6 +1331,7 @@ namespace OneText.UGUI
                     _namedSpriteIndex ??= NamedSpriteIndex);
                 _links.Clear();
                 _links.AddRange(_markup.Links);
+                _spansStyled = AnyStyled(_markup.Spans);
             }
             else
             {
@@ -1488,8 +1493,34 @@ namespace OneText.UGUI
             get
             {
                 EnsureDisplayText();
-                return _markup.HasMarkup ? _markup.Spans : null;
+                if (!_markup.HasMarkup) return null;
+                return _spansStyled || !NeutralSpansAsPlain ? _markup.Spans : null;
             }
+        }
+
+        /// <summary>
+        /// Lay out markup whose spans all carry the default style as plain
+        /// text. A link, an effect, a decoration, a pause or a line-break tag
+        /// is markup that changes no style: the parser still hands back one
+        /// default span over the whole text, and the engine treats any span at
+        /// all as "styled", which turns off its fast path for short ASCII text
+        /// and walks the span list per character. A default style everywhere
+        /// is what the plain path assumes everywhere, so the layout is the
+        /// same either way; a switch so that can be held to.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool NeutralSpansAsPlain = true;
+
+        // Whether any parsed span carries a non-default style. Set with the
+        // parse that produced the spans.
+        [System.NonSerialized] private bool _spansStyled;
+
+        private static bool AnyStyled(List<TextStyleSpan> spans)
+        {
+            var neutral = TextStyle.Default;
+            for (int i = 0; i < spans.Count; i++)
+                if (!spans[i].Style.Equals(neutral)) return true;
+            return false;
         }
 
         private void ReleaseFonts() => ReleaseFonts(bumpGeneration: true);
@@ -1625,12 +1656,16 @@ namespace OneText.UGUI
 
         protected override void OnCanvasHierarchyChanged()
         {
+            ForgetLayoutHearing();
             base.OnCanvasHierarchyChanged();
             if (isActiveAndEnabled) EnsureMaterial();
         }
 
         protected override void OnTransformParentChanged()
         {
+            // A new parent is a new set of layout groups to ask; before base,
+            // whose SetAllDirty asks.
+            ForgetLayoutHearing();
             base.OnTransformParentChanged();
             if (isActiveAndEnabled) EnsureMaterial();
         }
@@ -1833,6 +1868,23 @@ namespace OneText.UGUI
         public TextLayoutResult EnsureLayout()
         {
             if (!EnsureNativeState()) return _layout;
+            return EnsureLayoutWithNativeState();
+        }
+
+        /// <summary>
+        /// Ask the font stack, the engine, the atlas reference and the material
+        /// whether they are ready once per rebuild instead of twice: the mesh
+        /// build asks at its top and then lays out, and nothing between the two
+        /// questions can change an answer. A switch so the two can be held
+        /// against each other.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool NativeStateOnce = true;
+
+        /// <summary><see cref="EnsureLayout"/>, for a caller that has just had
+        /// <see cref="EnsureNativeState"/> answer yes.</summary>
+        private TextLayoutResult EnsureLayoutWithNativeState()
+        {
             EnsureDisplayText();
 
             var rect = GetPixelAdjustedRect();
@@ -2161,7 +2213,7 @@ namespace OneText.UGUI
         // say so without a bake; see the comment at its call site.
         private readonly List<GlyphLocation> _clusterLocations = new List<GlyphLocation>();
         private readonly List<PositionedGlyph> _positioned = new List<PositionedGlyph>();
-        private readonly List<TextQuad> _quads = new List<TextQuad>();
+        private readonly QuadList _quads = new QuadList();
         private long _meshHeapMark;
 
         /// <summary>
@@ -2184,7 +2236,7 @@ namespace OneText.UGUI
         /// </summary>
         public IReadOnlyList<TextQuad> DrawnQuads => _drawn;
 
-        private readonly List<TextQuad> _drawn = new List<TextQuad>();
+        private readonly DrawnList _drawn = new DrawnList();
 
         /// <summary>
         /// Every distinct decoration this label's tiles use. Slot 0 is
@@ -2808,7 +2860,7 @@ namespace OneText.UGUI
         /// is not, and an animation that re-lays out every frame is the mistake
         /// this whole seam exists to prevent.
         /// </summary>
-        private void EmitQuads(VertexHelper vh)
+        private void EmitQuads(QuadBuffer sink)
         {
             long emitStartedAt = AtlasDiagnostics.Now;
             EnsureAnimator();
@@ -2820,14 +2872,22 @@ namespace OneText.UGUI
             // "Running" means something is advancing the clock: play mode with
             // Animate on, or anyone who has moved AnimationTime themselves. A
             // label sitting in the Scene view with neither is shown finished.
-            bool clockRunning = (Application.isPlaying && _animate) || _animationTime > 0f;
-            // Never latched: a script driving AnimationTime starts at 0 like
-            // everyone else, and stamping its first frame as "finished for ever"
-            // would mean appearance effects that never play.
-            if (clockRunning) _animator.UnlatchFrozenStamps();
             int reveal = EffectiveMaxVisibleGraphemes;
-            _animator.NoteReveal(reveal, _layout.GraphemeCount,
-                clockRunning ? _animationTime : float.NegativeInfinity);
+            // The stamps are only ever read through an effect span, and spans
+            // only arrive through EnsureAnimator, which clears every stamp
+            // before it adds one. With no spans the bookkeeping below is
+            // written and thrown away unread, so the straight path does not
+            // write it — or ask the engine whether it is playing to decide how.
+            if (!StraightQuads || !_animator.IsEmpty)
+            {
+                bool clockRunning = (Application.isPlaying && _animate) || _animationTime > 0f;
+                // Never latched: a script driving AnimationTime starts at 0 like
+                // everyone else, and stamping its first frame as "finished for ever"
+                // would mean appearance effects that never play.
+                if (clockRunning) _animator.UnlatchFrozenStamps();
+                _animator.NoteReveal(reveal, _layout.GraphemeCount,
+                    clockRunning ? _animationTime : float.NegativeInfinity);
+            }
             var context = new TextQuadContext(_layout, _layout.GraphemeCount, _animationTime);
 
             // The label's colour joins here, on the way to the mesh, not in the
@@ -2845,6 +2905,18 @@ namespace OneText.UGUI
             // multiplied by all three of those.
             bool tinted = labelColor.r != 255 || labelColor.g != 255 ||
                           labelColor.b != 255 || labelColor.a != 255;
+
+            // Nothing between the cache and the mesh can move, drop or recolour
+            // a tile except the two rules a picture and a zero alpha follow, so
+            // the tiles go straight to vertices and the drawn list is recorded
+            // as "the cache, by those rules" rather than copied tile by tile.
+            if (StraightQuads && reveal < 0 && !tinted && _animator.IsEmpty && _modifier == null &&
+                !_vertexOverride)
+            {
+                EmitQuadsStraight(sink);
+                AtlasDiagnostics.Add(ref AtlasDiagnostics.EmitTicks, emitStartedAt);
+                return;
+            }
 
             _drawn.Clear();
             for (int i = 0; i < _quads.Count; i++)
@@ -2889,12 +2961,12 @@ namespace OneText.UGUI
                 // drawn from those, corner by corner, while everything the mesh
                 // needs and a vertex array cannot carry — which atlas, which
                 // layer, which decoration — still comes from the tile.
-                if (_vertexOverride && EmitOverrideQuad(vh, quad, decoration, _drawn.Count - 1))
+                if (_vertexOverride && EmitOverrideQuad(sink, quad, decoration, _drawn.Count - 1))
                     continue;
                 if (quad.Rotation != 0f)
-                    EmitRotatedQuad(vh, quad, decoration);
+                    EmitRotatedQuad(sink, quad, decoration);
                 else
-                    EmitQuad(vh, quad.Position.x, quad.Position.y, quad.Size.x, quad.Size.y,
+                    EmitQuad(sink, quad.Position.x, quad.Position.y, quad.Size.x, quad.Size.y,
                         quad.UvRect, quad.Layer, quad.Color, AtlasOf(quad), decoration);
             }
             AtlasDiagnostics.Add(ref AtlasDiagnostics.EmitTicks, emitStartedAt);
@@ -3417,10 +3489,29 @@ namespace OneText.UGUI
             }
         }
 
+        // uGUI's own entry point. Reached when something asks for the mesh
+        // through VertexHelper: a label carrying an IMeshModifier, a test, a
+        // tool. The label's own rebuild goes through UpdateGeometry and never
+        // builds a VertexHelper at all; see OneTextLabel.MeshBuffer.cs.
         protected override void OnPopulateMesh(VertexHelper vh)
         {
+            vh.Clear();
+            var quads = RentQuads(out bool shared);
+            try
+            {
+                Populate(quads);
+                quads.CopyTo(vh);
+            }
+            finally
+            {
+                ReturnQuads(shared);
+            }
+        }
+
+        private void Populate(QuadBuffer sink)
+        {
             long startedAt = AtlasDiagnostics.Now;
-            try { PopulateMesh(vh); }
+            try { PopulateMesh(sink); }
             finally
             {
                 AtlasDiagnostics.Add(ref AtlasDiagnostics.RebuildTicks, startedAt);
@@ -3428,16 +3519,17 @@ namespace OneText.UGUI
             }
         }
 
-        private void PopulateMesh(VertexHelper vh)
+        private void PopulateMesh(QuadBuffer sink)
         {
-            vh.Clear();
+            sink.Clear();
             // The buffer, not the string: the SetText overloads clear _text, and
             // it only comes back if something happens to read Text.
             if (SourceSpan.IsEmpty || !EnsureNativeState()) return;
 
             long layoutStartedAt = AtlasDiagnostics.Now;
             long heapBefore = AtlasDiagnostics.Heap;
-            EnsureLayout();
+            if (NativeStateOnce) EnsureLayoutWithNativeState();
+            else EnsureLayout();
             AtlasDiagnostics.Add(ref AtlasDiagnostics.LayoutTicks, layoutStartedAt);
             if (AtlasDiagnostics.Enabled)
             {
@@ -3465,7 +3557,11 @@ namespace OneText.UGUI
             // The span, not the string: this is off unless a session asked to
             // record its charset, and reading DisplayText to hand it an
             // argument it will not use built a string on every rebuild.
-            CharsetRecorder.Record(DisplaySpan, DensityFor(EffectiveFontSize));
+            // Asked first on the straight path: both arguments are evaluated
+            // before the recorder can say it is off, and that is a density
+            // calculation per rebuild for a feature almost no session turns on.
+            if (!StraightQuads || CharsetRecorder.Enabled)
+                CharsetRecorder.Record(DisplaySpan, DensityFor(EffectiveFontSize));
 
             // Quad generation depends on the layout and on the atlas, and on
             // nothing an animation frame touches. Regenerating it per frame
@@ -3483,7 +3579,7 @@ namespace OneText.UGUI
                 _quadsAtlasVersion == atlas.Version && _quadsColorVersion == colorVersion &&
                 _quadsSpriteVersion == spriteVersion)
             {
-                EmitQuads(vh);
+                EmitQuads(sink);
                 AtlasFlushScheduler.Request();
                 if (SharedGlyphAtlas.ColorAtlasExists) SharedGlyphAtlas.ColorAtlas.Flush();
                 return;
@@ -3504,139 +3600,146 @@ namespace OneText.UGUI
             _packedDecorations.Clear();
             _packedDecorations.Add(DecorationChannels.None);
 
-            // Every wash first, before any glyph: a <mark> is behind all of the
-            // text and not merely behind its own run, which is the difference
-            // an italic overhanging into the next run would otherwise show.
-            EmitBands(vertical, behind: true);
-
-            int runIndex = 0;
-            foreach (var run in _layout.Runs)
+            if (StraightQuads)
             {
-                var font = run.Font;
-                // Per run, not per label: <size> means a run can be a different
-                // size from the one the label was configured with, and the
-                // atlas density bucket has to follow it or the tile is fetched
-                // at the wrong resolution.
-                float runSize = run.FontSize > 0f ? run.FontSize : EffectiveFontSize;
-                // Two numbers from here down, and the whole of the quality
-                // setting is the gap between them: `runDensity` is what the
-                // atlas is asked for and `scale` is what the text is drawn at.
-                // A tile baked at twice the density is twice as many texels
-                // across the same em, so the glyph comes out the same size off
-                // a finer field — which is only true while `scale` keeps
-                // reading `runSize`.
-                float runDensity = DensityFor(runSize);
-                int runPpem = GlyphAtlas.QuantizePixelsPerEm(runDensity);
-                float scale = runSize / font.UnitsPerEm;
-                // Only the tag's colour is baked. The label's own colour joins
-                // at emit time (see Tint), so tinting or fading a label
-                // never invalidates these quads, and never re-bakes a colour
-                // tile, which would otherwise put one tile per fade step into
-                // the atlas.
-                var runColor = run.Style.ResolveColor();
-                float unitsPerTilePixel = font.UnitsPerEm / (float)runPpem;
-                // A cluster's merged tile must fit the atlas; cap its ink width.
-                float maxClusterUnits = 1000f * unitsPerTilePixel;
-                // Glyphs whose ink joins must share a cluster; anything further
-                // apart stays its own tile so the cache survives text edits.
-                float mergeGapUnits = GlyphClusters.DefaultMergeGapUnits(font);
+                BuildQuadsStraight(atlas, vertical);
+            }
+            else
+            {
+                // Every wash first, before any glyph: a <mark> is behind all of the
+                // text and not merely behind its own run, which is the difference
+                // an italic overhanging into the next run would otherwise show.
+                EmitBands(vertical, behind: true);
 
-                var frame = FrameOf(run, vertical, scale);
-
-                // A sprite run has no glyphs to look up: its one synthetic
-                // glyph is an advance, and the picture comes from the sheet.
-                if (run.Style.IsSprite)
+                int runIndex = 0;
+                foreach (var run in _layout.Runs)
                 {
-                    EmitSprite(run, runSize, scale, frame, runColor, runIndex);
-                    runIndex++;
-                    continue;
-                }
+                    var font = run.Font;
+                    // Per run, not per label: <size> means a run can be a different
+                    // size from the one the label was configured with, and the
+                    // atlas density bucket has to follow it or the tile is fetched
+                    // at the wrong resolution.
+                    float runSize = run.FontSize > 0f ? run.FontSize : EffectiveFontSize;
+                    // Two numbers from here down, and the whole of the quality
+                    // setting is the gap between them: `runDensity` is what the
+                    // atlas is asked for and `scale` is what the text is drawn at.
+                    // A tile baked at twice the density is twice as many texels
+                    // across the same em, so the glyph comes out the same size off
+                    // a finer field — which is only true while `scale` keeps
+                    // reading `runSize`.
+                    float runDensity = DensityFor(runSize);
+                    int runPpem = GlyphAtlas.QuantizePixelsPerEm(runDensity);
+                    float scale = runSize / font.UnitsPerEm;
+                    // Only the tag's colour is baked. The label's own colour joins
+                    // at emit time (see Tint), so tinting or fading a label
+                    // never invalidates these quads, and never re-bakes a colour
+                    // tile, which would otherwise put one tile per fade step into
+                    // the atlas.
+                    var runColor = run.Style.ResolveColor();
+                    float unitsPerTilePixel = font.UnitsPerEm / (float)runPpem;
+                    // A cluster's merged tile must fit the atlas; cap its ink width.
+                    float maxClusterUnits = 1000f * unitsPerTilePixel;
+                    // Glyphs whose ink joins must share a cluster; anything further
+                    // apart stays its own tile so the cache survives text edits.
+                    float mergeGapUnits = GlyphClusters.DefaultMergeGapUnits(font);
 
-                // A colour font's glyphs are pictures, not distance fields:
-                // there is nothing to merge and no seam to avoid, so they skip
-                // the clustering entirely and go one glyph to one tile.
-                if (ColorGlyphs.IsColorFont(font))
-                {
-                    EmitColorRun(run, font, runSize, scale, frame, runColor, runIndex, atlas);
-                    runIndex++;
-                    continue;
-                }
+                    var frame = FrameOf(run, vertical, scale);
 
-                // Each cluster of ink-overlapping glyphs bakes as ONE merged SDF,
-                // so joints between connected glyphs live in the field's interior;
-                // there is no boundary left to seam. Upright text in a column is
-                // the exception and takes a tile per glyph; the comment on
-                // SplitUpright says why merging has nothing to find there.
-                long splitStartedAt = AtlasDiagnostics.Now;
-                if (frame.Vertical && !frame.Rotated)
-                {
-                    GlyphClusters.SplitUpright(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
-                        _clusters, _positioned);
-                }
-                else
-                {
-                    GlyphClusters.Split(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
-                        _clusters, _positioned, maxClusterUnits, mergeGapUnits);
-                }
-                AtlasDiagnostics.Add(ref AtlasDiagnostics.SplitTicks, splitStartedAt);
-
-                // Bake everything this run is missing in one dispatch: a job per
-                // glyph spends more on scheduling than on the field itself.
-                long lookupStartedAt = AtlasDiagnostics.Now;
-                // Fills _clusterLocations when every cluster was already baked,
-                // which is what a warm atlas means and what a running game has.
-                // Then the resolve below is a list read rather than a second
-                // walk of the atlas dictionary with a seven-field key.
-                bool located = atlas.PrepareClusters(font, runDensity, _positioned,
-                    _clusters, _clusterLocations) &&
-                    _clusterLocations.Count == _clusters.Count;
-                AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
-
-                for (int clusterIndex = 0; clusterIndex < _clusters.Count; clusterIndex++)
-                {
-                    var cluster = _clusters[clusterIndex];
-                    GlyphLocation loc;
-                    if (located)
+                    // A sprite run has no glyphs to look up: its one synthetic
+                    // glyph is an advance, and the picture comes from the sheet.
+                    if (run.Style.IsSprite)
                     {
-                        loc = _clusterLocations[clusterIndex];
+                        EmitSprite(run, runSize, scale, frame, runColor, runIndex);
+                        runIndex++;
+                        continue;
+                    }
+
+                    // A colour font's glyphs are pictures, not distance fields:
+                    // there is nothing to merge and no seam to avoid, so they skip
+                    // the clustering entirely and go one glyph to one tile.
+                    if (ColorGlyphs.IsColorFont(font))
+                    {
+                        EmitColorRun(run, font, runSize, scale, frame, runColor, runIndex, atlas);
+                        runIndex++;
+                        continue;
+                    }
+
+                    // Each cluster of ink-overlapping glyphs bakes as ONE merged SDF,
+                    // so joints between connected glyphs live in the field's interior;
+                    // there is no boundary left to seam. Upright text in a column is
+                    // the exception and takes a tile per glyph; the comment on
+                    // SplitUpright says why merging has nothing to find there.
+                    long splitStartedAt = AtlasDiagnostics.Now;
+                    if (frame.Vertical && !frame.Rotated)
+                    {
+                        GlyphClusters.SplitUpright(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
+                            _clusters, _positioned);
                     }
                     else
                     {
-                        lookupStartedAt = AtlasDiagnostics.Now;
-                        loc = atlas.GetOrAddCluster(font, runDensity,
-                            _positioned, cluster.Start, cluster.Count, cluster.Hash);
-                        AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
+                        GlyphClusters.Split(font, _layout.Glyphs, run.GlyphStart, run.GlyphCount,
+                            _clusters, _positioned, maxClusterUnits, mergeGapUnits);
                     }
-                    if (!loc.HasPixels) continue;
+                    AtlasDiagnostics.Add(ref AtlasDiagnostics.SplitTicks, splitStartedAt);
 
-                    frame.Place(cluster.PenX, cluster.PenY, loc.OriginUnits, loc.SizeUnits,
-                        out var position, out var size, out float rotation);
-                    _quads.Add(new TextQuad
+                    // Bake everything this run is missing in one dispatch: a job per
+                    // glyph spends more on scheduling than on the field itself.
+                    long lookupStartedAt = AtlasDiagnostics.Now;
+                    // Fills _clusterLocations when every cluster was already baked,
+                    // which is what a warm atlas means and what a running game has.
+                    // Then the resolve below is a list read rather than a second
+                    // walk of the atlas dictionary with a seven-field key.
+                    bool located = atlas.PrepareClusters(font, runDensity, _positioned,
+                        _clusters, _clusterLocations, deferBake: true) &&
+                        _clusterLocations.Count == _clusters.Count;
+                    AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
+
+                    for (int clusterIndex = 0; clusterIndex < _clusters.Count; clusterIndex++)
                     {
-                        Position = position,
-                        Size = size,
-                        Rotation = rotation,
-                        UvRect = loc.UvRect,
-                        Layer = loc.Layer,
-                        Color = runColor,
-                        FirstGrapheme = _layout.GraphemeAt(cluster.TextStart),
-                        LastGrapheme = _layout.GraphemeAt(Mathf.Max(cluster.TextStart, cluster.TextEnd - 1)),
-                        RunIndex = runIndex,
-                        Baseline = frame.Baseline,
-                        Style = run.Style,
-                        OwnsColor = run.Style.HasColor,
-                        Decoration = ResolveDecoration(cluster.TextStart, run.Style,
-                            run.SyntheticBold),
-                        IsPrecise = _precise,
-                    });
-                }
-                runIndex++;
-            }
+                        var cluster = _clusters[clusterIndex];
+                        GlyphLocation loc;
+                        if (located)
+                        {
+                            loc = _clusterLocations[clusterIndex];
+                        }
+                        else
+                        {
+                            lookupStartedAt = AtlasDiagnostics.Now;
+                            loc = atlas.GetOrAddCluster(font, runDensity,
+                                _positioned, cluster.Start, cluster.Count, cluster.Hash);
+                            AtlasDiagnostics.Add(ref AtlasDiagnostics.LookupTicks, lookupStartedAt);
+                        }
+                        if (!loc.HasPixels) continue;
 
-            // And the lines last, over everything: an underline is drawn on top
-            // of the descender it crosses, which is what every renderer that
-            // does not carve the glyph out of the stroke does.
-            EmitBands(vertical, behind: false);
+                        frame.Place(cluster.PenX, cluster.PenY, loc.OriginUnits, loc.SizeUnits,
+                            out var position, out var size, out float rotation);
+                        _quads.Add(new TextQuad
+                        {
+                            Position = position,
+                            Size = size,
+                            Rotation = rotation,
+                            UvRect = loc.UvRect,
+                            Layer = loc.Layer,
+                            Color = runColor,
+                            FirstGrapheme = _layout.GraphemeAt(cluster.TextStart),
+                            LastGrapheme = _layout.GraphemeAt(Mathf.Max(cluster.TextStart, cluster.TextEnd - 1)),
+                            RunIndex = runIndex,
+                            Baseline = frame.Baseline,
+                            Style = run.Style,
+                            OwnsColor = run.Style.HasColor,
+                            Decoration = ResolveDecoration(cluster.TextStart, run.Style,
+                                run.SyntheticBold),
+                            IsPrecise = _precise,
+                        });
+                    }
+                    runIndex++;
+                }
+
+                // And the lines last, over everything: an underline is drawn on top
+                // of the descender it crosses, which is what every renderer that
+                // does not carve the glyph out of the stroke does.
+                EmitBands(vertical, behind: false);
+            }
 
             // The quads are now current for this layout and these atlases;
             // arming the cache here, at the end of the build, is what lets the
@@ -3648,7 +3751,7 @@ namespace OneText.UGUI
             _quadsColorVersion = buildColorVersion;
             _quadsSpriteVersion = spriteVersion;
 
-            EmitQuads(vh);
+            EmitQuads(sink);
 
             if (AtlasDiagnostics.Enabled)
             {
@@ -3663,9 +3766,12 @@ namespace OneText.UGUI
 
         // ------------------------------------------------------------ ILayoutElement
 
-        public void CalculateLayoutInputHorizontal() { }
+        // A layout rebuild is walking this label, so some controller above it
+        // or on it is live — one that may not have been there when the label
+        // last concluded nobody was listening (OneTextLabel.LayoutDirty.cs).
+        public void CalculateLayoutInputHorizontal() => LayoutControllerSeen();
 
-        public void CalculateLayoutInputVertical() { }
+        public void CalculateLayoutInputVertical() => LayoutControllerSeen();
 
         public float minWidth => 0f;
 
@@ -3790,17 +3896,21 @@ namespace OneText.UGUI
             }
         }
 
-        private static void EmitQuad(VertexHelper vh, float x, float y, float w, float h,
+        private static void EmitQuad(QuadBuffer sink, float x, float y, float w, float h,
             Rect uv, int layer, Color32 c, float atlas, in DecorationChannels decoration)
         {
-            int start = vh.currentVertCount;
             var shared = new QuadChannels(layer, atlas, uv, decoration);
-            AddVert(vh, x, y, uv.xMin, uv.yMin, shared, c, decoration);
-            AddVert(vh, x, y + h, uv.xMin, uv.yMax, shared, c, decoration);
-            AddVert(vh, x + w, y + h, uv.xMax, uv.yMax, shared, c, decoration);
-            AddVert(vh, x + w, y, uv.xMax, uv.yMin, shared, c, decoration);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
+            float uMin = uv.xMin, uMax = uv.xMax, vMin = uv.yMin, vMax = uv.yMax;
+            // x + w and y + h are worked out once, here, and the same values
+            // feed both the corners and the kept extent.
+            float right = x + w, top = y + h;
+            var vertices = TrackedBounds
+                ? sink.ReserveTrackedQuad(x, y, right, top, out int start)
+                : sink.ReserveQuad(out start);
+            WriteVertex(ref vertices[start], x, y, uMin, vMin, shared, c, decoration);
+            WriteVertex(ref vertices[start + 1], x, top, uMin, vMax, shared, c, decoration);
+            WriteVertex(ref vertices[start + 2], right, top, uMax, vMax, shared, c, decoration);
+            WriteVertex(ref vertices[start + 3], right, y, uMax, vMin, shared, c, decoration);
         }
 
         /// <summary>
@@ -3808,7 +3918,7 @@ namespace OneText.UGUI
         /// path because that one is the overwhelmingly common case and a
         /// sin/cos per corner is not something to pay for a still letter.
         /// </summary>
-        private static void EmitRotatedQuad(VertexHelper vh, in TextQuad quad,
+        private static void EmitRotatedQuad(QuadBuffer sink, in TextQuad quad,
             in DecorationChannels decoration)
         {
             float radians = quad.Rotation * Mathf.Deg2Rad;
@@ -3823,19 +3933,14 @@ namespace OneText.UGUI
                 return centre + new Vector2(x * cos - y * sin, x * sin + y * cos);
             }
 
-            int start = vh.currentVertCount;
             var shared = new QuadChannels(quad.Layer, AtlasOf(quad), uv, decoration);
-            AddVert(vh, Corner(-1f, -1f), uv.xMin, uv.yMin, shared, quad.Color, decoration);
-            AddVert(vh, Corner(-1f, 1f), uv.xMin, uv.yMax, shared, quad.Color, decoration);
-            AddVert(vh, Corner(1f, 1f), uv.xMax, uv.yMax, shared, quad.Color, decoration);
-            AddVert(vh, Corner(1f, -1f), uv.xMax, uv.yMin, shared, quad.Color, decoration);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
+            Vector2 a = Corner(-1f, -1f), b = Corner(-1f, 1f), c = Corner(1f, 1f), d = Corner(1f, -1f);
+            var vertices = sink.ReserveQuad(out int start);
+            WriteVertex(ref vertices[start], a.x, a.y, uv.xMin, uv.yMin, shared, quad.Color, decoration);
+            WriteVertex(ref vertices[start + 1], b.x, b.y, uv.xMin, uv.yMax, shared, quad.Color, decoration);
+            WriteVertex(ref vertices[start + 2], c.x, c.y, uv.xMax, uv.yMax, shared, quad.Color, decoration);
+            WriteVertex(ref vertices[start + 3], d.x, d.y, uv.xMax, uv.yMin, shared, quad.Color, decoration);
         }
-
-        private static void AddVert(VertexHelper vh, Vector2 at, float u, float v,
-            in QuadChannels shared, Color32 c, in DecorationChannels decoration) =>
-            AddVert(vh, at.x, at.y, u, v, shared, c, decoration);
 
         /// <summary>
         /// Which atlas a tile samples, as the shader's discriminator: 0 the
@@ -3989,12 +4094,6 @@ namespace OneText.UGUI
         /// is the position and the two coordinates that actually differ between
         /// the four.
         /// </summary>
-        private static void AddVert(VertexHelper vh, float x, float y, float u, float v,
-            in QuadChannels shared, Color32 c, in DecorationChannels decoration) =>
-            vh.AddVert(new Vector3(x, y), c,
-                new Vector4(u, v, shared.PackedLayer, shared.UvMinV),
-                decoration.Colors, shared.VMax, decoration.Shape, s_Normal, s_Tangent);
-
         // ====================================================================
         // TMP parity — begin
         //

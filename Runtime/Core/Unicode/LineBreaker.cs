@@ -100,6 +100,73 @@ namespace OneText.Unicode
         }
 
         /// <summary>
+        /// The mandatory breaks <see cref="Analyze(ReadOnlySpan{char}, Opportunity[])"/>
+        /// would find, and nothing else: every other index is left
+        /// <see cref="Opportunity.None"/>, including the ones the full analysis
+        /// would call <see cref="Opportunity.Allowed"/>.
+        ///
+        /// For a caller that will never wrap. Text that does not wrap still
+        /// splits into paragraphs at its newlines, and that is the only
+        /// question it asks the table; the other thirty rules of UAX #14 decide
+        /// where a line <em>may</em> end, which such a caller never reads.
+        ///
+        /// Only LB4 and LB5 can produce a mandatory break, and both look at one
+        /// pair: a break after BK, LF or NL, and after a CR that is not followed
+        /// by LF. Nothing upstream changes that pair. LB9 never folds a mark
+        /// into a hard break (they are not bases, so a mark after one stands
+        /// on its own and is the "after" side), and a mark folded into
+        /// anything else is not a hard break either. So the decision before a
+        /// code point is the classes of it and of the code point before it.
+        ///
+        /// Code points, decoded exactly as Analyze decodes them, and not code
+        /// units: a high surrogate always takes two units there, even a lone
+        /// one in front of a CR, which then never reaches the rules at all.
+        /// The four classes are BMP characters, and a test holds the
+        /// prefilter below to the data: every code point it skips is in none
+        /// of them.
+        /// </summary>
+        public static void AnalyzeMandatory(ReadOnlySpan<char> text, Opportunity[] opportunities)
+        {
+            int n = text.Length;
+            System.Array.Clear(opportunities, 0, n + 1);
+            opportunities[n] = Opportunity.Mandatory; // LB3
+
+            var before = LineBreakClass.AL;
+            bool hardBefore = false;
+            for (int i = 0; i < n;)
+            {
+                char c = text[i];
+                bool single = !char.IsHighSurrogate(c);
+                bool mayBeHard = single && MayBeHardBreak(c);
+                if (hardBefore)
+                {
+                    // LB4 and LB5. Everything after a hard break is an item of
+                    // its own (LB9 does not attach to one), so it gets a
+                    // decision.
+                    if (before != LineBreakClass.CR ||
+                        !mayBeHard || BreakData.GetLineClass(c) != LineBreakClass.LF)
+                        opportunities[i] = Opportunity.Mandatory;
+                }
+                hardBefore = false;
+                if (mayBeHard)
+                {
+                    before = BreakData.GetLineClass(c);
+                    hardBefore = before == LineBreakClass.BK || before == LineBreakClass.CR ||
+                                 before == LineBreakClass.LF || before == LineBreakClass.NL;
+                }
+                i += single ? 1 : 2;
+            }
+        }
+
+        /// <summary>
+        /// False for every UTF-16 unit whose line break class cannot be BK,
+        /// CR, LF or NL: the controls from U+000A to U+000D, NEL, and the
+        /// line and paragraph separators are the only candidates.
+        /// </summary>
+        internal static bool MayBeHardBreak(char c) =>
+            c <= '\u000D' ? c >= '\u000A' : c == '\u0085' || c == '\u2028' || c == '\u2029';
+
+        /// <summary>
         /// The rule that decided the boundary before <paramref name="index"/>,
         /// by its name in UAX #14 ("LB13", "LB30a"), or null when the index is
         /// not a boundary between two items.

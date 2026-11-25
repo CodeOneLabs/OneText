@@ -99,6 +99,25 @@ namespace OneText
 
         public bool IsValid => Font != IntPtr.Zero;
 
+        private InertGlyphs _inertGlyphs;
+
+        /// <summary>
+        /// The characters this handle can shape without HarfBuzz, analysed on
+        /// first use and again after every variation change (advances move
+        /// with the axes). See <see cref="OneText.InertGlyphs"/>.
+        /// </summary>
+        internal InertGlyphs InertGlyphs
+        {
+            get
+            {
+                var table = Volatile.Read(ref _inertGlyphs);
+                if (table != null && table.Generation == Generation) return table;
+                table = InertGlyphs.Build(this);
+                Volatile.Write(ref _inertGlyphs, table);
+                return table;
+            }
+        }
+
         /// <summary>
         /// A stable id for this handle, for callers outside the core that need
         /// to key a cache by "which font". The native handle is the real
@@ -468,6 +487,9 @@ namespace OneText
         public void SetVariations(params FontVariation[] variations)
         {
             if (!IsValid) return;
+            // Outlines a job may still be drawing through handles with the old
+            // axes, or glyphs placed with them and not yet drawn, finish first.
+            OutlinesChanging?.Invoke(this);
             RetireThreadHandles(variations);
 
             unsafe
@@ -478,7 +500,15 @@ namespace OneText
                     native[i] = new HBVariation { Tag = StringToTag(variations[i].Tag), Value = variations[i].Value };
                 HarfBuzzApi.hb_font_set_variations(Font, native, (uint)count);
             }
-            lock (_sync) _inkBounds?.Clear();
+            lock (_sync)
+            {
+                _inkBounds?.Clear();
+                // Replaced, not cleared in place: a reader on another thread
+                // holding the old pages finishes against the old axes, which is
+                // the same race the dictionary had, and never sees half a page
+                // of each.
+                Volatile.Write(ref _inkPages, null);
+            }
             ReadMetrics();
             Generation++;
         }
@@ -560,6 +590,9 @@ namespace OneText
         /// </summary>
         public bool TryGetInkBounds(uint glyphId, out Vector2 min, out Vector2 max)
         {
+            if (FlatInkBounds && glyphId < MaxFlatGlyph)
+                return TryGetInkBoundsFlat(glyphId, out min, out max);
+
             (Vector2 min, Vector2 max, bool hasInk) cached;
             lock (_sync)
             {
@@ -585,6 +618,90 @@ namespace OneText
             min = cached.min;
             max = cached.max;
             return cached.hasInk;
+        }
+
+        /// <summary>
+        /// Off answers every ink-bounds query from the locked dictionary it
+        /// always used. For measuring one against the other in one session, and
+        /// for the tests that hold the two to the same answers.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool FlatInkBounds = true;
+
+        // Glyph ids past this go to the dictionary. A real face stops at 65,535
+        // (glyph ids are 16-bit in every table that names one); the headroom is
+        // for whatever a synthetic id might be, and the dictionary still
+        // answers anything above it.
+        private const uint MaxFlatGlyph = 1u << 20;
+        private const int InkPageBits = 8;
+        private const int InkPageSize = 1 << InkPageBits;
+
+        private struct InkEntry
+        {
+            public Vector2 Min, Max;
+            // 0 not measured yet, 1 has ink, 2 measured and empty. Written last
+            // and read first, so a reader on another thread that sees it set
+            // also sees the box it describes.
+            public int State;
+        }
+
+        // Paged by the id's high bits: clustering asks for every glyph of every
+        // line, a warm label asks for the same few dozen ids every frame, and a
+        // lock plus a hash lookup per glyph was most of what Split spent. A
+        // page is allocated the first time any id in it is measured, so a Latin
+        // label holds one or two pages and a CJK chat stream the few hundred
+        // its text actually touches, never the whole face.
+        private InkEntry[][] _inkPages;
+
+        private bool TryGetInkBoundsFlat(uint glyphId, out Vector2 min, out Vector2 max)
+        {
+            var pages = Volatile.Read(ref _inkPages);
+            int pageIndex = (int)(glyphId >> InkPageBits);
+            int slot = (int)(glyphId & (InkPageSize - 1));
+            if (pages != null && pageIndex < pages.Length)
+            {
+                var page = Volatile.Read(ref pages[pageIndex]);
+                if (page != null)
+                {
+                    int state = Volatile.Read(ref page[slot].State);
+                    if (state != 0)
+                    {
+                        min = page[slot].Min;
+                        max = page[slot].Max;
+                        return state == 1;
+                    }
+                }
+            }
+
+            // The same measurement the dictionary path makes, outside any lock
+            // for the same reason.
+            var measured = HarfBuzzApi.hb_font_get_glyph_extents(Font, glyphId, out var extents) != 0
+                ? FromExtents(extents)
+                : FromOutline(glyphId);
+            lock (_sync)
+            {
+                pages = _inkPages;
+                if (pages == null || pageIndex >= pages.Length)
+                {
+                    int length = Math.Max(pageIndex + 1, pages == null ? 1 : pages.Length * 2);
+                    var grown = new InkEntry[length][];
+                    if (pages != null) Array.Copy(pages, grown, pages.Length);
+                    pages = grown;
+                    Volatile.Write(ref _inkPages, pages);
+                }
+                var page = pages[pageIndex];
+                if (page == null)
+                {
+                    page = new InkEntry[InkPageSize];
+                    Volatile.Write(ref pages[pageIndex], page);
+                }
+                page[slot].Min = measured.Item1;
+                page[slot].Max = measured.Item2;
+                Volatile.Write(ref page[slot].State, measured.Item3 ? 1 : 2);
+            }
+            min = measured.Item1;
+            max = measured.Item2;
+            return measured.Item3;
         }
 
         private static (Vector2, Vector2, bool) FromExtents(HBGlyphExtents e)
@@ -617,8 +734,44 @@ namespace OneText
             return (lo, hi, hasInk);
         }
 
+        /// <summary>
+        /// Told before this font's outlines change (<see cref="SetVariations"/>)
+        /// or its native objects are freed (<see cref="Dispose"/>), while both
+        /// are still what they were. The rendering side sets it once: it owns
+        /// per-thread handles that jobs draw outlines through
+        /// (<see cref="CreateWorkerFont"/>) and has to finish those jobs, and
+        /// destroy the handles, first.
+        /// </summary>
+        internal static Action<FontData> OutlinesChanging;
+
+        /// <summary>
+        /// A new native font over this face with this font's axes, for one job
+        /// thread to draw outlines through. The caller owns it and destroys it
+        /// (<c>hb_font_destroy</c>), before this font is disposed. It holds a
+        /// reference to the face, never to anything managed. Main thread.
+        /// </summary>
+        internal IntPtr CreateWorkerFont()
+        {
+            if (!IsValid) throw new InvalidOperationException("Font is not loaded.");
+            var font = HarfBuzzApi.hb_font_create(Face);
+            FontVariation[] axes;
+            lock (_sync) axes = _appliedVariations;
+            if (axes.Length > 0)
+            {
+                unsafe
+                {
+                    var native = stackalloc HBVariation[axes.Length];
+                    for (int i = 0; i < axes.Length; i++)
+                        native[i] = new HBVariation { Tag = StringToTag(axes[i].Tag), Value = axes[i].Value };
+                    HarfBuzzApi.hb_font_set_variations(font, native, (uint)axes.Length);
+                }
+            }
+            return font;
+        }
+
         public void Dispose()
         {
+            if (Font != IntPtr.Zero) OutlinesChanging?.Invoke(this);
             ColorGlyphs.Forget(CacheId);
             DisposeThreadHandles();
             if (Font != IntPtr.Zero) { HarfBuzzApi.hb_font_destroy(Font); Font = IntPtr.Zero; }

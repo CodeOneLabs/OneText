@@ -102,8 +102,8 @@ namespace OneText
         // Every face the tier has looked at, keyed "path#faceIndex", so two
         // characters found in one font share one load and one set of atlas
         // tiles.
-        private static readonly Dictionary<string, SystemFace> s_faces =
-            new Dictionary<string, SystemFace>(StringComparer.Ordinal);
+        private static readonly Dictionary<(string, uint), SystemFace> s_faces =
+            new Dictionary<(string, uint), SystemFace>();
 
         // Live faces by FontData.CacheId, what IsSystemFont and a diagnostic
         // ask. Keyed by cache id rather than by the native pointer for the
@@ -472,6 +472,24 @@ namespace OneText
             }
         }
 
+        /// <summary>
+        /// Drops every answer and what each script has answered with, and
+        /// keeps the listing, the coverage read so far and the loaded faces:
+        /// the state of a session that has read the disk and never asked a
+        /// question. For the test that compares answers with and without the
+        /// background index.
+        /// </summary>
+        internal static void ForgetAnswersForTests()
+        {
+            lock (s_sync)
+            {
+                s_resolved.Clear();
+                s_resolvedForLanguage.Clear();
+                s_answered.Clear();
+                Generation++;
+            }
+        }
+
         // ----------------------------------------------------------- letting go
 
         /// <summary>
@@ -542,10 +560,33 @@ namespace OneText
 
         // --------------------------------------------------------------- probing
 
+        /// <summary>
+        /// Whether the first probe starts reading every system font's cmap on a
+        /// worker thread (<see cref="SystemFontIndex.StartBackgroundIndex"/>),
+        /// so a later character nothing on the machine has costs memory
+        /// lookups instead of a walk of the disk. On by default; off is for
+        /// measuring it, and the answer is the same either way.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool IndexInBackground { get; set; } = true;
+
+        /// <summary>
+        /// Whether the faces of a collection that share one cmap table read and
+        /// parse it once (<see cref="SystemFontIndex"/>). On by default; off is
+        /// for measuring it, and the coverage is the same either way.
+        /// </summary>
+        [HotPathSwitch]
+        internal static bool ShareCollectionCmaps
+        {
+            get => SystemFontIndex.ShareCmaps;
+            set => SystemFontIndex.ShareCmaps = value;
+        }
+
         private static SystemFace Probe(int codepoint)
         {
             var files = SystemFontIndex.Files();
             if (files.Length == 0) return null;
+            if (IndexInBackground) SystemFontIndex.StartBackgroundIndex();
 
             // A short list of the faces that are actually likely, matched on
             // file name. It is not an optimisation for its own sake: on a
@@ -554,7 +595,8 @@ namespace OneText
             // choose. Preference is how 한 comes out of Apple SD Gothic Neo and
             // not out of a Serif face that happens to sort earlier.
             int script = ScriptOf(codepoint);
-            var tried = new HashSet<string>(StringComparer.Ordinal);
+            var tried = s_tried;
+            tried.Clear();
 
             // What answered for this script already, before any guessing.
             if (RememberAnswers && s_answered.TryGetValue(script, out var answered))
@@ -569,15 +611,20 @@ namespace OneText
             }
 
             var stems = SystemFontIndex.Stems();
-            foreach (string preferred in PreferredThenGeneric(codepoint))
+            // The script's own names, then the generic tail: the order the
+            // preference walk always had, without an iterator per probe.
+            for (int list = 0; list < 2; list++)
             {
-                for (int i = 0; i < files.Length; i++)
+                foreach (string preferred in list == 0 ? Preferred(codepoint) : Generic)
                 {
-                    if (!Matches(stems[i], preferred)) continue;
-                    string path = files[i];
-                    if (!tried.Add(path)) continue;
-                    var face = TryFile(path, codepoint);
-                    if (face != null) { Remember(script, path); return face; }
+                    for (int i = 0; i < files.Length; i++)
+                    {
+                        if (!Matches(stems[i], preferred)) continue;
+                        string path = files[i];
+                        if (!tried.Add(path)) continue;
+                        var face = TryFile(path, codepoint);
+                        if (face != null) { Remember(script, path); return face; }
+                    }
                 }
             }
 
@@ -600,8 +647,10 @@ namespace OneText
         {
             var files = SystemFontIndex.Files();
             if (files.Length == 0) return null;
+            if (IndexInBackground) SystemFontIndex.StartBackgroundIndex();
             int memory = 100 * (int)locale + ScriptOf(codepoint);
-            var tried = new HashSet<string>(StringComparer.Ordinal);
+            var tried = s_tried;
+            tried.Clear();
 
             if (RememberAnswers && s_answered.TryGetValue(memory, out var answered))
             {
@@ -634,7 +683,20 @@ namespace OneText
         /// Windows, Linux and Android. The Japanese Hiragino files are named in
         /// Japanese on macOS, which is why the katakana is here.
         /// </summary>
-        private static string[] LocaleStems(CjkLocale locale)
+        private static string[] LocaleStems(CjkLocale locale) =>
+            s_localeStems[(int)locale] ??= LocaleStemsOf(locale);
+
+        // Probing runs under s_sync, so one set serves every probe; it was a
+        // new one per probe, which is an allocation per unseen character.
+        private static readonly HashSet<string> s_tried = new HashSet<string>(StringComparer.Ordinal);
+
+        // The preference lists by script and by locale, built once each: they
+        // were arrays made per probe, and they never change.
+        private static readonly string[][] s_localeStems = new string[5][];
+        private static readonly string[][] s_localeHints = new string[5][];
+        private static readonly string[][] s_preferred = new string[13][];
+
+        private static string[] LocaleStemsOf(CjkLocale locale)
         {
             switch (locale)
             {
@@ -672,7 +734,10 @@ namespace OneText
         /// for: in a collection that holds several (PingFang SC/TC/HK, Heiti
         /// SC/TC, Noto Sans CJK in all five), the face to load.
         /// </summary>
-        private static string[] LocaleNameHints(CjkLocale locale)
+        private static string[] LocaleNameHints(CjkLocale locale) =>
+            s_localeHints[(int)locale] ??= LocaleNameHintsOf(locale);
+
+        private static string[] LocaleNameHintsOf(CjkLocale locale)
         {
             switch (locale)
             {
@@ -784,7 +849,10 @@ namespace OneText
 
         private static SystemFace Slot(string path, SystemFontIndex.FaceCoverage coverage)
         {
-            string key = path + "#" + coverage.FaceIndex;
+            // A tuple rather than "path#index": the key was a new string on
+            // every probe that found a candidate, the one allocation a warm
+            // probe made besides the set below.
+            var key = (path, coverage.FaceIndex);
             if (s_faces.TryGetValue(key, out var face)) return face;
             face = new SystemFace
             {
@@ -852,7 +920,12 @@ namespace OneText
         /// ships in, on the three desktop platforms and Android, in the order a
         /// native reader would want them.
         /// </summary>
-        private static string[] Preferred(int codepoint)
+        private static string[] Preferred(int codepoint) =>
+            s_preferred[ScriptOf(codepoint)] ??= PreferredOf(codepoint);
+
+        // Keyed by ScriptOf, whose ranges are these branches' ranges, in the
+        // same order; the equivalence tests resolve every script both ways.
+        private static string[] PreferredOf(int codepoint)
         {
             // Emoji before script: a codepoint in the emoji blocks wants a
             // colour face, whatever else on the machine has an outline for it.
@@ -925,15 +998,5 @@ namespace OneText
             codepoint >= 0x1F000 && codepoint <= 0x1FAFF ||
             codepoint >= 0x2600 && codepoint <= 0x27BF ||
             codepoint >= 0x1F1E6 && codepoint <= 0x1F1FF;
-
-        /// <summary>
-        /// Preference names, generic tail included: the order
-        /// <see cref="Probe"/> walks.
-        /// </summary>
-        private static IEnumerable<string> PreferredThenGeneric(int codepoint)
-        {
-            foreach (string name in Preferred(codepoint)) yield return name;
-            foreach (string name in Generic) yield return name;
-        }
     }
 }
