@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
 ### Added
 
 - **COLR version 1: colour glyphs drawn from a paint graph.** A version 0
